@@ -27,34 +27,33 @@ secp256k1.utils.hmacSha256Sync = (key, ...msgs) => hmac(sha256, key, concat(...m
 secp256k1.utils.sha256Sync = (...msgs) => sha256(concat(...msgs));
 const taggedHash = secp256k1.utils.taggedHashSync;
 
-enum PubkeyType {
+enum PubT {
   ecdsa,
   schnorr,
 }
-const validatePubkey = (arr: Bytes, type: PubkeyType) => {
-  const len = arr.length;
-  if (type === PubkeyType.ecdsa) {
+const validatePubkey = (pub: Bytes, type: PubT) => {
+  const len = pub.length;
+  if (type === PubT.ecdsa) {
     if (len === 32) throw new Error('Expected non-Schnorr key');
-  } else if (type === PubkeyType.schnorr) {
+  } else if (type === PubT.schnorr) {
     if (len !== 32) throw new Error('Expected 32-byte Schnorr key');
   } else {
     throw new Error('Unknown key type');
   }
-  secp256k1.Point.fromHex(arr); // does assertValidity
-  return arr;
+  secp256k1.Point.fromHex(pub); // does assertValidity
+  return pub;
 };
-const isValidPubkey = (arr: Bytes, type: PubkeyType) => {
+function isValidPubkey(pub: Bytes, type: PubT) {
   try {
-    validatePubkey(arr, type);
-    return true;
-  } catch (error) {
+    return !!validatePubkey(pub, type);
+  } catch (e) {
     return false;
   }
-};
+}
 
 // Can be 33 or 64 bytes
-const PubKeyECDSA = P.validate(P.bytes(null), (pub) => validatePubkey(pub, PubkeyType.ecdsa));
-const PubKeySchnorr = P.validate(P.bytes(32), (pub) => validatePubkey(pub, PubkeyType.schnorr));
+const PubKeyECDSA = P.validate(P.bytes(null), (pub) => validatePubkey(pub, PubT.ecdsa));
+const PubKeySchnorr = P.validate(P.bytes(32), (pub) => validatePubkey(pub, PubT.schnorr));
 
 export const NETWORK = {
   bech32: 'bc',
@@ -279,7 +278,10 @@ type PSBTKeyMap = Record<
   readonly [number, PSBTKeyCoder, any, readonly number[], readonly number[], readonly number[]]
 >;
 
-const BIP32Der = P.struct({ fingerprint: P.U32BE, path: P.array(null, P.U32LE) });
+const BIP32Der = P.struct({
+  fingerprint: P.U32BE,
+  path: P.array(null, P.U32LE),
+});
 
 // <control byte with leaf version and parity bit> <internal key p> <C> <E> <AB>
 export const TaprootControlBlock = P.struct({
@@ -288,7 +290,10 @@ export const TaprootControlBlock = P.struct({
   merklePath: P.array(null, P.bytes(32)),
 });
 
-const TaprootBIP32Der = P.struct({ hashes: P.array(CompactSizeLen, P.bytes(32)), der: BIP32Der });
+const TaprootBIP32Der = P.struct({
+  hashes: P.array(CompactSizeLen, P.bytes(32)),
+  der: BIP32Der,
+});
 
 // {name: [tag, keyCoder, valueCoder]}
 const PSBTGlobal = {
@@ -509,9 +514,8 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     throw new Error('validateInput: wmpty finalScriptWitness');
   //if (i.finalScriptSig && !i.finalScriptSig.length) throw new Error('validateInput: empty finalScriptSig');
   if (i.partialSig && !i.partialSig.length) throw new Error('Empty partialSig');
-  if (i.partialSig) for (const [k, v] of i.partialSig) validatePubkey(k, PubkeyType.ecdsa);
-  if (i.bip32Derivation)
-    for (const [k, v] of i.bip32Derivation) validatePubkey(k, PubkeyType.ecdsa);
+  if (i.partialSig) for (const [k, v] of i.partialSig) validatePubkey(k, PubT.ecdsa);
+  if (i.bip32Derivation) for (const [k, v] of i.bip32Derivation) validatePubkey(k, PubT.ecdsa);
   // Locktime = unsigned little endian integer greater than or equal to 500000000 representing
   if (i.requiredTimeLocktime !== undefined && i.requiredTimeLocktime < 500000000)
     throw new Error(`validateInput: wrong timeLocktime=${i.requiredTimeLocktime}`);
@@ -547,8 +551,7 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
 });
 
 const PSBTOutputCoder = P.validate(PSBTKeyMap(PSBTOutput), (o) => {
-  if (o.bip32Derivation)
-    for (const [k, v] of o.bip32Derivation) validatePubkey(k, PubkeyType.ecdsa);
+  if (o.bip32Derivation) for (const [k, v] of o.bip32Derivation) validatePubkey(k, PubT.ecdsa);
   return o;
 });
 
@@ -674,17 +677,16 @@ const OutPK: base.Coder<OptScript, OutPKType | undefined> = {
     if (
       from.length !== 2 ||
       !P.isBytes(from[0]) ||
-      !isValidPubkey(from[0], PubkeyType.ecdsa) ||
+      !isValidPubkey(from[0], PubT.ecdsa) ||
       from[1] !== 'CHECKSIG'
     )
       return;
     return { type: 'pk', pubkey: from[0] };
   },
-  decode: (to: OutPKType): OptScript =>
-    to.type === 'pk' ? [to.pubkey, 'CHECKSIG'] : undefined,
+  decode: (to: OutPKType): OptScript => (to.type === 'pk' ? [to.pubkey, 'CHECKSIG'] : undefined),
 };
 export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
-  if (!isValidPubkey(pubkey, PubkeyType.ecdsa)) throw new Error('P2PK: invalid publicKey');
+  if (!isValidPubkey(pubkey, PubT.ecdsa)) throw new Error('P2PK: invalid publicKey');
   return {
     type: 'pk',
     script: OutScript.encode({ type: 'pk', pubkey }),
@@ -704,7 +706,7 @@ const OutPKH: base.Coder<OptScript, OutPKHType | undefined> = {
     to.type === 'pkh' ? ['DUP', 'HASH160', to.hash, 'EQUALVERIFY', 'CHECKSIG'] : undefined,
 };
 export const p2pkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
-  if (!isValidPubkey(publicKey, PubkeyType.ecdsa)) throw new Error('P2PKH: invalid publicKey');
+  if (!isValidPubkey(publicKey, PubT.ecdsa)) throw new Error('P2PKH: invalid publicKey');
   const hash = hash160(publicKey);
   return {
     type: 'pkh',
@@ -744,8 +746,7 @@ const OutWSH: base.Coder<OptScript, OutWSHType | undefined> = {
     if (from[1].length !== 32) return;
     return { type: 'wsh', hash: from[1] };
   },
-  decode: (to: OutWSHType): OptScript =>
-    to.type === 'wsh' ? ['OP_0', to.hash] : undefined,
+  decode: (to: OutWSHType): OptScript => (to.type === 'wsh' ? ['OP_0', to.hash] : undefined),
 };
 export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
   const hash = sha256(child.script);
@@ -766,11 +767,10 @@ const OutWPKH: base.Coder<OptScript, OutWPKHType | undefined> = {
     if (from[1].length !== 20) return;
     return { type: 'wpkh', hash: from[1] };
   },
-  decode: (to: OutWPKHType): OptScript =>
-    to.type === 'wpkh' ? ['OP_0', to.hash] : undefined,
+  decode: (to: OutWPKHType): OptScript => (to.type === 'wpkh' ? ['OP_0', to.hash] : undefined),
 };
 export const p2wpkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
-  if (!isValidPubkey(publicKey, PubkeyType.ecdsa)) throw new Error('P2WPKH: invalid publicKey');
+  if (!isValidPubkey(publicKey, PubT.ecdsa)) throw new Error('P2WPKH: invalid publicKey');
   if (publicKey.length === 65) throw new Error('P2WPKH: uncompressed public key');
   const hash = hash160(publicKey);
   return {
@@ -809,10 +809,13 @@ const OutTR: base.Coder<OptScript, OutTRType | undefined> = {
     if (from.length !== 2 || from[0] !== 'OP_1' || !isBytes(from[1])) return;
     return { type: 'tr', pubkey: from[1] };
   },
-  decode: (to: OutTRType): OptScript =>
-    to.type === 'tr' ? ['OP_1', to.pubkey] : undefined,
+  decode: (to: OutTRType): OptScript => (to.type === 'tr' ? ['OP_1', to.pubkey] : undefined),
 };
-export type TaprootNode = { script: Bytes | string; leafVersion?: number; weight?: number };
+export type TaprootNode = {
+  script: Bytes | string;
+  leafVersion?: number;
+  weight?: number;
+};
 export type TaprootScriptTree = TaprootNode | TaprootScriptTree[];
 export type TaprootScriptList = TaprootNode[];
 type _TaprootListInternal = (
@@ -851,7 +854,12 @@ function taprootHashTree(tree: TaprootScriptTree): HashedTree {
   if (!Array.isArray(tree)) {
     const { leafVersion: version, script: leafScript } = tree;
     const script = typeof leafScript === 'string' ? base.hex.decode(leafScript) : leafScript;
-    return { type: 'leaf', version, script, hash: tapLeafHash(script, version) };
+    return {
+      type: 'leaf',
+      version,
+      script,
+      hash: tapLeafHash(script, version),
+    };
   }
   // If tree / branch is not binary tree, convert it
   if (tree.length !== 2) tree = taprootListToTree(tree as TaprootNode[]) as TaprootNode[];
@@ -865,7 +873,13 @@ function taprootHashTree(tree: TaprootScriptTree): HashedTree {
   if (cmp(rH, lH) === -1) [lH, rH] = [rH, lH];
   return { type: 'branch', left, right, hash: taggedHash('TapBranch', lH, rH) };
 }
-type TaprootLeaf = { type: 'leaf'; version?: number; script: Bytes; hash: Bytes; path: Bytes[] };
+type TaprootLeaf = {
+  type: 'leaf';
+  version?: number;
+  script: Bytes;
+  hash: Bytes;
+  path: Bytes[];
+};
 
 type HashedTreeWithPath =
   | TaprootLeaf
@@ -933,7 +947,7 @@ export function p2tr(
     typeof internalPubKey === 'string'
       ? base.hex.decode(internalPubKey)
       : internalPubKey || TAPROOT_UNSPENDABLE_KEY;
-  if (!isValidPubkey(pubKey, PubkeyType.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
+  if (!isValidPubkey(pubKey, PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
   let hashedTree = tree ? taprootAddPath(taprootHashTree(tree)) : undefined;
   const tapMerkleRoot = hashedTree ? hashedTree.hash : P.EMPTY;
   const [tweakedPubkey, parity] = taprootTweakPubkey(pubKey, tapMerkleRoot);
@@ -1075,7 +1089,10 @@ const OutTRMS: base.Coder<OptScript, OutTRMSType | undefined> = {
   },
 };
 export function p2tr_ms(m: number, pubkeys: Bytes[]) {
-  return { type: 'tr_ms', script: OutScript.encode({ type: 'tr_ms', pubkeys, m }) };
+  return {
+    type: 'tr_ms',
+    script: OutScript.encode({ type: 'tr_ms', pubkeys, m }),
+  };
 }
 // Uknown output type
 type OutUnknownType = { type: 'unknown'; script: Bytes };
@@ -1120,7 +1137,7 @@ const _OutScript = P.apply(Script, P.coders.match(OutScripts));
 
 // We can validate this once, because of packed & coders
 export const OutScript = P.validate(_OutScript, (i) => {
-  if (i.type === 'pk' && !isValidPubkey(i.pubkey, PubkeyType.ecdsa))
+  if (i.type === 'pk' && !isValidPubkey(i.pubkey, PubT.ecdsa))
     throw new Error('OutScript/pk: wrong key');
   if (
     (i.type === 'pkh' || i.type === 'sh' || i.type === 'wpkh') &&
@@ -1129,19 +1146,19 @@ export const OutScript = P.validate(_OutScript, (i) => {
     throw new Error(`OutScript/${i.type}: wrong hash`);
   if (i.type === 'wsh' && (!isBytes(i.hash) || i.hash.length !== 32))
     throw new Error(`OutScript/wsh: wrong hash`);
-  if (i.type === 'tr' && (!isBytes(i.pubkey) || !isValidPubkey(i.pubkey, PubkeyType.schnorr)))
+  if (i.type === 'tr' && (!isBytes(i.pubkey) || !isValidPubkey(i.pubkey, PubT.schnorr)))
     throw new Error('OutScript/tr: wrong taproot public key');
   if (i.type === 'ms' || i.type === 'tr_ns')
     if (!Array.isArray(i.pubkeys)) throw new Error('OutScript/multisig: wrong pubkeys array');
   if (i.type === 'ms') {
     const n = i.pubkeys.length;
     for (const p of i.pubkeys)
-      if (!isValidPubkey(p, PubkeyType.ecdsa)) throw new Error('OutScript/multisig: wrong pubkey');
+      if (!isValidPubkey(p, PubT.ecdsa)) throw new Error('OutScript/multisig: wrong pubkey');
     if (i.m <= 0 || n > 16 || i.m > n) throw new Error('OutScript/multisig: invalid params');
   }
   if (i.type === 'tr_ns') {
     for (const p of i.pubkeys)
-      if (!isValidPubkey(p, PubkeyType.schnorr)) throw new Error('OutScript/tr_ns: wrong pubkey');
+      if (!isValidPubkey(p, PubT.schnorr)) throw new Error('OutScript/tr_ns: wrong pubkey');
   }
   if (i.type === 'tr_ms') {
     const n = i.pubkeys.length;
@@ -1236,7 +1253,10 @@ export function Address(network = NETWORK) {
         return { type: 'pkh', hash: bytes.slice(1, bytes.length - 4) };
       } else if (data[0] === network.scriptHash) {
         const bytes = base.base58.decode(address);
-        return { type: 'sh', hash: base.base58.decode(address).slice(1, bytes.length - 4) };
+        return {
+          type: 'sh',
+          hash: base.base58.decode(address).slice(1, bytes.length - 4),
+        };
       }
       throw new Error(`Invalid address prefix=${data[0]}`);
     },
@@ -1263,7 +1283,11 @@ function sum(arr: (number | bigint)[]): bigint {
 // TODO: encoder maybe?
 function unpackSighash(hashType: number) {
   const masked = hashType & 0b0011111;
-  return { isAny: !!(hashType & 128), isNone: masked === 2, isSingle: masked === 3 };
+  return {
+    isAny: !!(hashType & 128),
+    isNone: masked === 2,
+    isSingle: masked === 3,
+  };
 }
 
 export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(cmp);
@@ -1384,7 +1408,11 @@ export class Transaction {
       if (!inputs.length) inputs.push({});
       if (!outputs.length) outputs.push({});
     }
-    return (ver === 2 ? RawPSBTV2 : RawPSBTV0).encode({ global, inputs, outputs });
+    return (ver === 2 ? RawPSBTV2 : RawPSBTV0).encode({
+      global,
+      inputs,
+      outputs,
+    });
   }
   private global: Writable<PSBTKeyMapKeys<typeof PSBTGlobal>> = {};
   private inputs: TransactionInput[] = [];
@@ -1770,7 +1798,12 @@ export class Transaction {
     let cur = first;
     const stack = [first];
     if (first.type === 'tr') {
-      return { txType: 'taproot', type: 'tr', last: first, lastScript: prevOut.script };
+      return {
+        txType: 'taproot',
+        type: 'tr',
+        last: first,
+        lastScript: prevOut.script,
+      };
     } else {
       if (first.type === 'wpkh' || first.type === 'wsh') txType = 'segwit';
       if (first.type === 'sh') {
@@ -1898,7 +1931,9 @@ export class Transaction {
             secp256k1.schnorr.signSync(msg, privateKey, _auxRand),
             sighashType !== SignatureHash.DEFAULT ? new Uint8Array([sighashType]) : P.EMPTY
           );
-          this.updateInput(idx, { tapScriptSig: [[{ pubkey: schnorrPub, leafHash: hash }, sig]] });
+          this.updateInput(idx, {
+            tapScriptSig: [[{ pubkey: schnorrPub, leafHash: hash }, sig]],
+          });
         }
         return true;
       } else throw new Error('sign/taproot: unknown input');

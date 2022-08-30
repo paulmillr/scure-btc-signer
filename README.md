@@ -605,8 +605,8 @@ for (let i = 0; i < tx3.inputs.length; i++)
 const psbt3 = tx3.toPSBT();
 /*
   Given the above updated PSBT, a signer that supports SIGHASH_ALL for P2PKH and P2WPKH spends and uses RFC6979 for nonce generation and has the following keys:
-  - cP53pDbR5WtAD8dYAW9hhTjuvvTVaEiQBdrz9XPrgLBeRFiyCbQr (m/0&#39;/0&#39;/0&#39;)
-  - cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4iSgw6d (m/0&#39;/0&#39;/2&#39;)
+  - cP53pDbR5WtAD8dYAW9hhTjuvvTVaEiQBdrz9XPrgLBeRFiyCbQr (m/0'/0'/0')
+  - cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4iSgw6d (m/0'/0'/2')
 */
 // NOTE: we don't use HDKey, because it will everything because of bip32 derivation
 const tx4 = btc.Transaction.fromPSBT(psbt3);
@@ -615,8 +615,8 @@ tx4.sign(btc.WIF(testnet).decode('cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4
 // must create this PSBT:
 const psbt4 = tx4.toPSBT();
 // Given the above updated PSBT, a signer with the following keys:
-// cT7J9YpCwY3AVRFSjN6ukeEeWY6mhpbJPxRaDaP5QTdygQRxP9Au (m/0&#39;/0&#39;/1&#39;)
-// cNBc3SWUip9PPm1GjRoLEJT6T41iNzCYtD7qro84FMnM5zEqeJsE (m/0&#39;/0&#39;/3&#39;)
+// cT7J9YpCwY3AVRFSjN6ukeEeWY6mhpbJPxRaDaP5QTdygQRxP9Au (m/0'/0'/1')
+// cNBc3SWUip9PPm1GjRoLEJT6T41iNzCYtD7qro84FMnM5zEqeJsE (m/0'/0'/3')
 const tx5 = btc.Transaction.fromPSBT(psbt3);
 tx5.sign(btc.WIF(testnet).decode('cT7J9YpCwY3AVRFSjN6ukeEeWY6mhpbJPxRaDaP5QTdygQRxP9Au'));
 tx5.sign(btc.WIF(testnet).decode('cNBc3SWUip9PPm1GjRoLEJT6T41iNzCYtD7qro84FMnM5zEqeJsE'));
