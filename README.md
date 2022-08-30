@@ -11,13 +11,8 @@ Create, sign & decode BTC transactions with minimum deps.
 
 The library is new and has not been battle-tested, use at your own risk.
 
-Check out all web3 utility libraries:
+*Check out all web3 utility libraries:* [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [micro-btc-signer](https://github.com/paulmillr/micro-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
-- [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer)
-- [micro-btc-signer](https://github.com/paulmillr/micro-btc-signer)
-- [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer)
-- [micro-web3](https://github.com/paulmillr/micro-web3)
-- [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
