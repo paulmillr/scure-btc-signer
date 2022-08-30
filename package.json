@@ -1,0 +1,57 @@
+{
+  "name": "micro-btc-signer",
+  "version": "0.1.0",
+  "description": "Create, sign & decode BTC transactions with minimum deps",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "index.d.ts.map",
+    "index.ts"
+  ],
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "dependencies": {
+    "@noble/secp256k1": "~1.6.3",
+    "@noble/hashes": "~1.1.1",
+    "@scure/base": "~1.1.0",
+    "micro-packed": "~0.3.0"
+  },
+  "devDependencies": {
+    "@scure/bip32": "~1.1.0",
+    "micro-should": "0.2.0",
+    "prettier": "2.6.2",
+    "typescript": "4.7.3"
+  },
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT",
+  "homepage": "https://github.com/paulmillr/micro-btc-signer",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/micro-btc-signer.git"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "prettier --check index.ts",
+    "test": "node test/index.test.js"
+  },
+  "keywords": [
+    "bitcoin",
+    "btc",
+    "sign",
+    "signer",
+    "tx",
+    "transaction",
+    "address",
+    "taproot",
+    "schnorr",
+    "psbt"
+  ],
+  "funding": [
+    {
+      "type": "individual",
+      "url": "https://paulmillr.com/funding/"
+    }
+  ]
+}
