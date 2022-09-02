@@ -1050,7 +1050,7 @@ export function combinations<T>(m: number, list: T[]): T[][] {
 }
 /**
  * M-of-N multi-leaf wallet via p2tr_ns. If m == n, single script is emitted.
- * Takes O(n^2) if m != n. 99-of-100, 5-of-100 is not.
+ * Takes O(n^2) if m != n. 99-of-100 is ok, 5-of-100 is not.
  * `2-of-[A,B,C] => [A,B] | [A,C] | [B,C]`
  */
 export const p2tr_ns = (m: number, pubkeys: Bytes[]): P2Ret[] => {
