@@ -1,7 +1,7 @@
 {
   "name": "micro-btc-signer",
   "version": "0.1.0",
-  "description": "Create, sign & decode BTC transactions with minimum deps",
+  "description": "Create, sign & decode BTC transactions with minimum deps. With Schnorr, Taproot, UTXO & PSBT",
   "files": [
     "index.js",
     "index.d.ts",
@@ -40,13 +40,17 @@
     "bitcoin",
     "btc",
     "sign",
-    "signer",
     "tx",
     "transaction",
     "address",
     "taproot",
     "schnorr",
-    "psbt"
+    "psbt",
+    "p2pkh",
+    "p2wpkh",
+    "p2sh",
+    "p2wsh",
+    "p2tr"
   ],
   "funding": [
     {

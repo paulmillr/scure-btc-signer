@@ -8,6 +8,7 @@ Create, sign & decode BTC transactions with minimum deps.
 - Classic & SegWit support: P2PK, P2PKH, P2WPKH, P2SH, P2WSH, P2MS
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
 - 📨 BIP174 PSBT
+- Multisig
 
 The library is new and has not been battle-tested, use at your own risk.
 
