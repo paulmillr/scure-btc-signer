@@ -184,6 +184,9 @@ deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
 
 Classic (pre-taproot) M-of-N Multisig, doesn't have an address, should be wrapped in P2SH/P2WSH/P2SH-P2WSH.
 
+**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating wrong multisig by mistake. However there is a flag: allowSamePubkeys, in case you really need that.
+Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
+
 ```ts
 const PubKeys = [
   hex.decode('030000000000000000000000000000000000000000000000000000000000000001'),
@@ -273,9 +276,12 @@ deepStrictEqual(btc.p2tr(undefined, [btc.p2tr(PubKey2), [btc.p2tr(PubKey), btc.p
 
 Taproot N-of-N multisig (`[<PubKeys[0:n-1]> CHECKSIGVERIFY] <PubKeys[n-1]> CHECKSIG`).
 
-**_ NOTE _**: First arg is M, if M!=PubKeys.length, it will create multi-leaf M-of-N taproot script tree.
+**_NOTE_**: First arg is M, if M!=PubKeys.length, it will create multi-leaf M-of-N taproot script tree.
 This allows to reveal only `M` PubKeys on spend, without any information about others.
 Fast for cases like 15-of-20, extremely slow for cases like 5-of-20.
+
+**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating wrong multisig by mistake. However there is a flag: allowSamePubkeys, in case you really need that.
+Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
 
 ```ts
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -302,6 +308,9 @@ deepStrictEqual(btc.p2tr(undefined, btc.p2tr_ns(2, [PubKey, PubKey2, PubKey3])),
 ### P2TR-MS (Taproot M-of-N multisig)
 
 M-of-N single leaf TapRoot multisig (`<PubKeys[0]> CHECKSIG [<PubKeys[1:n]> CHECKSIGADD] <M> NUMEQUAL`)
+
+**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating wrong multisig by mistake. However there is a flag: allowSamePubkeys, in case you really need that.
+Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
 
 **_NOTE_**: experimental, use at your own risk.
 

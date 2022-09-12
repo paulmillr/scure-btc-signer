@@ -51,9 +51,39 @@ function isValidPubkey(pub: Bytes, type: PubT) {
   }
 }
 
+// Not best way, but closest to bitcoin implementation (easier to check)
+const hasLowR = (sig: Bytes) => secp256k1.Signature.fromHex(sig).toCompactRawBytes()[0] < 0x80;
+// TODO: move to @noble/secp256k1?
+function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
+  let sig = secp256k1.signSync(hash, privateKey, { canonical: true });
+  if (lowR && !hasLowR(sig)) {
+    const extraEntropy = new Uint8Array(32);
+    for (let cnt = 0; cnt < Number.MAX_SAFE_INTEGER; cnt++) {
+      extraEntropy.set(P.U32LE.encode(cnt));
+      sig = secp256k1.signSync(hash, privateKey, { canonical: true, extraEntropy });
+      if (hasLowR(sig)) break;
+    }
+  }
+  return sig;
+}
+
 // Can be 33 or 64 bytes
 const PubKeyECDSA = P.validate(P.bytes(null), (pub) => validatePubkey(pub, PubT.ecdsa));
 const PubKeySchnorr = P.validate(P.bytes(32), (pub) => validatePubkey(pub, PubT.schnorr));
+const SignatureSchnorr = P.validate(P.bytes(null), (sig) => {
+  if (sig.length !== 64 && sig.length !== 65)
+    throw new Error('Schnorr signature should be 64 or 65 bytes long');
+  return sig;
+});
+
+function uniqPubkey(pubkeys: Bytes[]) {
+  const map: Record<string, boolean> = {};
+  for (const pub of pubkeys) {
+    const key = base.hex.encode(pub);
+    if (map[key]) throw new Error(`Multisig: non-uniq pubkey: ${pubkeys.map(base.hex.encode)}`);
+    map[key] = true;
+  }
+}
 
 export const NETWORK = {
   bech32: 'bc',
@@ -63,7 +93,7 @@ export const NETWORK = {
 };
 
 export const PRECISION = 8;
-export const DEFAULT_VERSION = 1;
+export const DEFAULT_VERSION = 2;
 export const DEFAULT_LOCKTIME = 0;
 export const DEFAULT_SEQUENCE = 4294967295;
 const EMPTY32 = new Uint8Array(32);
@@ -284,10 +314,15 @@ const BIP32Der = P.struct({
 });
 
 // <control byte with leaf version and parity bit> <internal key p> <C> <E> <AB>
-export const TaprootControlBlock = P.struct({
+const _TaprootControlBlock = P.struct({
   version: P.U8, // With parity :(
   internalKey: P.bytes(32),
   merklePath: P.array(null, P.bytes(32)),
+});
+export const TaprootControlBlock = P.validate(_TaprootControlBlock, (cb) => {
+  if (cb.merklePath.length > 128)
+    throw new Error('TaprootControlBlock: merklePath should be of length 0..128 (inclusive)');
+  return cb;
 });
 
 const TaprootBIP32Der = P.struct({
@@ -332,11 +367,11 @@ const PSBTInput = {
   sequence: [0x10, false, P.U32LE, [], [0], [2]],
   requiredTimeLocktime: [0x11, false, P.U32LE, [], [0], [2]],
   requiredHeightLocktime: [0x12, false, P.U32LE, [], [0], [2]],
-  tapKeySig: [0x13, false, P.bytes(null), [], [], [0, 2]],
+  tapKeySig: [0x13, false, SignatureSchnorr, [], [], [0, 2]],
   tapScriptSig: [
     0x14,
     P.struct({ pubkey: PubKeySchnorr, leafHash: P.bytes(32) }),
-    P.bytes(null),
+    SignatureSchnorr,
     [],
     [],
     [0, 2],
@@ -452,10 +487,17 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
         if (byType[elm.key.type]) {
           const [_name, kc, vc] = byType[elm.key.type];
           name = _name;
+          if (!kc && key.length) {
+            throw new Error(
+              `PSBT: Non-empty key for ${name} (key=${base.hex.encode(key)} value=${base.hex.encode(
+                value
+              )}`
+            );
+          }
           key = kc ? kc.decode(key) : undefined;
           value = vc.decode(value);
           if (!kc) {
-            if (out[name]) throw new Error(`Same keys: ${name} (key=${key} value=${value}`);
+            if (out[name]) throw new Error(`PSBT: Same keys: ${name} (key=${key} value=${value})`);
             out[name] = value;
             noKey[name] = true;
             continue;
@@ -465,7 +507,8 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
           key = PSBTUnknownKey.encode({ type: elm.key.type, key: elm.key.key });
         }
         // Only keyed elements at this point
-        if (noKey[name]) throw new Error(`Key type with empty key and no key=${name} val=${value}`);
+        if (noKey[name])
+          throw new Error(`PSBT: Key type with empty key and no key=${name} val=${value}`);
         if (!out[name]) out[name] = [];
         out[name].push([key, value]);
       }
@@ -537,7 +580,6 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     )
       throw new Error('validateInput: witnessUtxo different from nonWitnessUtxo');
   }
-
   if (i.tapLeafScript) {
     // tap leaf version appears here twice: in control block and at the end of script
     for (const [k, v] of i.tapLeafScript) {
@@ -799,7 +841,8 @@ const OutMS: base.Coder<OptScript, OutMSType | undefined> = {
       ? [`OP_${to.m}`, ...to.pubkeys, `OP_${to.pubkeys.length}` as any, 'CHECKMULTISIG']
       : undefined,
 };
-export const p2ms = (m: number, pubkeys: Bytes[]): P2Ret => {
+export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2Ret => {
+  if (!allowSamePubkeys) uniqPubkey(pubkeys);
   return { type: 'ms', script: OutScript.encode({ type: 'ms', pubkeys, m }) };
 };
 // Taproot (P2TR)
@@ -815,7 +858,7 @@ export type TaprootNode = {
   script: Bytes | string;
   leafVersion?: number;
   weight?: number;
-};
+} & Partial<P2TROut>;
 export type TaprootScriptTree = TaprootNode | TaprootScriptTree[];
 export type TaprootScriptList = TaprootNode[];
 type _TaprootListInternal = (
@@ -843,19 +886,31 @@ export function taprootListToTree(taprootList: TaprootScriptList): TaprootScript
   const last = lst[0];
   return ((last as any).childs || last) as TaprootScriptTree;
 }
-
 type HashedTree =
-  | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes }
+  | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes; tapInternalKey?: Bytes }
   | { type: 'branch'; left: HashedTree; right: HashedTree; hash: Bytes };
-function taprootHashTree(tree: TaprootScriptTree): HashedTree {
+function checkTaprootScript(script: Bytes, allowUnknowOutput = false) {
+  const out = OutScript.decode(script);
+  if (out.type === 'unknown' && allowUnknowOutput) return;
+  if (!out.type.startsWith('tr')) throw new Error(`P2TR: invalid leaf script=${out.type}`);
+}
+function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): HashedTree {
   if (!tree) throw new Error('taprootHashTree: empty tree');
   if (Array.isArray(tree) && tree.length === 1) tree = tree[0];
   // Terminal node (leaf)
   if (!Array.isArray(tree)) {
-    const { leafVersion: version, script: leafScript } = tree;
+    const { leafVersion: version, script: leafScript, tapInternalKey } = tree;
+    // Earliest tree walk where we can validate tapScripts
+    if (tree.tapLeafScript || (tree.tapMerkleRoot && !P.equalBytes(tree.tapMerkleRoot, P.EMPTY)))
+      throw new Error('P2TR: tapRoot leafScript cannot have tree');
+    // Just to be sure that it is spendable
+    if (tapInternalKey && P.equalBytes(tapInternalKey, TAPROOT_UNSPENDABLE_KEY))
+      throw new Error('P2TR: tapRoot leafScript cannot have unspendble key');
     const script = typeof leafScript === 'string' ? base.hex.decode(leafScript) : leafScript;
+    checkTaprootScript(script, allowUnknowOutput);
     return {
       type: 'leaf',
+      tapInternalKey,
       version,
       script,
       hash: tapLeafHash(script, version),
@@ -866,8 +921,8 @@ function taprootHashTree(tree: TaprootScriptTree): HashedTree {
   if (tree.length !== 2) throw new Error('hashTree: non binary tree!');
   // branch
   // NOTE: both nodes should exist
-  const left = taprootHashTree(tree[0]);
-  const right = taprootHashTree(tree[1]);
+  const left = taprootHashTree(tree[0], allowUnknowOutput);
+  const right = taprootHashTree(tree[1], allowUnknowOutput);
   // We cannot swap left/right here, since it will change structure of tree
   let [lH, rH] = [left.hash, right.hash];
   if (cmp(rH, lH) === -1) [lH, rH] = [rH, lH];
@@ -879,6 +934,7 @@ type TaprootLeaf = {
   script: Bytes;
   hash: Bytes;
   path: Bytes[];
+  tapInternalKey?: Bytes;
 };
 
 type HashedTreeWithPath =
@@ -910,18 +966,9 @@ function taprootWalkTree(tree: HashedTreeWithPath): TaprootLeaf[] {
   return [...taprootWalkTree(tree.left), ...taprootWalkTree(tree.right)];
 }
 
-export function taprootTweakPubkey(pubKey: Bytes, h: Bytes): [Bytes, boolean] {
-  const tweak = taggedHash('TapTweak', pubKey, h);
-  // Same as 'utils.pointAddScalar', but returns rawX for now
-  const tweakPub = secp256k1.Point.fromPrivateKey(tweak);
-  const pubPoint = secp256k1.Point.fromHex(pubKey);
-  const tweakPoint = pubPoint.add(tweakPub);
-  return [tweakPoint.toRawX(), !!(tweakPoint.y & 1n)];
-}
-
 // Another stupid decision, where lack of standard affects security.
 // Multisig needs to be generated with some key.
-// We are using approach from bitcoinjs-lib: SHA256(uncompressedDER(SECP256K1_GENERATOR_POINT))
+// We are using approach from BIP 341/bitcoinjs-lib: SHA256(uncompressedDER(SECP256K1_GENERATOR_POINT))
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
 export const TAPROOT_UNSPENDABLE_KEY = sha256(secp256k1.Point.BASE.toRawBytes(false));
@@ -939,7 +986,8 @@ export type P2TROut = P2Ret & {
 export function p2tr(
   internalPubKey?: Bytes | string,
   tree?: TaprootScriptTree,
-  network = NETWORK
+  network = NETWORK,
+  allowUnknowOutput = false
 ): P2TROut {
   // Unspendable
   if (!internalPubKey && !tree) throw new Error('p2tr: should have pubKey or scriptTree (or both)');
@@ -948,7 +996,7 @@ export function p2tr(
       ? base.hex.decode(internalPubKey)
       : internalPubKey || TAPROOT_UNSPENDABLE_KEY;
   if (!isValidPubkey(pubKey, PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
-  let hashedTree = tree ? taprootAddPath(taprootHashTree(tree)) : undefined;
+  let hashedTree = tree ? taprootAddPath(taprootHashTree(tree, allowUnknowOutput)) : undefined;
   const tapMerkleRoot = hashedTree ? hashedTree.hash : P.EMPTY;
   const [tweakedPubkey, parity] = taprootTweakPubkey(pubKey, tapMerkleRoot);
   let leaves;
@@ -957,7 +1005,7 @@ export function p2tr(
       ...l,
       controlBlock: TaprootControlBlock.encode({
         version: (l.version || TAP_LEAF_VERSION) + +parity,
-        internalKey: pubKey,
+        internalKey: l.tapInternalKey || pubKey,
         merklePath: l.path,
       }),
     }));
@@ -991,6 +1039,15 @@ export function _taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = P.EMPTY
   const seckey = (pubPoint.y & 1n) === 0n ? privKey : secp256k1.utils.privateNegate(privKey);
   return secp256k1.utils.privateAdd(seckey, taggedHash('TapTweak', pubKey, merkleRoot));
 }
+export function taprootTweakPubkey(pubKey: Bytes, h: Bytes): [Bytes, boolean] {
+  const tweak = taggedHash('TapTweak', pubKey, h);
+  // Same as 'utils.pointAddScalar', but returns rawX for now
+  const tweakPub = secp256k1.Point.fromPrivateKey(tweak);
+  const pubPoint = secp256k1.Point.fromHex(pubKey);
+  const tweakPoint = pubPoint.add(tweakPub);
+  return [tweakPoint.toRawX(), !!(tweakPoint.y & 1n)];
+}
+
 // Taproot N-of-N multisig (P2TR_NS)
 type OutTRNSType = { type: 'tr_ns'; pubkeys: Bytes[] };
 const OutTRNS: base.Coder<OptScript, OutTRNSType | undefined> = {
@@ -1053,7 +1110,8 @@ export function combinations<T>(m: number, list: T[]): T[][] {
  * Takes O(n^2) if m != n. 99-of-100 is ok, 5-of-100 is not.
  * `2-of-[A,B,C] => [A,B] | [A,C] | [B,C]`
  */
-export const p2tr_ns = (m: number, pubkeys: Bytes[]): P2Ret[] => {
+export const p2tr_ns = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2Ret[] => {
+  if (!allowSamePubkeys) uniqPubkey(pubkeys);
   return combinations(m, pubkeys).map((i) => ({
     type: 'tr_ns',
     script: OutScript.encode({ type: 'tr_ns', pubkeys: i }),
@@ -1088,7 +1146,8 @@ const OutTRMS: base.Coder<OptScript, OutTRMSType | undefined> = {
     return out;
   },
 };
-export function p2tr_ms(m: number, pubkeys: Bytes[]) {
+export function p2tr_ms(m: number, pubkeys: Bytes[], allowSamePubkeys = false) {
+  if (!allowSamePubkeys) uniqPubkey(pubkeys);
   return {
     type: 'tr_ms',
     script: OutScript.encode({ type: 'tr_ms', pubkeys, m }),
@@ -1104,18 +1163,6 @@ const OutUnknown: base.Coder<OptScript, OutUnknownType | undefined> = {
     to.type === 'unknown' ? Script.decode(to.script) : undefined,
 };
 // /Payments
-
-export const types = {
-  // p2pk?
-  p2pkh,
-  p2sh,
-  p2wsh,
-  p2wpkh,
-  p2ms,
-  p2tr,
-  // p2tr_ns
-  // p2tr_ms
-};
 
 const OutScripts = [
   OutPK,
@@ -1156,9 +1203,9 @@ export const OutScript = P.validate(_OutScript, (i) => {
       if (!isValidPubkey(p, PubT.ecdsa)) throw new Error('OutScript/multisig: wrong pubkey');
     if (i.m <= 0 || n > 16 || i.m > n) throw new Error('OutScript/multisig: invalid params');
   }
-  if (i.type === 'tr_ns') {
+  if (i.type === 'tr_ns' || i.type === 'tr_ms') {
     for (const p of i.pubkeys)
-      if (!isValidPubkey(p, PubT.schnorr)) throw new Error('OutScript/tr_ns: wrong pubkey');
+      if (!isValidPubkey(p, PubT.schnorr)) throw new Error(`OutScript/${i.type}: wrong pubkey`);
   }
   if (i.type === 'tr_ms') {
     const n = i.pubkeys.length;
@@ -1331,6 +1378,7 @@ export type TxOpts = {
   // If transaction data comes from untrusted source, then it can be modified in such way that will
   // result paying higher mining fee
   allowLegacyWitnessUtxo?: boolean;
+  lowR?: boolean; // Use lowR signatures
 };
 
 export class Transaction {
@@ -1655,7 +1703,7 @@ export class Transaction {
   }
   addOutputAddress(address: string, amount: string | bigint, network = NETWORK): number {
     return this.addOutput({
-      script: OutScript.encode(Address().decode(address)),
+      script: OutScript.encode(Address(network).decode(address)),
       amount: typeof amount === 'string' ? Decimal.decode(amount) : amount,
     });
   }
@@ -1964,7 +2012,7 @@ export class Transaction {
           script = OutScript.encode({ type: 'pkh', hash: inputType.last.hash });
         hash = this.preimageWitnessV0(idx, script, sighashType, prevOut.amount);
       } else throw new Error(`Transaction/sign: unknown tx type: ${inputType.txType}`);
-      const sig = secp256k1.signSync(hash, privateKey, { canonical: true });
+      const sig = signECDSA(hash, privateKey, this.opts.lowR);
       this.updateInput(idx, {
         partialSig: [[pubKey, concat(sig, new Uint8Array([sighashType]))]],
       });
