@@ -7,7 +7,6 @@ import * as bip32 from '@scure/bip32';
 
 for (let i = 0; i < psbtV.length; i++) {
   const v = psbtV[i];
-  if (v.signer) continue;
   should(`PSBTv${v.v2 ? '2' : '0'}(${i}), ${i.invalid ? 'invalid' : 'valid'}: ${v.name}`, () => {
     const tx = hex.decode(v.hex);
     if (v.invalid) {

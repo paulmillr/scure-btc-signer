@@ -167,7 +167,7 @@ should('BIP341: Taproot controlBlock', () => {
 for (let i = 0; i < v341.scriptPubKey.length; i++) {
   const v = v341.scriptPubKey[i];
   should(`BIP341: TapRoot Script(${i})`, () => {
-    const res = btc.p2tr(v.given.internalPubkey, v.given.scriptTree);
+    const res = btc.p2tr(v.given.internalPubkey, v.given.scriptTree, undefined, true);
     deepStrictEqual(hex.encode(res.tapMerkleRoot), v.intermediary.merkleRoot || '');
     deepStrictEqual(hex.encode(res.tweakedPubkey), v.intermediary.tweakedPubkey);
     deepStrictEqual(

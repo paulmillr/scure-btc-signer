@@ -13,7 +13,7 @@
   "module": "index.js",
   "types": "index.d.ts",
   "dependencies": {
-    "@noble/secp256k1": "~1.6.3",
+    "@noble/secp256k1": "~1.7.0",
     "@noble/hashes": "~1.1.1",
     "@scure/base": "~1.1.0",
     "micro-packed": "~0.3.0"
@@ -34,7 +34,8 @@
   "scripts": {
     "build": "tsc",
     "lint": "prettier --check index.ts",
-    "test": "node test/index.test.js"
+    "test": "node test/index.test.js && node test/psbt-test/bip174-psbt-extended.test.js",
+    "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js"
   },
   "keywords": [
     "bitcoin",
