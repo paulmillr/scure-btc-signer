@@ -23,14 +23,14 @@ should('BTC: parseAddress', () => {
     deepStrictEqual(btc.OutScript.encode(btc.Address().decode(addr)), hex.decode(outScript));
   }
 });
-const ADDR_1 = '1C6Rc3w25VHud3dLDamutaqfKWqhrLRTaD'
+const ADDR_1 = '1C6Rc3w25VHud3dLDamutaqfKWqhrLRTaD';
 
 should('BTC: Bech32 addresses', () => {
   const priv = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   deepStrictEqual(btc.WIF().encode(priv), 'KwFfNUhSDaASSAwtG7ssQM1uVX8RgX5GHWnnLfhfiQDigjioWXHH');
   deepStrictEqual(btc.getAddress('wpkh', priv), 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw');
   const pub = secp256k1.getPublicKey(priv, true);
-  deepStrictEqual(btc.types.p2wpkh(pub).address, 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw');
+  deepStrictEqual(btc.p2wpkh(pub).address, 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw');
 });
 
 should('BTC: P2PKH addresses', () => {
@@ -38,7 +38,7 @@ should('BTC: P2PKH addresses', () => {
   deepStrictEqual(btc.WIF().encode(priv), 'KwFfNUhSDaASSAwtG7ssQM1uVX8RgX5GHWnnLfhfiQDigjioWXHH');
   deepStrictEqual(btc.getAddress('pkh', priv), ADDR_1);
   const pub = secp256k1.getPublicKey(priv, true);
-  deepStrictEqual(btc.types.p2pkh(pub).address, ADDR_1);
+  deepStrictEqual(btc.p2pkh(pub).address, ADDR_1);
 });
 
 // Same as above
@@ -73,12 +73,12 @@ const RAW_TX_HEX =
 should('BTC: tx (from P2PKH)', async () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const opts = { allowLegacyWitnessUtxo: true };
-  const tx = new btc.Transaction(undefined, undefined, undefined, opts);
+  const tx = new btc.Transaction(1, undefined, undefined, opts);
   for (const [address, amount] of TX_TEST_OUTPUTS) tx.addOutputAddress(address, amount);
   for (const inp of TX_TEST_INPUTS) tx.addInput(inp);
   deepStrictEqual(tx.hex, RAW_TX_HEX);
   // Replace input scripts with ours, so we can sign
-  const tx2 = new btc.Transaction(undefined, undefined, undefined, opts);
+  const tx2 = new btc.Transaction(1, undefined, undefined, opts);
   for (const [address, amount] of TX_TEST_OUTPUTS) tx2.addOutputAddress(address, amount);
   const pub = secp256k1.getPublicKey(privKey, true);
   for (const inp of TX_TEST_INPUTS) {
@@ -103,7 +103,7 @@ should('BTC: tx (from P2PKH)', async () => {
 
 should('BTC: tx (from bech32)', async () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
-  const tx32 = new btc.Transaction();
+  const tx32 = new btc.Transaction(1);
   for (const inp of TX_TEST_INPUTS) {
     tx32.addInput({
       hash: inp.hash,
@@ -325,8 +325,7 @@ should('payTo API', () => {
       '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
     ),
   });
-  // TODO: add
-  //throws(() => btc.p2tr(undefined, btc.p2ms(2, [compressed, compressed2, compressed3])));
+  throws(() => btc.p2tr(undefined, btc.p2ms(2, [compressed, compressed2, compressed3])));
   // Maybe can be wrapped, but non-representable in PSBT
   throws(() => btc.p2sh(btc.p2sh(btc.p2pkh(compressed))));
   const taproot = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -402,7 +401,10 @@ should('payTo API', () => {
         hash: hex.decode('e289be80af8fd95dbf86e86838d06b4f9effd622cc3f45797a40e6da9dcece16'),
         path: [],
         controlBlock: hex.decode(
-          'c050929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
+          'c00101010101010101010101010101010101010101010101010101010101010101'
+        ),
+        tapInternalKey: hex.decode(
+          '0101010101010101010101010101010101010101010101010101010101010101'
         ),
       },
     ],
@@ -411,7 +413,7 @@ should('payTo API', () => {
         {
           version: 192,
           internalKey: hex.decode(
-            '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
+            '0101010101010101010101010101010101010101010101010101010101010101'
           ),
           merklePath: [],
         },
@@ -609,6 +611,179 @@ should('Transaction input/output', () => {
     script,
     amount: 200n,
   });
+});
+
+should('TapRoot sanity check', () => {
+  const taproot = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  const taproot2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
+  const compressed = hex.decode(
+    '030000000000000000000000000000000000000000000000000000000000000001'
+  );
+  const compressed2 = hex.decode(
+    '030000000000000000000000000000000000000000000000000000000000000001'
+  );
+  const compressed3 = hex.decode(
+    '030000000000000000000000000000000000000000000000000000000000000001'
+  );
+  throws(() => btc.p2tr(undefined, [btc.p2pkh(compressed)]));
+  throws(() => btc.p2tr(undefined, [btc.p2wpkh(compressed)]));
+  throws(() => btc.p2tr(undefined, [btc.p2sh(btc.p2pkh(compressed))]));
+  throws(() => btc.p2tr(undefined, [btc.p2wsh(btc.p2pkh(compressed))]));
+  // Plain tr script is ok
+  btc.p2tr(undefined, [btc.p2tr(taproot)]);
+  // Nested script tree is not allowed
+  throws(() => btc.p2tr(undefined, [btc.p2tr(taproot, btc.p2tr(taproot2))]));
+  throws(() => btc.p2tr(undefined, btc.p2tr(undefined, btc.p2tr(taproot2))));
+  throws(() => btc.p2tr(undefined, btc.p2ms(2, [compressed, compressed2, compressed3])));
+  // No key && no tree
+  throws(() => btc.p2tr(undefined, undefined));
+  throws(() => btc.p2tr(undefined, btc.p2tr(btc.TAPROOT_UNSPENDABLE_KEY)));
+});
+
+should('Multisig sanity check', () => {
+  const compressed = hex.decode(
+    '030000000000000000000000000000000000000000000000000000000000000001'
+  );
+  const compressed2 = hex.decode(
+    '030000000000000000000000000000000000000000000000000000000000000002'
+  );
+  const compressed3 = hex.decode(
+    '030000000000000000000000000000000000000000000000000000000000000003'
+  );
+  const taproot = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  const taproot2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
+  const taproot3 = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
+  // Different keys -> ok
+  btc.p2ms(2, [compressed, compressed2, compressed3]);
+  // Same key -> error by default
+  throws(() => btc.p2ms(2, [compressed, compressed, compressed3]));
+  // With opt -> ok
+  btc.p2ms(2, [compressed, compressed, compressed3], true);
+  // Taproot keys -> fails
+  throws(() => btc.p2ms(2, [taproot, taproot2, taproot3]));
+  // Same for p2tr_ns
+  btc.p2tr_ns(2, [taproot, taproot2, taproot3]);
+  throws(() => btc.p2tr_ns(2, [taproot, taproot, taproot3]));
+  btc.p2tr_ns(2, [taproot, taproot, taproot3], true);
+  throws(() => btc.p2tr_ns(2, [compressed, compressed2, compressed3]));
+  // Same for p2tr_ms
+  btc.p2tr_ms(2, [taproot, taproot2, taproot3]);
+  throws(() => btc.p2tr_ms(2, [taproot, taproot, taproot3]));
+  btc.p2tr_ms(2, [taproot, taproot, taproot3], true);
+  throws(() => btc.p2tr_ms(2, [compressed, compressed2, compressed3]));
+});
+
+should('Big test', () => {
+  // Do test with tx to verify against regtest network
+  // What we need to test && fix bugs?
+  // - Signing taproot inside taproot script tree
+  // - taproot multisigs
+  // - verify that M-of-N multisig produces only M signatures even if N available
+  // - Move input generation for specific output scripts near them
+  // - Do every p2* scripts and try to sign with them
+  // scripts:
+  const privKey1 = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  // TODO: btc.getPublic with types or something?
+  const pubKey1 = secp256k1.getPublicKey(privKey1, true);
+  const spend1_1 = btc.p2sh(btc.p2pk(pubKey1));
+  const spend1_2 = btc.p2wsh(btc.p2pk(pubKey1));
+  const spend1_3 = btc.p2sh(btc.p2wsh(btc.p2pk(pubKey1)));
+  // - p2sh-p2pk
+  // - p2wsh-p2pk
+  // - p2sh-p2wsh-p2pk
+  // ----------------
+  const privKey2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
+  const pubKey2 = secp256k1.getPublicKey(privKey2, true);
+  const spend2_1 = btc.p2sh(btc.p2pkh(pubKey2));
+  const spend2_2 = btc.p2wsh(btc.p2pkh(pubKey2));
+  const spend2_3 = btc.p2sh(btc.p2wsh(btc.p2pkh(pubKey2)));
+  const spend2_4 = btc.p2pkh(pubKey2);
+  // - p2sh-p2pkh
+  // - p2wsh-p2pkh
+  // - p2sh-p2wsh-p2pkh
+  // - p2pkh
+  // ----------------
+  const privKey3 = hex.decode('0303030303030303030303030303030303030303030303030303030303030303');
+  const pubKey3 = secp256k1.getPublicKey(privKey3, true);
+  const spend3_1 = btc.p2sh(btc.p2wpkh(pubKey3));
+  const spend3_2 = btc.p2wpkh(pubKey3);
+  // - p2sh-p2wpkh
+  // - p2wpkh
+  // ----------------
+  const privKey4 = hex.decode('0404040404040404040404040404040404040404040404040404040404040404');
+  const privKey5 = hex.decode('0505050505050505050505050505050505050505050505050505050505050505');
+  const privKey6 = hex.decode('0606060606060606060606060606060606060606060606060606060606060606');
+  const pubKey4 = secp256k1.getPublicKey(privKey4, true);
+  const pubKey5 = secp256k1.getPublicKey(privKey5, true);
+  const pubKey6 = secp256k1.getPublicKey(privKey6, true);
+  const spend4_1 = btc.p2sh(btc.p2ms(2, [pubKey4, pubKey5, pubKey6]));
+  const spend4_2 = btc.p2wsh(btc.p2ms(2, [pubKey4, pubKey5, pubKey6]));
+  const spend4_3 = btc.p2sh(btc.p2wsh(btc.p2ms(2, [pubKey4, pubKey5, pubKey6])));
+  // - p2sh-p2ms
+  // - p2wsh-p2ms
+  // - p2sh-p2wsh-p2ms
+  // ----------------
+  const privKey7 = hex.decode('0707070707070707070707070707070707070707070707070707070707070707');
+  const privKey8 = hex.decode('0808080808080808080808080808080808080808080808080808080808080808');
+  const privKey9 = hex.decode('0909090909090909090909090909090909090909090909090909090909090909');
+  const pubKey7 = secp256k1.schnorr.getPublicKey(privKey7);
+  const pubKey8 = secp256k1.schnorr.getPublicKey(privKey8);
+  const pubKey9 = secp256k1.schnorr.getPublicKey(privKey9);
+  const spend5_1 = btc.p2tr(pubKey7);
+  const spend5_2 = btc.p2tr(undefined, [btc.p2tr(pubKey8)]);
+  const spend5_3 = btc.p2tr(pubKey7, [btc.p2tr(pubKey8)]);
+  const spend5_4 = btc.p2tr(undefined, btc.p2tr_ns(2, [pubKey7, pubKey8, pubKey9]));
+  const spend5_5 = btc.p2tr(undefined, btc.p2tr_ms(2, [pubKey7, pubKey8, pubKey9]));
+  // p2tr keysig
+  // p2tr-p2tr_ns
+  // p2tr-p2tr_ms
+  // p2tr-p2tr
+  const spends = [
+    spend1_1,
+    spend1_2,
+    spend1_3,
+    spend2_1,
+    spend2_2,
+    spend2_3,
+    spend2_4,
+    spend3_1,
+    spend3_2,
+    spend4_1,
+    spend4_2,
+    spend4_3,
+    spend5_1,
+    spend5_2,
+    spend5_3,
+    spend5_4,
+    spend5_5,
+  ];
+  console.log(
+    'ADDDR',
+    spends.map((i) => i.address)
+  );
+  /* 
+  // Create and send to these at regtest, then try to create & sign tx here and spend
+  [
+  '32pyvwPt6L2v2xTaDvRYGWm31oefJQ78Ri',
+  'bc1q0g8nfnsvxzt8amgutgszrv0fxgwdn9yakprztj29sqzqhpw8gvuqnxyt92',
+  '33RtJAwqz79iQrKkAN4s39Ziuo1jzgQEhy',
+  '3HAwrTinYuWLj5nj98p4Woxuyw9kvHd51o',
+  'bc1q3prrz6e0n55y6d0kkan6uejfyr94x3caq9r4qk8tzxudt6pmg9vqe9zj0z',
+  '31oqrpvJ6hakAaqedN9thSXYT5wo5XyBPS',
+  '1NVYv5jmr9JRF3usPZJQmJFJhbQhrPESTP',
+  '32GDcsUty2rgDyCN6EPeWKmjesu1f4X16d',
+  'bc1qg975h6gdx5mryeac72h6lj2nzygugxhyuukqvs',
+  '3Ea4B1sCcmhRqPukk4ZkqdajTMjwMiLdUh',
+  'bc1q3tq3y634aaf4esr9dzx5n8py0p0tk6jfzt8rd6km4ytnwp84xpxql53xhj',
+  '3C6gGbUbd8Rbmso2FYmGHNqAswy5GfjNLy',
+  'bc1pw53jtgez0wf69n06fchp0ctk48620zdscnrj8heh86wykp9mv20qya3c8w',
+  'bc1p2n3kgpxycaqgs694n52tmad5sew3v8fe2qgl4cu5kk79w6vckuhqf94jfu',
+  'bc1p9ck4zvx9x5e9846fy0gahrtre499en8ufdpzvulyr5yd3dr3km0s2e7v06',
+  'bc1pyze0lhtk4hmyq8xxxvkt73ae3y53wx2sktupajdp3zkfzlkwtlcsj9hgqa',
+  'bc1pvj97rgc5flzt0kpdsly9aqsutsxp7ct2fwgtyzap4mtalh8gxe5suvuj66'
+] 
+  */
+  const tx = new btc.Transaction();
 });
 
 // ESM is broken.
