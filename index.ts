@@ -1,5 +1,5 @@
 /*! micro-btc-signer - MIT License (c) 2022 Paul Miller (paulmillr.com) */
-import * as secp256k1 from '@noble/secp256k1';
+import * as secp from '@noble/secp256k1';
 import * as base from '@scure/base';
 import { sha256 } from '@noble/hashes/sha256';
 import { hmac } from '@noble/hashes/hmac';
@@ -23,9 +23,9 @@ const concat = P.concatBytes;
 // Make base58check work
 export const base58check = base.base58check(sha256);
 // Enable sync API for noble-secp256k1
-secp256k1.utils.hmacSha256Sync = (key, ...msgs) => hmac(sha256, key, concat(...msgs));
-secp256k1.utils.sha256Sync = (...msgs) => sha256(concat(...msgs));
-const taggedHash = secp256k1.utils.taggedHashSync;
+secp.utils.hmacSha256Sync = (key, ...msgs) => hmac(sha256, key, concat(...msgs));
+secp.utils.sha256Sync = (...msgs) => sha256(concat(...msgs));
+const taggedHash = secp.utils.taggedHashSync;
 
 enum PubT {
   ecdsa,
@@ -40,7 +40,7 @@ const validatePubkey = (pub: Bytes, type: PubT) => {
   } else {
     throw new Error('Unknown key type');
   }
-  secp256k1.Point.fromHex(pub); // does assertValidity
+  secp.Point.fromHex(pub); // does assertValidity
   return pub;
 };
 function isValidPubkey(pub: Bytes, type: PubT) {
@@ -52,19 +52,35 @@ function isValidPubkey(pub: Bytes, type: PubT) {
 }
 
 // Not best way, but closest to bitcoin implementation (easier to check)
-const hasLowR = (sig: Bytes) => secp256k1.Signature.fromHex(sig).toCompactRawBytes()[0] < 0x80;
+const hasLowR = (sig: Bytes) => secp.Signature.fromHex(sig).toCompactRawBytes()[0] < 0x80;
 // TODO: move to @noble/secp256k1?
 function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
-  let sig = secp256k1.signSync(hash, privateKey, { canonical: true });
+  let sig = secp.signSync(hash, privateKey, { canonical: true });
   if (lowR && !hasLowR(sig)) {
     const extraEntropy = new Uint8Array(32);
     for (let cnt = 0; cnt < Number.MAX_SAFE_INTEGER; cnt++) {
       extraEntropy.set(P.U32LE.encode(cnt));
-      sig = secp256k1.signSync(hash, privateKey, { canonical: true, extraEntropy });
+      sig = secp.signSync(hash, privateKey, { canonical: true, extraEntropy });
       if (hasLowR(sig)) break;
     }
   }
   return sig;
+}
+
+export function taprootTweakPrivKey(privKey: Uint8Array, merkleRoot = new Uint8Array()) {
+  const { n } = secp.CURVE;
+  const priv = secp.utils._normalizePrivateKey(privKey);
+  const point = secp.Point.fromPrivateKey(priv);
+  const tweak = taggedHash('TapTweak', point.toRawX(), merkleRoot);
+  const privWithProperY = point.hasEvenY() ? priv : n - priv;
+  const tweaked = secp.utils.mod(privWithProperY + secp.utils._normalizePrivateKey(tweak), n);
+  return secp.utils._bigintTo32Bytes(tweaked);
+}
+
+export function taprootTweakPubkey(pubKey: Uint8Array, h: Uint8Array): [Uint8Array, boolean] {
+  const tweak = taggedHash('TapTweak', pubKey, h);
+  const tweaked = secp.Point.fromHex(pubKey).add(secp.Point.fromPrivateKey(tweak));
+  return [tweaked.toRawX(), !tweaked.hasEvenY()];
 }
 
 // Can be 33 or 64 bytes
@@ -971,7 +987,7 @@ function taprootWalkTree(tree: HashedTreeWithPath): TaprootLeaf[] {
 // We are using approach from BIP 341/bitcoinjs-lib: SHA256(uncompressedDER(SECP256K1_GENERATOR_POINT))
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
-export const TAPROOT_UNSPENDABLE_KEY = sha256(secp256k1.Point.BASE.toRawBytes(false));
+export const TAPROOT_UNSPENDABLE_KEY = sha256(secp.Point.BASE.toRawBytes(false));
 
 export type P2TROut = P2Ret & {
   tweakedPubkey: Uint8Array;
@@ -1031,21 +1047,6 @@ export function p2tr(
   if (leaves) res.leaves = leaves;
   if (tapLeafScript) res.tapLeafScript = tapLeafScript;
   return res;
-}
-// TODO: cleanup
-export function _taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = P.EMPTY) {
-  const pubKey = secp256k1.schnorr.getPublicKey(privKey);
-  const pubPoint = secp256k1.Point.fromPrivateKey(privKey);
-  const seckey = (pubPoint.y & 1n) === 0n ? privKey : secp256k1.utils.privateNegate(privKey);
-  return secp256k1.utils.privateAdd(seckey, taggedHash('TapTweak', pubKey, merkleRoot));
-}
-export function taprootTweakPubkey(pubKey: Bytes, h: Bytes): [Bytes, boolean] {
-  const tweak = taggedHash('TapTweak', pubKey, h);
-  // Same as 'utils.pointAddScalar', but returns rawX for now
-  const tweakPub = secp256k1.Point.fromPrivateKey(tweak);
-  const pubPoint = secp256k1.Point.fromHex(pubKey);
-  const tweakPoint = pubPoint.add(tweakPub);
-  return [tweakPoint.toRawX(), !!(tweakPoint.y & 1n)];
 }
 
 // Taproot N-of-N multisig (P2TR_NS)
@@ -1930,7 +1931,7 @@ export class Transaction {
       const prevOutScript = prevOuts.map((i) => i.script);
       const amount = prevOuts.map((i) => i.amount);
 
-      let schnorrPub = secp256k1.schnorr.getPublicKey(privateKey);
+      let schnorrPub = secp.schnorr.getPublicKey(privateKey);
       let merkleRoot = input.tapMerkleRoot || P.EMPTY;
       if (input.tapInternalKey) {
         // internal + tweak = tweaked key
@@ -1938,15 +1939,15 @@ export class Transaction {
         // otherwise sign as is. bitcoinjs implementation always wants tweaked
         // priv key to be provided
         if (P.equalBytes(input.tapInternalKey, schnorrPub)) {
-          privateKey = _taprootTweakPrivKey(privateKey, merkleRoot);
-          schnorrPub = secp256k1.schnorr.getPublicKey(privateKey);
+          privateKey = taprootTweakPrivKey(privateKey, merkleRoot);
+          schnorrPub = secp.schnorr.getPublicKey(privateKey);
         }
         const [taprootPubKey, parity] = taprootTweakPubkey(input.tapInternalKey, merkleRoot);
         if (!P.equalBytes(taprootPubKey, schnorrPub)) throw new Error('Wrong internal key');
         const hash = this.preimageWitnessV1(idx, prevOutScript, sighashType, amount);
         // Tests use null auxRand, which is dumb
         const sig = concat(
-          secp256k1.schnorr.signSync(hash, privateKey, _auxRand),
+          secp.schnorr.signSync(hash, privateKey, _auxRand),
           sighashType !== SignatureHash.DEFAULT ? new Uint8Array([sighashType]) : P.EMPTY
         );
         this.updateInput(idx, { tapKeySig: sig });
@@ -1976,7 +1977,7 @@ export class Transaction {
             ver
           );
           const sig = concat(
-            secp256k1.schnorr.signSync(msg, privateKey, _auxRand),
+            secp.schnorr.signSync(msg, privateKey, _auxRand),
             sighashType !== SignatureHash.DEFAULT ? new Uint8Array([sighashType]) : P.EMPTY
           );
           this.updateInput(idx, {
@@ -1987,7 +1988,7 @@ export class Transaction {
       } else throw new Error('sign/taproot: unknown input');
     } else {
       // only compressed keys are supported for now
-      const pubKey = secp256k1.getPublicKey(privateKey, true);
+      const pubKey = secp.getPublicKey(privateKey, true);
       // TODO: replace with explicit checks
       // Check if script has public key or its has inside
       let hasPubkey = false;
@@ -2185,9 +2186,9 @@ export class Transaction {
 // Simple pubkey address, without complex scripts
 export function getAddress(type: 'pkh' | 'wpkh' | 'tr', privKey: Bytes, network = NETWORK) {
   if (type === 'tr') {
-    return p2tr(secp256k1.schnorr.getPublicKey(privKey), undefined, network).address;
+    return p2tr(secp.schnorr.getPublicKey(privKey), undefined, network).address;
   }
-  const pubKey = secp256k1.getPublicKey(privKey, true);
+  const pubKey = secp.getPublicKey(privKey, true);
   if (type === 'pkh') return p2pkh(pubKey, network).address;
   if (type === 'wpkh') return p2wpkh(pubKey, network).address;
   throw new Error(`getAddress: unknown type=${type}`);
