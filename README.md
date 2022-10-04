@@ -10,7 +10,7 @@ Create, sign & decode BTC transactions with minimum deps.
 - 📨 BIP174 PSBT
 - Multisig support
 
-The library is new and has not been battle-tested, use at your own risk. Initial development has been funded by [Ryan Shea](https://shea.io).
+The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io).
 
 _Check out all web3 utility libraries:_ [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [micro-btc-signer](https://github.com/paulmillr/micro-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
