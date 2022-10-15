@@ -327,6 +327,20 @@ deepStrictEqual(btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3]), {
 });
 ```
 
+### P2TR-PK (Taproot sigle P2PK script)
+
+Just specific case of `p2tr_ns(1, [pubkey])`, same as BTC descriptor: `tr($H,pk(PUBKEY))`
+
+```ts
+const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+// P2PK for taproot
+deepStrictEqual(tr(btc.p2tr(undefined, [btc.p2tr_pk(PubKey)])), {
+  type: 'tr',
+  address: 'bc1pfj6w68w3v2f4pkzesc9tsqfvy5znw5qgydwa832v3v83vjn76kdsmr4360',
+  script: hex.decode('51204cb4ed1dd1629350d859860ab8012c2505375008235dd3c54c8b0f164a7ed59b'),
+});
+```
+
 ## Transaction
 
 ### Encode/decode

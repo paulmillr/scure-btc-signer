@@ -386,7 +386,7 @@ const PSBTInput = {
   tapKeySig: [0x13, false, SignatureSchnorr, [], [], [0, 2]],
   tapScriptSig: [
     0x14,
-    P.struct({ pubkey: PubKeySchnorr, leafHash: P.bytes(32) }),
+    P.struct({ pubKey: PubKeySchnorr, leafHash: P.bytes(32) }),
     SignatureSchnorr,
     [],
     [],
@@ -399,7 +399,7 @@ const PSBTInput = {
   tapMerkleRoot: [0x18, false, P.bytes(32), [], [], [0, 2]],
   propietary: [0xfc, P.bytes(null), P.bytes(null), [], [], [0, 2]],
 } as const;
-
+// All other keys removed when finalizing
 const PSBTInputFinalKeys: (keyof typeof PSBTInput)[] = [
   'hash',
   'sequence',
@@ -409,6 +409,14 @@ const PSBTInputFinalKeys: (keyof typeof PSBTInput)[] = [
   'finalScriptSig',
   'finalScriptWitness',
   'unknown' as any,
+];
+// Can be modified even on signed input
+const PSBTInputUnsignedKeys: (keyof typeof PSBTInput)[] = [
+  'partialSig',
+  'finalScriptSig',
+  'finalScriptWitness',
+  'tapKeySig',
+  'tapScriptSig',
 ];
 
 const PSBTOutput = {
@@ -439,6 +447,9 @@ const PSBTOutput = {
   tapBip32Derivation: [0x07, PubKeySchnorr, TaprootBIP32Der, [], [], [0, 2]],
   propietary: [0xfc, P.bytes(null), P.bytes(null), [], [], [0, 2]],
 } as const;
+
+// Can be modified even on signed input
+const PSBTOutputUnsignedKeys: (keyof typeof PSBTOutput)[] = [];
 
 const PSBTKeyPair = P.array(
   P.NULL,
@@ -705,6 +716,90 @@ function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>) {
   return tx;
 }
 
+// Check if object doens't have custom constructor (like Uint8Array/Array)
+const isPlainObject = (obj: any) =>
+  Object.prototype.toString.call(obj) === '[object Object]' && obj.constructor === Object;
+
+function type<T>(v: T) {
+  if (v instanceof Uint8Array) return 'bytes';
+  if (Array.isArray(v)) return 'array';
+  if (['number', 'string', 'bigint', 'boolean', 'undefined'].includes(typeof v)) return typeof v;
+  if (v === null) return 'null'; // typeof null=object
+  if (isPlainObject(v)) return 'object';
+  throw new Error(`Unknown type=${v}`);
+}
+// Basic structure merge: object = {...old, ...new}, arrays = old.concat(new). other -> replace
+// function merge<T extends PSBTKeyMap>(
+//   psbtEnum: T,
+//   val: PSBTKeyMapKeys<T>,
+//   cur?: PSBTKeyMapKeys<T>
+// ): PSBTKeyMapKeys<T> {
+
+// }
+
+function mergeKeyMap<T extends PSBTKeyMap>(
+  psbtEnum: T,
+  val: PSBTKeyMapKeys<T>,
+  cur?: PSBTKeyMapKeys<T>,
+  allowedFields?: (keyof PSBTKeyMapKeys<T>)[]
+): PSBTKeyMapKeys<T> {
+  const res = { ...cur, ...val };
+  // All arguments can be provided as hex
+  for (const k in psbtEnum) {
+    const key = k as keyof typeof psbtEnum;
+    const [_, kC, vC] = psbtEnum[key];
+    type _KV = [P.UnwrapCoder<typeof kC>, P.UnwrapCoder<typeof vC>];
+    const cannotChange = allowedFields && !allowedFields.includes(k);
+    if (val[k] === undefined && k in val) {
+      if (cannotChange) throw new Error(`Cannot remove signed field=${k}`);
+      delete res[k];
+    } else if (kC) {
+      const oldKV = (cur && cur[k] ? cur[k] : []) as _KV[];
+      let newKV = val[key] as _KV[];
+      if (newKV) {
+        if (!Array.isArray(newKV)) throw new Error(`keyMap(${k}): KV pairs should be [k, v][]`);
+        // Decode hex in k-v
+        newKV = newKV.map((val: _KV): _KV => {
+          if (val.length !== 2) throw new Error(`keyMap(${k}): KV pairs should be [k, v][]`);
+          return [
+            typeof val[0] === 'string' ? kC.decode(base.hex.decode(val[0])) : val[0],
+            typeof val[1] === 'string' ? vC.decode(base.hex.decode(val[1])) : val[1],
+          ];
+        });
+        const map: Record<string, _KV> = {};
+        const add = (kStr: string, k: _KV[0], v: _KV[1]) => {
+          if (map[kStr] === undefined) {
+            map[kStr] = [k, v];
+            return;
+          }
+          const oldVal = base.hex.encode(vC.encode(map[kStr][1]));
+          const newVal = base.hex.encode(vC.encode(v));
+          if (oldVal !== newVal)
+            throw new Error(
+              `keyMap(${key as string}): same key=${kStr} oldVal=${oldVal} newVal=${newVal}`
+            );
+        };
+        for (const [k, v] of oldKV) {
+          const kStr = base.hex.encode(kC.encode(k));
+          add(kStr, k, v);
+        }
+        for (const [k, v] of newKV) {
+          const kStr = base.hex.encode(kC.encode(k));
+          // undefined removes previous value
+          if (v === undefined) delete map[kStr];
+          else add(kStr, k, v);
+        }
+        (res as any)[key] = Object.values(map) as _KV[];
+      }
+    } else if (typeof res[k] === 'string') {
+      res[k] = vC.decode(base.hex.decode(res[k] as any));
+    }
+  }
+  // Remove unknown keys
+  for (const k in res) if (!psbtEnum[k]) delete res[k];
+  return res;
+}
+
 export const RawPSBTV0 = P.validate(_RawPSBTV0, validatePSBT);
 export const RawPSBTV2 = P.validate(_RawPSBTV2, validatePSBT);
 
@@ -908,7 +1003,8 @@ type HashedTree =
 function checkTaprootScript(script: Bytes, allowUnknowOutput = false) {
   const out = OutScript.decode(script);
   if (out.type === 'unknown' && allowUnknowOutput) return;
-  if (!out.type.startsWith('tr')) throw new Error(`P2TR: invalid leaf script=${out.type}`);
+  if (!['tr_ns', 'tr_ms'].includes(out.type))
+    throw new Error(`P2TR: invalid leaf script=${out.type}`);
 }
 function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): HashedTree {
   if (!tree) throw new Error('taprootHashTree: empty tree');
@@ -987,12 +1083,13 @@ function taprootWalkTree(tree: HashedTreeWithPath): TaprootLeaf[] {
 // We are using approach from BIP 341/bitcoinjs-lib: SHA256(uncompressedDER(SECP256K1_GENERATOR_POINT))
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
+// Also used by bitcoin-core and bitcoinjs-lib
 export const TAPROOT_UNSPENDABLE_KEY = sha256(secp.Point.BASE.toRawBytes(false));
 
 export type P2TROut = P2Ret & {
   tweakedPubkey: Uint8Array;
   tapInternalKey: Uint8Array;
-  tapMerkleRoot: Uint8Array;
+  tapMerkleRoot?: Uint8Array;
   tapLeafScript?: TransactionInput['tapLeafScript'];
   leaves?: TaprootLeaf[];
 };
@@ -1013,8 +1110,8 @@ export function p2tr(
       : internalPubKey || TAPROOT_UNSPENDABLE_KEY;
   if (!isValidPubkey(pubKey, PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
   let hashedTree = tree ? taprootAddPath(taprootHashTree(tree, allowUnknowOutput)) : undefined;
-  const tapMerkleRoot = hashedTree ? hashedTree.hash : P.EMPTY;
-  const [tweakedPubkey, parity] = taprootTweakPubkey(pubKey, tapMerkleRoot);
+  const tapMerkleRoot = hashedTree ? hashedTree.hash : undefined;
+  const [tweakedPubkey, parity] = taprootTweakPubkey(pubKey, tapMerkleRoot || P.EMPTY);
   let leaves;
   if (hashedTree) {
     leaves = taprootWalkTree(hashedTree).map((l) => ({
@@ -1041,11 +1138,11 @@ export function p2tr(
     tweakedPubkey,
     // PSBT stuff
     tapInternalKey: pubKey,
-    tapMerkleRoot,
   };
   // Just in case someone would want to select a specific script
   if (leaves) res.leaves = leaves;
   if (tapLeafScript) res.tapLeafScript = tapLeafScript;
+  if (tapMerkleRoot) res.tapMerkleRoot = tapMerkleRoot;
   return res;
 }
 
@@ -1118,6 +1215,9 @@ export const p2tr_ns = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): 
     script: OutScript.encode({ type: 'tr_ns', pubkeys: i }),
   }));
 };
+// Taproot public key (case of p2tr_ns)
+export const p2tr_pk = (pubkey: Bytes): P2Ret => p2tr_ns(1, [pubkey], undefined)[0];
+
 // Taproot M-of-N Multisig (P2TR_MS)
 type OutTRMSType = { type: 'tr_ms'; pubkeys: Bytes[]; m: number };
 const OutTRMS: base.Coder<OptScript, OutTRMSType | undefined> = {
@@ -1196,7 +1296,7 @@ export const OutScript = P.validate(_OutScript, (i) => {
     throw new Error(`OutScript/wsh: wrong hash`);
   if (i.type === 'tr' && (!isBytes(i.pubkey) || !isValidPubkey(i.pubkey, PubT.schnorr)))
     throw new Error('OutScript/tr: wrong taproot public key');
-  if (i.type === 'ms' || i.type === 'tr_ns')
+  if (i.type === 'ms' || i.type === 'tr_ns' || i.type === 'tr_ms')
     if (!Array.isArray(i.pubkeys)) throw new Error('OutScript/multisig: wrong pubkeys array');
   if (i.type === 'ms') {
     const n = i.pubkeys.length;
@@ -1354,6 +1454,19 @@ export const TAP_LEAF_VERSION = 0xc0;
 export const tapLeafHash = (script: Bytes, version = TAP_LEAF_VERSION) =>
   taggedHash('TapLeaf', new Uint8Array([version]), VarBytes.encode(script));
 
+function getTaprootKeys(
+  privKey: Bytes,
+  pubKey: Bytes,
+  internalKey: Bytes,
+  merkleRoot: Bytes = P.EMPTY
+) {
+  if (P.equalBytes(internalKey, pubKey)) {
+    privKey = taprootTweakPrivKey(privKey, merkleRoot);
+    pubKey = secp.schnorr.getPublicKey(privKey);
+  }
+  return { privKey, pubKey };
+}
+
 // @scure/bip32 interface
 interface HDKey {
   publicKey: Bytes;
@@ -1371,6 +1484,8 @@ export type Signer = Bytes | HDKey;
 export type TxOpts = {
   // Allow output scripts to be unknown scripts (probably unspendable)
   allowUnknowOutput?: boolean;
+  // Try to sign/finalize unknown input. All bets are off, but there is chance that it will work
+  allowUnknowInput?: boolean;
   // Check input/output scripts for sanity
   disableScriptCheck?: boolean;
   // There is strange behaviour where tx without outputs encoded with empty output in the end,
@@ -1503,16 +1618,63 @@ export class Transaction {
     return this.global.txVersion;
   }
 
-  get isFinal() {
-    for (const inp of this.inputs) {
-      if (
-        (!inp.finalScriptSig || !inp.finalScriptSig.length) &&
-        (!inp.finalScriptWitness || !inp.finalScriptWitness.length)
-      )
-        return false;
+  private inputStatus(idx: number) {
+    this.checkInputIdx(idx);
+    const input = this.inputs[idx];
+    // Finalized
+    if (input.finalScriptSig && input.finalScriptSig.length) return 'finalized';
+    if (input.finalScriptWitness && input.finalScriptWitness.length) return 'finalized';
+    // Signed taproot
+    if (input.tapKeySig) return 'signed';
+    if (input.tapScriptSig && input.tapScriptSig.length) return 'signed';
+    // Signed
+    if (input.partialSig && input.partialSig.length) return 'signed';
+    return 'unsigned';
+  }
+  // TODO: re-use in preimages
+  private inputSighash(idx: number) {
+    this.checkInputIdx(idx);
+    const sighash = this.inputType(this.inputs[idx]).sighash;
+    // ALL or DEFAULT -- everything signed
+    // NONE           -- all inputs + no outputs
+    // SINGLE         -- all inputs + output with same index
+    // ALL + ANYONE   -- specific input + all outputs
+    // NONE + ANYONE  -- specific input + no outputs
+    // SINGLE         -- specific inputs + output with same index
+    const sigOutputs = sighash === SignatureHash.DEFAULT ? SignatureHash.ALL : sighash & 0b11;
+    const sigInputs = sighash & SignatureHash.ANYONECANPAY;
+    return { sigInputs, sigOutputs };
+  }
+  private signStatus() {
+    // if addInput or addOutput is not possible, then all inputs or outputs are signed
+    let addInput = true,
+      addOutput = true;
+    let inputs = [],
+      outputs = [];
+    for (let idx = 0; idx < this.inputs.length; idx++) {
+      const status = this.inputStatus(idx);
+      // Unsigned input doesn't affect anything
+      if (status === 'unsigned') continue;
+      const { sigInputs, sigOutputs } = this.inputSighash(idx);
+      // Input type
+      if (sigInputs === SignatureHash.ANYONECANPAY) inputs.push(idx);
+      else addInput = false;
+      // Output type
+      if (sigOutputs === SignatureHash.ALL) addOutput = false;
+      else if (sigOutputs === SignatureHash.SINGLE) outputs.push(idx);
+      else if (sigOutputs === SignatureHash.NONE) {
+        // Doesn't affect any outputs at all
+      } else throw new Error(`Wrong signature hash output type: ${sigOutputs}`);
     }
+    return { addInput, addOutput, inputs, outputs };
+  }
+
+  get isFinal() {
+    for (let idx = 0; idx < this.inputs.length; idx++)
+      if (this.inputStatus(idx) !== 'finalized') return false;
     return true;
   }
+
   // Info utils
   get hasWitnesses(): boolean {
     let out = false;
@@ -1568,62 +1730,6 @@ export class Transaction {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
     return base.hex.encode(sha256x2(this.toBytes(true)).reverse());
   }
-  private keyMap<T extends PSBTKeyMap>(
-    psbtEnum: T,
-    val: PSBTKeyMapKeys<T>,
-    cur?: PSBTKeyMapKeys<T>
-  ): PSBTKeyMapKeys<T> {
-    const res = { ...cur, ...val };
-    // All arguments can be provided as hex
-    for (const k in psbtEnum) {
-      const key = k as keyof typeof psbtEnum;
-      const [_, kC, vC] = psbtEnum[key];
-      type _KV = [P.UnwrapCoder<typeof kC>, P.UnwrapCoder<typeof vC>];
-      if (val[k] === undefined && k in val) delete res[k];
-      else if (kC) {
-        const oldKV = (cur && cur[k] ? cur[k] : []) as _KV[];
-        let newKV = val[key] as _KV[];
-        if (newKV) {
-          if (!Array.isArray(newKV)) throw new Error(`keyMap(${k}): KV pairs should be [k, v][]`);
-          // Decode hex in k-v
-          newKV = newKV.map((val: _KV): _KV => {
-            if (val.length !== 2) throw new Error(`keyMap(${k}): KV pairs should be [k, v][]`);
-            return [
-              typeof val[0] === 'string' ? kC.decode(base.hex.decode(val[0])) : val[0],
-              typeof val[1] === 'string' ? vC.decode(base.hex.decode(val[1])) : val[1],
-            ];
-          });
-          const map: Record<string, _KV> = {};
-          const add = (kStr: string, k: _KV[0], v: _KV[1]) => {
-            if (map[kStr] === undefined) {
-              map[kStr] = [k, v];
-              return;
-            }
-            const oldVal = base.hex.encode(vC.encode(map[kStr][1]));
-            const newVal = base.hex.encode(vC.encode(v));
-            if (oldVal !== newVal)
-              throw new Error(
-                `keyMap(${key as string}): same key=${kStr} oldVal=${oldVal} newVal=${newVal}`
-              );
-          };
-          for (const [k, v] of oldKV) {
-            const kStr = base.hex.encode(kC.encode(k));
-            add(kStr, k, v);
-          }
-          for (const [k, v] of newKV) {
-            const kStr = base.hex.encode(kC.encode(k));
-            // undefined removes previous value
-            if (v === undefined) delete map[kStr];
-            else add(kStr, k, v);
-          }
-          (res as any)[key] = Object.values(map) as _KV[];
-        }
-      } else if (typeof res[k] === 'string') res[k] = vC.decode(base.hex.decode(res[k] as any));
-    }
-    // Remove unknown keys
-    for (const k in res) if (!psbtEnum[k]) delete res[k];
-    return res;
-  }
   // Input stuff
   private checkInputIdx(idx: number) {
     if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.inputs.length)
@@ -1632,13 +1738,14 @@ export class Transaction {
   // Modification
   private normalizeInput(
     i: P.UnwrapCoder<typeof PSBTInputCoder>,
-    cur?: TransactionInput
+    cur?: TransactionInput,
+    allowedFields?: (keyof typeof PSBTInput)[]
   ): TransactionInput {
     let res: PSBTKeyMapKeys<typeof PSBTInput> = { ...cur, ...i };
     if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
     if (typeof res.hash === 'string') res.hash = base.hex.decode(res.hash).reverse();
     if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
-    res = this.keyMap(PSBTInput, res, cur);
+    res = mergeKeyMap(PSBTInput, res, cur, allowedFields);
     PSBTInputCoder.encode(res);
 
     if (res.hash === undefined || res.index === undefined)
@@ -1662,12 +1769,16 @@ export class Transaction {
     return res as TransactionInput;
   }
   addInput(input: TransactionInput): number {
+    if (!this.signStatus().addInput) throw new Error('Tx has signed inputs, cannot add new one');
     this.inputs.push(this.normalizeInput(input));
     return this.inputs.length - 1;
   }
   updateInput(idx: number, input: P.UnwrapCoder<typeof PSBTInputCoder>) {
     this.checkInputIdx(idx);
-    this.inputs[idx] = this.normalizeInput(input, this.inputs[idx]);
+    let allowedFields = undefined;
+    const status = this.signStatus();
+    if (!status.addInput || status.inputs.includes(idx)) allowedFields = PSBTInputUnsignedKeys;
+    this.inputs[idx] = this.normalizeInput(input, this.inputs[idx], allowedFields);
   }
   // Output stuff
   private checkOutputIdx(idx: number) {
@@ -1676,14 +1787,14 @@ export class Transaction {
   }
   private normalizeOutput(
     o: P.UnwrapCoder<typeof PSBTOutputCoder>,
-    cur?: TransactionOutput
+    cur?: TransactionOutput,
+    allowedFields?: (keyof typeof PSBTOutput)[]
   ): TransactionOutput {
     let res: PSBTKeyMapKeys<typeof PSBTOutput> = { ...cur, ...o };
     if (res.amount !== undefined)
       res.amount = typeof res.amount === 'string' ? Decimal.decode(res.amount) : res.amount;
-    res = this.keyMap(PSBTOutput, res, cur);
+    res = mergeKeyMap(PSBTOutput, res, cur, allowedFields);
     PSBTOutputCoder.encode(res);
-    // TODO: verify here that script
     if (res.script === undefined || res.amount === undefined)
       throw new Error('Transaction/output: script and amount required');
     if (!this.opts.allowUnknowOutput && OutScript.decode(res.script).type === 'unknown') {
@@ -1695,12 +1806,16 @@ export class Transaction {
     return res as TransactionOutput;
   }
   addOutput(o: TransactionOutput): number {
+    if (!this.signStatus().addOutput) throw new Error('Tx has signed outputs, cannot add new one');
     this.outputs.push(this.normalizeOutput(o));
     return this.outputs.length - 1;
   }
   updateOutput(idx: number, output: P.UnwrapCoder<typeof PSBTOutputCoder>) {
     this.checkOutputIdx(idx);
-    this.outputs[idx] = this.normalizeOutput(output, this.outputs[idx]);
+    let allowedFields = undefined;
+    const status = this.signStatus();
+    if (!status.addOutput || status.outputs.includes(idx)) allowedFields = PSBTOutputUnsignedKeys;
+    this.outputs[idx] = this.normalizeOutput(output, this.outputs[idx], allowedFields);
   }
   addOutputAddress(address: string, amount: string | bigint, network = NETWORK): number {
     return this.addOutput({
@@ -1711,7 +1826,11 @@ export class Transaction {
   // Utils
   get fee(): bigint {
     let res = 0n;
-    for (const i of this.inputs) res += this.prevOut(i).amount;
+    for (const i of this.inputs) {
+      const prevOut = this.prevOut(i);
+      if (!prevOut) throw new Error('Empty input amount');
+      res += prevOut.amount;
+    }
     for (const i of this.outputs) res -= i.amount;
     return res;
   }
@@ -1741,7 +1860,9 @@ export class Transaction {
     }
     let outputs = this.outputs;
     if (isNone) outputs = [];
-    else if (isSingle) outputs = new Array(idx - 1).fill(EMPTY_OUTPUT).concat([outputs[idx]]);
+    else if (isSingle) {
+      outputs = this.outputs.slice(0, idx).fill(EMPTY_OUTPUT).concat([outputs[idx]]);
+    }
     const tmpTx = RawTx.encode({
       lockTime: this.lockTime,
       version: this.version,
@@ -1760,8 +1881,9 @@ export class Transaction {
     if (!isAny) inputHash = sha256x2(...inputs.map(TxHashIdx.encode));
     if (!isAny && !isSingle && !isNone)
       sequenceHash = sha256x2(...inputs.map((i) => P.U32LE.encode(def.sequence(i.sequence))));
-    if (!isSingle && !isNone) outputHash = sha256x2(...this.outputs.map(RawOutput.encode));
-    else if (isSingle && idx < this.outputs.length)
+    if (!isSingle && !isNone) {
+      outputHash = sha256x2(...this.outputs.map(RawOutput.encode));
+    } else if (isSingle && idx < this.outputs.length)
       outputHash = sha256x2(RawOutput.encode(this.outputs[idx]));
     const input = inputs[idx];
     return sha256x2(
@@ -1841,17 +1963,21 @@ export class Transaction {
   private inputType(input: TransactionInput) {
     // TODO: check here if non-segwit tx + no nonWitnessUtxo
     let txType = 'legacy';
+    let defaultSighash = SignatureHash.ALL;
     const prevOut = this.prevOut(input);
     const first = OutScript.decode(prevOut.script);
     let type = first.type;
     let cur = first;
     const stack = [first];
     if (first.type === 'tr') {
+      defaultSighash = SignatureHash.DEFAULT;
       return {
         txType: 'taproot',
         type: 'tr',
         last: first,
         lastScript: prevOut.script,
+        defaultSighash,
+        sighash: input.sighashType || defaultSighash,
       };
     } else {
       if (first.type === 'wpkh' || first.type === 'wsh') txType = 'segwit';
@@ -1877,7 +2003,14 @@ export class Transaction {
       if (last.type === 'sh' || last.type === 'wsh')
         throw new Error('inputType: sh/wsh cannot be terminal type');
       const lastScript = OutScript.encode(last);
-      const res = { type, txType, last, lastScript };
+      const res = {
+        type,
+        txType,
+        last,
+        lastScript,
+        defaultSighash,
+        sighash: input.sighashType || defaultSighash,
+      };
       return res;
     }
   }
@@ -1912,17 +2045,27 @@ export class Transaction {
       for (const s of signers) if (this.signIdx(s.privateKey, idx)) signed = true;
       return signed;
     }
-
+    // Sighash checks
     // Just for compat with bitcoinjs-lib, so users won't face unexpected behaviour.
-    const defaultSighash =
-      inputType.txType === 'taproot' ? SignatureHash.DEFAULT : SignatureHash.ALL;
-    if (!allowedSighash) allowedSighash = [defaultSighash];
-    const sighashType = input.sighashType || defaultSighash;
-    if (!allowedSighash.includes(sighashType)) {
+    if (!allowedSighash) allowedSighash = [inputType.defaultSighash];
+    const sighash = inputType.sighash;
+    if (!allowedSighash.includes(sighash)) {
       throw new Error(
-        `Input with not allowed sigHash=${sighashType}. Allowed: ${allowedSighash.join(', ')}`
+        `Input with not allowed sigHash=${sighash}. Allowed: ${allowedSighash.join(', ')}`
       );
     }
+    // NOTE: it is possible to sign these inputs for legacy/segwit v0 (but no taproot!),
+    // however this was because of bug in bitcoin-core, which remains here because of consensus.
+    // If this is absolutely neccessary for you workflow, please open issue. For now it is disable to
+    // avoid complicated workflow where SINGLE will block adding new outputs
+    const { sigInputs, sigOutputs } = this.inputSighash(idx);
+    if (sigOutputs === SignatureHash.SINGLE && idx >= this.outputs.length) {
+      throw new Error(
+        `Input with sighash SINGLE, but there is no output with corresponding index=${idx}`
+      );
+    }
+
+    // Actual signing
     // Taproot
     const prevOut = this.prevOut(input);
     if (inputType.txType === 'taproot') {
@@ -1930,7 +2073,7 @@ export class Transaction {
       const prevOuts = this.inputs.map(this.prevOut);
       const prevOutScript = prevOuts.map((i) => i.script);
       const amount = prevOuts.map((i) => i.amount);
-
+      let signed = false;
       let schnorrPub = secp.schnorr.getPublicKey(privateKey);
       let merkleRoot = input.tapMerkleRoot || P.EMPTY;
       if (input.tapInternalKey) {
@@ -1938,54 +2081,60 @@ export class Transaction {
         // if internal key == current public key, we need to tweak private key,
         // otherwise sign as is. bitcoinjs implementation always wants tweaked
         // priv key to be provided
-        if (P.equalBytes(input.tapInternalKey, schnorrPub)) {
-          privateKey = taprootTweakPrivKey(privateKey, merkleRoot);
-          schnorrPub = secp.schnorr.getPublicKey(privateKey);
-        }
-        const [taprootPubKey, parity] = taprootTweakPubkey(input.tapInternalKey, merkleRoot);
-        if (!P.equalBytes(taprootPubKey, schnorrPub)) throw new Error('Wrong internal key');
-        const hash = this.preimageWitnessV1(idx, prevOutScript, sighashType, amount);
-        // Tests use null auxRand, which is dumb
-        const sig = concat(
-          secp.schnorr.signSync(hash, privateKey, _auxRand),
-          sighashType !== SignatureHash.DEFAULT ? new Uint8Array([sighashType]) : P.EMPTY
+        const { pubKey, privKey } = getTaprootKeys(
+          privateKey,
+          schnorrPub,
+          input.tapInternalKey,
+          merkleRoot
         );
-        this.updateInput(idx, { tapKeySig: sig });
-        return true;
-      } else if (input.tapLeafScript) {
+        const [taprootPubKey, parity] = taprootTweakPubkey(input.tapInternalKey, merkleRoot);
+        if (P.equalBytes(taprootPubKey, pubKey)) {
+          const hash = this.preimageWitnessV1(idx, prevOutScript, sighash, amount);
+          const sig = concat(
+            secp.schnorr.signSync(hash, privKey, _auxRand),
+            sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
+          );
+          this.updateInput(idx, { tapKeySig: sig });
+          signed = true;
+        }
+      }
+      if (input.tapLeafScript) {
         input.tapScriptSig = input.tapScriptSig || [];
         for (const [cb, _script] of input.tapLeafScript) {
           const script = _script.subarray(0, -1);
           const scriptDecoded = Script.decode(script);
           const ver = _script[_script.length - 1];
           const hash = tapLeafHash(script, ver);
-          const pubkeyHash = hash160(schnorrPub);
+          const { pubKey, privKey } = getTaprootKeys(
+            privateKey,
+            schnorrPub,
+            cb.internalKey,
+            P.EMPTY // Because we cannot have nested taproot tree
+          );
           const pos = scriptDecoded.findIndex(
-            (i) =>
-              i instanceof Uint8Array &&
-              (P.equalBytes(i, schnorrPub) || P.equalBytes(i, pubkeyHash))
+            (i) => i instanceof Uint8Array && P.equalBytes(i, pubKey)
           );
           // Skip if there is no public key in tapLeafScript
           if (pos === -1) continue;
           const msg = this.preimageWitnessV1(
             idx,
             prevOutScript,
-            sighashType,
+            sighash,
             amount,
             undefined,
             script,
             ver
           );
           const sig = concat(
-            secp.schnorr.signSync(msg, privateKey, _auxRand),
-            sighashType !== SignatureHash.DEFAULT ? new Uint8Array([sighashType]) : P.EMPTY
+            secp.schnorr.signSync(msg, privKey, _auxRand),
+            sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
-          this.updateInput(idx, {
-            tapScriptSig: [[{ pubkey: schnorrPub, leafHash: hash }, sig]],
-          });
+          this.updateInput(idx, { tapScriptSig: [[{ pubKey: pubKey, leafHash: hash }, sig]] });
+          signed = true;
         }
-        return true;
-      } else throw new Error('sign/taproot: unknown input');
+      }
+      if (!signed) throw new Error('No taproot scripts signed');
+      return true;
     } else {
       // only compressed keys are supported for now
       const pubKey = secp.getPublicKey(privateKey, true);
@@ -2004,18 +2153,18 @@ export class Transaction {
             `Transaction/sign: legacy input without nonWitnessUtxo, can result in attack that forces paying higher fees. Pass allowLegacyWitnessUtxo=true, if you sure`
           );
         }
-        hash = this.preimageLegacy(idx, inputType.lastScript, sighashType);
+        hash = this.preimageLegacy(idx, inputType.lastScript, sighash);
       } else if (inputType.txType === 'segwit') {
         let script = inputType.lastScript;
         // If wpkh OR sh-wpkh, wsh-wpkh is impossible, so looks ok
         // TODO: re-check
         if (inputType.last.type === 'wpkh')
           script = OutScript.encode({ type: 'pkh', hash: inputType.last.hash });
-        hash = this.preimageWitnessV0(idx, script, sighashType, prevOut.amount);
+        hash = this.preimageWitnessV0(idx, script, sighash, prevOut.amount);
       } else throw new Error(`Transaction/sign: unknown tx type: ${inputType.txType}`);
       const sig = signECDSA(hash, privateKey, this.opts.lowR);
       this.updateInput(idx, {
-        partialSig: [[pubKey, concat(sig, new Uint8Array([sighashType]))]],
+        partialSig: [[pubKey, concat(sig, new Uint8Array([sighash]))]],
       });
     }
     return true;
@@ -2039,6 +2188,7 @@ export class Transaction {
 
   finalizeIdx(idx: number) {
     this.checkInputIdx(idx);
+    if (this.fee < 0n) throw new Error('Outputs spends more than inputs amount');
     const input = this.inputs[idx];
     const inputType = this.inputType(input);
     // Taproot finalize
@@ -2059,28 +2209,54 @@ export class Transaction {
           // Last byte is version
           const script = _script.slice(0, -1);
           const ver = _script[_script.length - 1];
-          const scriptDecoded = Script.decode(script);
+          const outScript = OutScript.decode(script);
           const hash = tapLeafHash(script, ver);
-          const sigs = input.tapScriptSig
-            .filter((i) => P.equalBytes(i[0].leafHash, hash))
-            .map(([{ pubkey }, signature]) => {
-              // TODO: it is even possible with taproot?
-              const pubkeyHash = hash160(pubkey);
-              const pos = scriptDecoded.findIndex(
-                (i) =>
-                  i instanceof Uint8Array &&
-                  (P.equalBytes(i, pubkey) || P.equalBytes(i, pubkeyHash))
-              );
-              if (pos === -1)
-                throw new Error('finalize/taproot: cannot find position of pubkey in script');
-              return { signature, pos };
-            })
-            // Reverse order
-            .sort((a, b) => b.pos - a.pos)
-            .map((i) => i.signature);
-          // Not enough signatures for this leaf
-          if (!sigs.length) continue;
-          input.finalScriptWitness = sigs.concat([script, TaprootControlBlock.encode(cb)]);
+          const scriptSig = input.tapScriptSig.filter((i) => P.equalBytes(i[0].leafHash, hash));
+          let signatures: Bytes[] = [];
+          if (outScript.type === 'tr_ms') {
+            const m = outScript.m;
+            const pubkeys = outScript.pubkeys;
+            let added = 0;
+            for (const pub of pubkeys) {
+              const sigIdx = scriptSig.findIndex((i) => P.equalBytes(i[0].pubKey, pub));
+              // Should have exact amount of signatures (more -- will fail)
+              if (added === m || sigIdx === -1) {
+                signatures.push(P.EMPTY);
+                continue;
+              }
+              signatures.push(scriptSig[sigIdx][1]);
+              added++;
+            }
+            // Should be exact same as m
+            if (added !== m) continue;
+          } else if (outScript.type === 'tr_ns') {
+            for (const pub of outScript.pubkeys) {
+              const sigIdx = scriptSig.findIndex((i) => P.equalBytes(i[0].pubKey, pub));
+              if (sigIdx === -1) continue;
+              signatures.push(scriptSig[sigIdx][1]);
+            }
+            if (signatures.length !== outScript.pubkeys.length) continue;
+          } else if (outScript.type === 'unknown' && this.opts.allowUnknowInput) {
+            // Trying our best to sign what we can
+            const scriptDecoded = Script.decode(script);
+            signatures = scriptSig
+              .map(([{ pubKey }, signature]) => {
+                const pos = scriptDecoded.findIndex(
+                  (i) => i instanceof Uint8Array && P.equalBytes(i, pubKey)
+                );
+                if (pos === -1)
+                  throw new Error('finalize/taproot: cannot find position of pubkey in script');
+                return { signature, pos };
+              })
+              // Reverse order (because witness is stack and we take last element first from it)
+              .sort((a, b) => a.pos - b.pos)
+              .map((i) => i.signature);
+            if (!signatures.length) continue;
+          } else throw new Error('Finalize: Unknown tapLeafScript');
+          // Witness is stack, so last element will be used first
+          input.finalScriptWitness = signatures
+            .reverse()
+            .concat([script, TaprootControlBlock.encode(cb)]);
           break;
         }
         if (!input.finalScriptWitness) throw new Error('finalize/taproot: empty witness');
@@ -2102,21 +2278,21 @@ export class Transaction {
     if (inputType.last.type === 'ms') {
       const m = inputType.last.m;
       const pubkeys = inputType.last.pubkeys;
-      const signatures = [];
+      let signatures = [];
       // partial: [pubkey, sign]
       for (const pub of pubkeys) {
         const sign = input.partialSig.find((s) => P.equalBytes(pub, s[0]));
         if (!sign) continue;
         signatures.push(sign[1]);
       }
+      signatures = signatures.slice(0, m);
       if (signatures.length !== m) {
         throw new Error(
           `Multisig: wrong signatures count, m=${m} n=${pubkeys.length} signatures=${signatures.length}`
         );
       }
       inputScript = Script.encode(['OP_0', ...signatures]);
-    }
-    if (inputType.last.type === 'pk') {
+    } else if (inputType.last.type === 'pk') {
       inputScript = Script.encode([input.partialSig[0][1]]);
     } else if (inputType.last.type === 'pkh') {
       // check if output is correct here
@@ -2125,7 +2301,8 @@ export class Transaction {
       // check if output is correct here
       inputScript = P.EMPTY;
       witness = [input.partialSig[0][1], input.partialSig[0][0]];
-    }
+    } else if (inputType.last.type === 'unknown' && !this.opts.allowUnknowInput)
+      throw new Error('Unknown inputs not allowed');
     let finalScriptSig, finalScriptWitness;
     if (input.witnessScript) {
       // P2WSH
@@ -2136,7 +2313,7 @@ export class Transaction {
           throw new Error(`Wrong witness op=${i}`);
         });
       }
-      if (witness && outScript) witness = ([] as Bytes[]).concat(witness, outScript);
+      if (witness && outScript) witness = witness.concat(outScript);
       outScript = Script.encode(['OP_0', sha256(outScript)]);
       inputScript = P.EMPTY;
     }
@@ -2157,6 +2334,8 @@ export class Transaction {
   }
   extract() {
     if (!this.isFinal) throw new Error('Transaction has unfinalized inputs');
+    if (!this.outputs.length) throw new Error('Transaction has no outputs');
+    // TODO: Check if inputs.amount >= outputs.amount
     return this.toBytes(true, true);
   }
   combine(other: Transaction): this {
@@ -2175,7 +2354,7 @@ export class Transaction {
     const otherUnsigned = other.global.unsignedTx ? RawTx.encode(other.global.unsignedTx) : P.EMPTY;
     if (!P.equalBytes(thisUnsigned, otherUnsigned))
       throw new Error(`Transaction/combine: different unsigned tx`);
-    this.global = this.keyMap(PSBTGlobal, this.global, other.global);
+    this.global = mergeKeyMap(PSBTGlobal, this.global, other.global);
     for (let i = 0; i < this.inputs.length; i++) this.updateInput(i, other.inputs[i]);
     for (let i = 0; i < this.outputs.length; i++) this.updateOutput(i, other.outputs[i]);
     return this;

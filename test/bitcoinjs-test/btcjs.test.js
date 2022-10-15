@@ -519,7 +519,10 @@ const FINALIZE_CASES1 = [
 for (let i = 0; i < FINALIZE_CASES1.length; i++) {
   const v = FINALIZE_CASES1[i];
   should(`PSBT finalize1(${i}): ${v.type}`, () => {
-    if (v.witnessUtxo) v.witnessUtxo.script = hex.decode(v.witnessUtxo.script);
+    if (v.witnessUtxo) {
+      v.witnessUtxo.script = hex.decode(v.witnessUtxo.script);
+      v.witnessUtxo.amount = BigInt(v.witnessUtxo.value);
+    }
     if (v.partialSig) {
       v.partialSig = v.partialSig.map((i) => {
         return [hex.decode(i.pubkey), hex.decode(i.signature)];
