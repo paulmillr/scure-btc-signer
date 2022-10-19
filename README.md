@@ -16,6 +16,8 @@ _Check out all web3 utility libraries:_ [micro-eth-signer](https://github.com/pa
 
 ## Usage
 
+### General Usage
+
 ```sh
 npm install micro-btc-signer
 ```
@@ -23,6 +25,20 @@ npm install micro-btc-signer
 ```ts
 import * as btc from 'micro-btc-signer';
 ```
+
+### Usage for Test Examples
+
+```sh
+npm install micro-btc-signer @scure/base assert
+```
+
+```ts
+import * as btc from 'micro-btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual, throws } from 'assert';
+```
+
+### Table of Contents
 
 - [Payments](#payments)
   - [P2PK Pay To Public Key](#p2pk-pay-to-public-key)
