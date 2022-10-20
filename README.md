@@ -38,6 +38,10 @@ import { hex } from '@scure/base';
 import { deepStrictEqual, throws } from 'assert';
 ```
 
+### Web Demo
+
+Here's a [live web demo](https://micro-btc-web-demo.vercel.app/) of the library in action, along with the [source code for the demo](https://github.com/shea256/micro-btc-web-demo).
+
 ### Table of Contents
 
 - [Payments](#payments)
