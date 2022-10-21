@@ -10,7 +10,7 @@ Create, sign & decode BTC transactions with minimum deps.
 - 📨 BIP174 PSBT
 - Multisig support
 
-The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io).
+The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://micro-btc-web-demo.vercel.app/) & [its github](https://github.com/shea256/micro-btc-web-demo).
 
 _Check out all web3 utility libraries:_ [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [micro-btc-signer](https://github.com/paulmillr/micro-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
@@ -26,17 +26,6 @@ npm install micro-btc-signer
 import * as btc from 'micro-btc-signer';
 ```
 
-### Usage for Test Examples
-
-```sh
-npm install micro-btc-signer @scure/base assert
-```
-
-```ts
-import * as btc from 'micro-btc-signer';
-import { hex } from '@scure/base';
-import { deepStrictEqual, throws } from 'assert';
-```
 
 ### Table of Contents
 
@@ -71,6 +60,18 @@ BTC has several UTXO types:
 - P2PKH, P2SH, P2MS: Classic
 - P2WPKH, P2WSH: classic, SegWit
 - P2TR: Taproot, recommended
+
+For test examples, the usage is as following:
+
+```sh
+npm install micro-btc-signer @scure/base assert
+```
+
+```ts
+import * as btc from 'micro-btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual, throws } from 'assert';
+```
 
 ### P2PK (Pay To Public Key)
 
