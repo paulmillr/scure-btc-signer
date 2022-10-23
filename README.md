@@ -26,7 +26,6 @@ npm install micro-btc-signer
 import * as btc from 'micro-btc-signer';
 ```
 
-
 ### Table of Contents
 
 - [Payments](#payments)
@@ -36,7 +35,7 @@ import * as btc from 'micro-btc-signer';
   - [P2SH Script Hash](#p2sh-script-hash)
   - [P2WSH Witness Script Hash](#p2wsh-witness-script-hash)
   - [P2SH-P2WSH](#p2sh-p2wsh)
-  - [P2MS classic multisig](#p2ms-clasic-multisig)
+  - [P2MS classic multisig](#p2ms-classic-multisig)
   - [P2TR Taproot](#p2tr-taproot)
   - [P2TR-NS Taproot multisig](#p2tr-ns-taproot-multisig)
   - [P2TR-MS Taproot M-of-N multisig](#p2tr-ms-taproot-m-of-n-multisig)
@@ -344,7 +343,7 @@ deepStrictEqual(btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3]), {
 });
 ```
 
-### P2TR-PK (Taproot sigle P2PK script)
+### P2TR-PK (Taproot single P2PK script)
 
 Just specific case of `p2tr_ns(1, [pubkey])`, same as BTC descriptor: `tr($H,pk(PUBKEY))`
 
