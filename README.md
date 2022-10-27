@@ -10,7 +10,7 @@ Create, sign & decode BTC transactions with minimum deps.
 - 📨 BIP174 PSBT
 - Multisig support
 
-The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.microbtc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
+The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
 
 _Check out all web3 utility libraries:_ [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [micro-btc-signer](https://github.com/paulmillr/micro-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
@@ -292,11 +292,11 @@ deepStrictEqual(btc.p2tr(undefined, [btc.p2tr(PubKey2), [btc.p2tr(PubKey), btc.p
 
 Taproot N-of-N multisig (`[<PubKeys[0:n-1]> CHECKSIGVERIFY] <PubKeys[n-1]> CHECKSIG`).
 
-**_NOTE_**: First arg is M, if M!=PubKeys.length, it will create multi-leaf M-of-N taproot script tree.
-This allows to reveal only `M` PubKeys on spend, without any information about others.
-Fast for cases like 15-of-20, extremely slow for cases like 5-of-20.
+**_NOTE_**: First arg is M, if M!=PubKeys.length, it will create a multi-leaf M-of-N taproot script tree.
+This allows one to reveal only `M` PubKeys on spend, without any information about the others.
+This is fast for cases like 15-of-20, but extremely slow for cases like 5-of-20.
 
-**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating wrong multisig by mistake. However there is a flag: allowSamePubkeys, in case you really need that.
+**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating the wrong multisig by mistake. However there is a flag called allowSamePubkeys, in case you really need that.
 Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
 
 ```ts
@@ -305,6 +305,7 @@ const PubKey2 = hex.decode('0202020202020202020202020202020202020202020202020202
 const PubKey3 = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
 
 // Simple 3-of-3 multisig
+// Creates a single script that requires all three pubkeys: [PubKey, PubKey2, PubKey3]
 deepStrictEqual(btc.p2tr_ns(3, [PubKey, PubKey2, PubKey3]), [
   {
     type: 'tr_ns',
@@ -313,7 +314,8 @@ deepStrictEqual(btc.p2tr_ns(3, [PubKey, PubKey2, PubKey3]), [
     ),
   },
 ]);
-// M!==pubkeys.length -> creates scripts for [[PubKey, PubKey2], [PubKey, PubKey3], [PubKey2, PubKey3]]
+// Simple 2-of-3 multisig
+// If M (pubkeys required) is less than N (# of pubkeys), then multiple scripts are created: [[PubKey, PubKey2], [PubKey, PubKey3], [PubKey2, PubKey3]]
 deepStrictEqual(btc.p2tr(undefined, btc.p2tr_ns(2, [PubKey, PubKey2, PubKey3])), {
   type: 'tr',
   address: 'bc1pevfcmnkqqq09a4n0fs8c7mwlc6r4efqpvgyqpjvegllavgw235fq3kz7a0',
@@ -325,7 +327,7 @@ deepStrictEqual(btc.p2tr(undefined, btc.p2tr_ns(2, [PubKey, PubKey2, PubKey3])),
 
 M-of-N single leaf TapRoot multisig (`<PubKeys[0]> CHECKSIG [<PubKeys[1:n]> CHECKSIGADD] <M> NUMEQUAL`)
 
-**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating wrong multisig by mistake. However there is a flag: allowSamePubkeys, in case you really need that.
+**_NOTE_**: By default, we don't accept duplicate public keys in order to avoid creating the wrong multisig by mistake. However, there is a flag called allowSamePubkeys, in case you really need that.
 Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
 
 **_NOTE_**: experimental, use at your own risk.
@@ -341,11 +343,17 @@ deepStrictEqual(btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3]), {
     '200101010101010101010101010101010101010101010101010101010101010101ac200202020202020202020202020202020202020202020202020202020202020202ba201212121212121212121212121212121212121212121212121212121212121212ba529c'
   ),
 });
+// Creates a single script for [PubKey, PubKey2, PubKey3]
+deepStrictEqual(btc.p2tr(undefined, btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3])), {
+  type: 'tr_ms',
+  address: 'bc1p6m2xevckax9zucumnnyvu4xhxem66ugc5r2zlw2a20s0hxnutl8qfef23s',
+  script: hex.decode('5120d6d46cb316e98a2e639b9cc8ce54d73677ad7118a0d42fb95d53e0fb9a7c5fce')
+});
 ```
 
 ### P2TR-PK (Taproot single P2PK script)
 
-Just specific case of `p2tr_ns(1, [pubkey])`, same as BTC descriptor: `tr($H,pk(PUBKEY))`
+This is a specific case of `p2tr_ns(1, [pubkey])`, which is the same as the BTC descriptor: `tr($H,pk(PUBKEY))`
 
 ```ts
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
