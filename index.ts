@@ -716,27 +716,6 @@ function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>) {
   return tx;
 }
 
-// Check if object doens't have custom constructor (like Uint8Array/Array)
-const isPlainObject = (obj: any) =>
-  Object.prototype.toString.call(obj) === '[object Object]' && obj.constructor === Object;
-
-function type<T>(v: T) {
-  if (v instanceof Uint8Array) return 'bytes';
-  if (Array.isArray(v)) return 'array';
-  if (['number', 'string', 'bigint', 'boolean', 'undefined'].includes(typeof v)) return typeof v;
-  if (v === null) return 'null'; // typeof null=object
-  if (isPlainObject(v)) return 'object';
-  throw new Error(`Unknown type=${v}`);
-}
-// Basic structure merge: object = {...old, ...new}, arrays = old.concat(new). other -> replace
-// function merge<T extends PSBTKeyMap>(
-//   psbtEnum: T,
-//   val: PSBTKeyMapKeys<T>,
-//   cur?: PSBTKeyMapKeys<T>
-// ): PSBTKeyMapKeys<T> {
-
-// }
-
 function mergeKeyMap<T extends PSBTKeyMap>(
   psbtEnum: T,
   val: PSBTKeyMapKeys<T>,
@@ -1440,14 +1419,15 @@ function unpackSighash(hashType: number) {
 
 export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(cmp);
 
-export type TransactionInput = P.UnwrapCoder<typeof RawInput> &
-  P.UnwrapCoder<typeof PSBTInputCoder>;
+export type TransactionInput = Partial<P.UnwrapCoder<typeof RawInput>> &
+  P.UnwrapCoder<typeof PSBTInputCoder> &
+  P.UnwrapCoder<typeof TxHashIdx>;
 export type TransactionOutput = P.UnwrapCoder<typeof RawOutput> &
   P.UnwrapCoder<typeof PSBTOutputCoder>;
 
 const def = {
-  sequence: (n: number) => (n === undefined ? DEFAULT_SEQUENCE : n),
-  lockTime: (n: number) => (n === undefined ? DEFAULT_LOCKTIME : n),
+  sequence: (n?: number) => (n === undefined ? DEFAULT_SEQUENCE : n),
+  lockTime: (n?: number) => (n === undefined ? DEFAULT_LOCKTIME : n),
 };
 
 export const TAP_LEAF_VERSION = 0xc0;
@@ -1690,7 +1670,8 @@ export class Transaction {
     if (this.hasWitnesses) out += 2;
     out += 4 * CompactSizeLen.encode(this.inputs.length).length;
     out += 4 * CompactSizeLen.encode(this.outputs.length).length;
-    for (const i of this.inputs) out += 160 + 4 * VarBytes.encode(i.finalScriptSig).length;
+    for (const i of this.inputs)
+      if (i.finalScriptSig) out += 160 + 4 * VarBytes.encode(i.finalScriptSig).length;
     for (const o of this.outputs) out += 32 + 4 * VarBytes.encode(o.script).length;
     if (this.hasWitnesses) {
       for (const i of this.inputs)
@@ -1707,6 +1688,7 @@ export class Transaction {
       lockTime: this.lockTime,
       inputs: this.inputs.map((i) => ({
         ...i,
+        sequence: def.sequence(i.sequence),
         finalScriptSig: (withScriptSig && i.finalScriptSig) || P.EMPTY,
       })),
       outputs: this.outputs,
@@ -1867,7 +1849,7 @@ export class Transaction {
       lockTime: this.lockTime,
       version: this.version,
       segwitFlag: false,
-      inputs,
+      inputs: inputs.map((i) => ({ ...i, sequence: def.sequence(i.sequence) })),
       outputs,
     });
     return sha256x2(tmpTx, P.I32LE.encode(hashType));
@@ -1956,8 +1938,10 @@ export class Transaction {
   // Utils for sign/finalize
   // Used pretty often, should be fast
   private prevOut(input: TransactionInput): P.UnwrapCoder<typeof RawOutput> {
-    if (input.nonWitnessUtxo) return input.nonWitnessUtxo.outputs[input.index];
-    else if (input.witnessUtxo) return input.witnessUtxo;
+    if (input.nonWitnessUtxo) {
+      if (input.index === undefined) throw new Error('Uknown input index');
+      return input.nonWitnessUtxo.outputs[input.index];
+    } else if (input.witnessUtxo) return input.witnessUtxo;
     else throw new Error('Cannot find previous output info.');
   }
   private inputType(input: TransactionInput) {

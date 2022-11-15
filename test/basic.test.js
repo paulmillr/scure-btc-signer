@@ -1167,6 +1167,61 @@ should('SignatureHash tests', () => {
   );
 });
 
+should('taproot single array as script', () => {
+  const A = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  const B = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
+  const C = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
+  const D = hex.decode('989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f');
+  const E = hex.decode('f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661b');
+  const F = hex.decode('56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967');
+  const ns1 = btc.p2tr_ns(2, [A, B]);
+  const ns2 = btc.p2tr_ns(2, [A, C]);
+  const ns3 = btc.p2tr_ns(2, [B, C]);
+  const ns4 = btc.p2tr_ns(2, [D, E]);
+  const ns5 = btc.p2tr_ns(2, [E, F]);
+  const ns6 = btc.p2tr_ns(2, [C, D]);
+  for (const ns of [ns1, ns2, ns3, ns4, ns5, ns6]) deepStrictEqual(ns.length, 1);
+  // Test for 4 elements
+  deepStrictEqual(
+    btc.p2tr(undefined, [ns1, ns2, ns3, ns4]),
+    btc.p2tr(undefined, [ns1[0], ns2[0], ns3[0], ns4[0]])
+  );
+  deepStrictEqual(
+    btc.p2tr(undefined, [ns1, ns2, ns3, ns4]),
+    btc.p2tr(undefined, [...ns1, ...ns2, ...ns3, ...ns4])
+  );
+  // Test for 5 elements (just to be sure)
+  deepStrictEqual(
+    btc.p2tr(undefined, [ns1, ns2, ns3, ns4, ns5]),
+    btc.p2tr(undefined, [ns1[0], ns2[0], ns3[0], ns4[0], ns5[0]])
+  );
+  deepStrictEqual(
+    btc.p2tr(undefined, [ns1, ns2, ns3, ns4, ns5]),
+    btc.p2tr(undefined, [...ns1, ...ns2, ...ns3, ...ns4, ...ns5])
+  );
+  // Mixed input (single script + multiple arrays of single element)
+  const pk1 = btc.p2tr_pk(A);
+  // A or (B and C) or (C and D) or (D and E)
+  // => pk1 or ns3 or ns6 or ns4
+  deepStrictEqual(
+    btc.p2tr(undefined, [pk1, ns3, ns6, ns4]),
+    btc.p2tr(undefined, [pk1, ns3[0], ns6[0], ns4[0]])
+  );
+  deepStrictEqual(
+    btc.p2tr(undefined, [pk1, ns3, ns6, ns4]),
+    btc.p2tr(undefined, [pk1, ...ns3, ...ns6, ...ns4])
+  );
+  // Mixed, but with single script at the end
+  deepStrictEqual(
+    btc.p2tr(undefined, [ns3, ns6, ns4, pk1]),
+    btc.p2tr(undefined, [ns3[0], ns6[0], ns4[0], pk1])
+  );
+  deepStrictEqual(
+    btc.p2tr(undefined, [ns3, ns6, ns4, pk1]),
+    btc.p2tr(undefined, [...ns3, ...ns6, ...ns4, pk1])
+  );
+});
+
 should('big multisig', () => {
   // Limits: p2_ms=20, p2tr_ms/p2tr_ns=999 (stacksize)
   // 999 encode as number support? check with bitcoin core
