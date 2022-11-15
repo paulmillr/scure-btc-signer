@@ -17,7 +17,7 @@
   },
   "include": [
     "index.ts",
-    "psbt.ts"
+    "_type_test.ts"
   ],
   "exclude": [
     "node_modules",
