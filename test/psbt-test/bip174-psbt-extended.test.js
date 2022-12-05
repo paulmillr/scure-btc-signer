@@ -39,7 +39,7 @@ for (let i = 0; i < rpcPSBT.creator.length; i++) {
   should(`rpcPSBT(${i}): creator`, () => {
     const tx = new btc.Transaction();
     // Already reversed
-    for (const i of t.inputs) tx.addInput({ hash: hex.decode(i.txid), index: i.vout });
+    for (const i of t.inputs) tx.addInput({ txid: hex.decode(i.txid), index: i.vout });
     for (const o of t.outputs) {
       const [k, v] = Object.entries(o)[0];
       tx.addOutputAddress(k, '' + v, regtest);

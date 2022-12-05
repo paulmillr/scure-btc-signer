@@ -49,19 +49,19 @@ const TX_TEST_OUTPUTS = [
 ];
 const TX_TEST_INPUTS = [
   {
-    hash: hex.decode('c061c23190ed3370ad5206769651eaf6fac6d87d85b5db34e30a74e0c4a6da3e'),
+    txid: hex.decode('c061c23190ed3370ad5206769651eaf6fac6d87d85b5db34e30a74e0c4a6da3e'),
     index: 0,
     amount: 550n,
     script: hex.decode('76a91411dbe48cc6b617f9c6adaf4d9ed5f625b1c7cb5988ac'),
   },
   {
-    hash: hex.decode('a21965903c938af35e7280ae5779b9fea4f7f01ac256b8a2a53b1b19a4e89a0d'),
+    txid: hex.decode('a21965903c938af35e7280ae5779b9fea4f7f01ac256b8a2a53b1b19a4e89a0d'),
     index: 0,
     amount: 600n,
     script: hex.decode('76a91411dbe48cc6b617f9c6adaf4d9ed5f625b1c7cb5988ac'),
   },
   {
-    hash: hex.decode('fae21e319ca827df32462afc3225c17719338a8e8d3e3b3ddeb0c2387da3a4c7'),
+    txid: hex.decode('fae21e319ca827df32462afc3225c17719338a8e8d3e3b3ddeb0c2387da3a4c7'),
     index: 0,
     amount: 600n,
     script: hex.decode('76a91411dbe48cc6b617f9c6adaf4d9ed5f625b1c7cb5988ac'),
@@ -107,7 +107,7 @@ should('BTC: tx (from bech32)', async () => {
   for (const [address, amount] of TX_TEST_OUTPUTS) tx32.addOutputAddress(address, amount);
   for (const inp of TX_TEST_INPUTS) {
     tx32.addInput({
-      hash: inp.hash,
+      txid: inp.txid,
       index: inp.index,
       witnessUtxo: {
         amount: inp.amount,
@@ -456,38 +456,38 @@ should('payTo API', () => {
 should('Transaction input/output', () => {
   const tx = new btc.Transaction();
   // Input
-  tx.addInput({ hash: new Uint8Array(32), index: 0 });
+  tx.addInput({ txid: new Uint8Array(32), index: 0 });
   deepStrictEqual(tx.inputs[0], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 0,
     sequence: btc.DEFAULT_SEQUENCE,
   });
-  const i2 = { hash: new Uint8Array(32), index: 0, sequence: 0 };
+  const i2 = { txid: new Uint8Array(32), index: 0, sequence: 0 };
   tx.addInput(i2);
   // Sequence is 0
   deepStrictEqual(tx.inputs[1], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 0,
     sequence: 0,
   });
   // Modification of internal input doesn't affect input
   tx.inputs[1].t = 5;
-  deepStrictEqual(tx.inputs[1], { hash: new Uint8Array(32), index: 0, sequence: 0, t: 5 });
-  deepStrictEqual(i2, { hash: new Uint8Array(32), index: 0, sequence: 0 });
+  deepStrictEqual(tx.inputs[1], { txid: new Uint8Array(32), index: 0, sequence: 0, t: 5 });
+  deepStrictEqual(i2, { txid: new Uint8Array(32), index: 0, sequence: 0 });
   // Update basic value
   tx.updateInput(0, { index: 10 });
   deepStrictEqual(tx.inputs[0], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 10,
     sequence: btc.DEFAULT_SEQUENCE,
   });
   // Add hex
   tx.addInput({
-    hash: '0000000000000000000000000000000000000000000000000000000000000000',
+    txid: '0000000000000000000000000000000000000000000000000000000000000000',
     index: 0,
   });
   deepStrictEqual(tx.inputs[2], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 0,
     sequence: btc.DEFAULT_SEQUENCE,
   });
@@ -523,7 +523,7 @@ should('Transaction input/output', () => {
   // Remove field
   tx.updateInput(0, { tapInternalKey: new Uint8Array(32).fill(1) });
   deepStrictEqual(tx.inputs[0], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 10,
     tapInternalKey: new Uint8Array(32).fill(1),
     bip32Derivation: [bip2, bip1, bip3],
@@ -531,7 +531,7 @@ should('Transaction input/output', () => {
   });
   tx.updateInput(0, { tapInternalKey: undefined });
   deepStrictEqual(tx.inputs[0], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 10,
     bip32Derivation: [bip2, bip1, bip3],
     sequence: btc.DEFAULT_SEQUENCE,
@@ -539,14 +539,14 @@ should('Transaction input/output', () => {
   // Delete KV
   tx.updateInput(0, { bip32Derivation: undefined });
   deepStrictEqual(tx.inputs[0], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 10,
     sequence: btc.DEFAULT_SEQUENCE,
   });
   // Any other keys ignored
   tx.updateInput(0, { test: '1', b: 2 });
   deepStrictEqual(tx.inputs[0], {
-    hash: new Uint8Array(32),
+    txid: new Uint8Array(32),
     index: 10,
     sequence: btc.DEFAULT_SEQUENCE,
   });
@@ -1029,13 +1029,13 @@ should('Big transaction regtest validation', () => {
 
   const BTCamount = 10n ** 8n; // 1btc
   // Input
-  const hash = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
+  const txid = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
   for (let index = 0; index < spends.length; index++) {
     const { spend, name } = spends[index];
     if (!enabled.includes(name)) continue;
     tx.addInput({
       ...spend,
-      hash,
+      txid,
       index,
       witnessUtxo: { script: spend.script, amount: btc.Decimal.decode('1.5') },
     });
@@ -1077,7 +1077,7 @@ should('SignatureHash tests', () => {
     allowLegacyWitnessUtxo: true,
   });
   const BTCamount = 10n ** 8n; // 1btc
-  const hash = hex.decode('5d315414e5772696366f21e383d8306b668d0bfc4d2bbc66bcf8f13403f501f4');
+  const txid = hex.decode('5d315414e5772696366f21e383d8306b668d0bfc4d2bbc66bcf8f13403f501f4');
 
   // Out addr
   const privOut = hex.decode('0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e');
@@ -1102,7 +1102,7 @@ should('SignatureHash tests', () => {
   const addInput = (spend, sighash) => {
     tx.addInput({
       ...spend,
-      hash,
+      txid,
       index: index++,
       witnessUtxo: { script: spend.script, amount: btc.Decimal.decode('1.5') },
       sighashType: sighash,

@@ -277,7 +277,7 @@ export const BTCArray = <T>(t: P.CoderType<T>): P.CoderType<T[]> => P.array(Comp
 export const VarBytes = P.bytes(CompactSize);
 
 export const RawInput = P.struct({
-  hash: P.bytes(32, true), // hash(prev_tx)
+  txid: P.bytes(32, true), // hash(prev_tx),
   index: P.U32LE, // output number of previous tx
   finalScriptSig: VarBytes, // btc merges input and output script, executes it. If ok = tx passes
   sequence: P.U32LE, // ?
@@ -378,7 +378,7 @@ const PSBTInput = {
   sha256: [0x0b, P.bytes(32), P.bytes(null), [], [], [0, 2]],
   hash160: [0x0c, P.bytes(20), P.bytes(null), [], [], [0, 2]],
   hash256: [0x0d, P.bytes(32), P.bytes(null), [], [], [0, 2]],
-  hash: [0x0e, false, P.bytes(32), [2], [0], [2]],
+  txid: [0x0e, false, P.bytes(32), [2], [0], [2]],
   index: [0x0f, false, P.U32LE, [2], [0], [2]],
   sequence: [0x10, false, P.U32LE, [], [0], [2]],
   requiredTimeLocktime: [0x11, false, P.U32LE, [], [0], [2]],
@@ -401,7 +401,7 @@ const PSBTInput = {
 } as const;
 // All other keys removed when finalizing
 const PSBTInputFinalKeys: (keyof typeof PSBTInput)[] = [
-  'hash',
+  'txid',
   'sequence',
   'index',
   'witnessUtxo',
@@ -783,7 +783,7 @@ export const RawPSBTV0 = P.validate(_RawPSBTV0, validatePSBT);
 export const RawPSBTV2 = P.validate(_RawPSBTV2, validatePSBT);
 
 // (TxHash, Idx)
-const TxHashIdx = P.struct({ hash: P.bytes(32, true), index: P.U32LE });
+const TxHashIdx = P.struct({ txid: P.bytes(32, true), index: P.U32LE });
 // /Coders
 
 const isBytes = (b: unknown): b is Bytes => b instanceof Uint8Array;
@@ -1725,20 +1725,19 @@ export class Transaction {
   ): TransactionInput {
     let res: PSBTKeyMapKeys<typeof PSBTInput> = { ...cur, ...i };
     if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
-    if (typeof res.hash === 'string') res.hash = base.hex.decode(res.hash).reverse();
     if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
     res = mergeKeyMap(PSBTInput, res, cur, allowedFields);
     PSBTInputCoder.encode(res);
 
-    if (res.hash === undefined || res.index === undefined)
-      throw new Error('Transaction/input: hash and index required');
+    if (res.txid === undefined || res.index === undefined)
+      throw new Error('Transaction/input: txid and index required');
     // Cannot move in PSBTInputCoder, since it requires opts for parsing
     if (res.nonWitnessUtxo) {
       const outputs = res.nonWitnessUtxo.outputs;
       if (outputs.length - 1 < res.index) throw new Error('nonWitnessUtxo: incorect output index');
       const tx = Transaction.fromRaw(RawTx.encode(res.nonWitnessUtxo), this.opts);
-      const hash = base.hex.encode(res.hash);
-      if (tx.id !== hash) throw new Error(`nonWitnessUtxo: wrong hash, exp=${hash} got=${tx.id}`);
+      const txid = base.hex.encode(res.txid);
+      if (tx.id !== txid) throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
     }
     // TODO: use this.prevout?
     let prevOut;
@@ -1872,7 +1871,7 @@ export class Transaction {
       P.I32LE.encode(this.version),
       inputHash,
       sequenceHash,
-      P.bytes(32, true).encode(input.hash),
+      P.bytes(32, true).encode(input.txid),
       P.U32LE.encode(input.index),
       VarBytes.encode(prevOutScript),
       P.U64LE.encode(amount),

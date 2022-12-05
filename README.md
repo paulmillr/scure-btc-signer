@@ -347,7 +347,7 @@ deepStrictEqual(btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3]), {
 deepStrictEqual(btc.p2tr(undefined, btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3])), {
   type: 'tr_ms',
   address: 'bc1p6m2xevckax9zucumnnyvu4xhxem66ugc5r2zlw2a20s0hxnutl8qfef23s',
-  script: hex.decode('5120d6d46cb316e98a2e639b9cc8ce54d73677ad7118a0d42fb95d53e0fb9a7c5fce')
+  script: hex.decode('5120d6d46cb316e98a2e639b9cc8ce54d73677ad7118a0d42fb95d53e0fb9a7c5fce'),
 });
 ```
 
@@ -383,9 +383,13 @@ tx.toPSBT(ver = this.PSBTVersion); // PSBT
 
 ### Inputs
 
+We have txid (BE) instead of hash (LE) in transactions. We can support both,
+but txid is consistent across block explorers, while some explorers treat hash
+as txid - so hash is not consistent.
+
 ```ts
 type TransactionInput = {
-  hash: Bytes,
+  txid: Bytes,
   index: number,
   nonWitnessUtxo?: <RawTransactionBytesOrHex>,
   witnessUtxo?: {script?: Bytes; amount: bigint},
@@ -412,26 +416,26 @@ tx.addInput(input: TransactionInput): number;
 tx.updateInput(idx: number, input: TransactionInput);
 
 // Input
-tx.addInput({ hash: new Uint8Array(32), index: 0 });
+tx.addInput({ txid: new Uint8Array(32), index: 0 });
 deepStrictEqual(tx.inputs[0], {
-  hash: new Uint8Array(32),
+  txid: new Uint8Array(32),
   index: 0,
   sequence: btc.DEFAULT_SEQUENCE,
 });
 // Update basic value
 tx.updateInput(0, { index: 10 });
 deepStrictEqual(tx.inputs[0], {
-  hash: new Uint8Array(32),
+  txid: new Uint8Array(32),
   index: 10,
   sequence: btc.DEFAULT_SEQUENCE,
 });
 // Add value as hex
 tx.addInput({
-  hash: '0000000000000000000000000000000000000000000000000000000000000000',
+  txid: '0000000000000000000000000000000000000000000000000000000000000000',
   index: 0,
 });
 deepStrictEqual(tx.inputs[2], {
-  hash: new Uint8Array(32),
+  txid: new Uint8Array(32),
   index: 0,
   sequence: btc.DEFAULT_SEQUENCE,
 });
@@ -465,7 +469,7 @@ deepStrictEqual(tx2.inputs[0].bip32Derivation, [bip1, bip2, bip3]);
 // Remove field
 tx.updateInput(0, { bip32Derivation: undefined });
 deepStrictEqual(tx.inputs[0], {
-  hash: new Uint8Array(32),
+  txid: new Uint8Array(32),
   index: 10,
   sequence: btc.DEFAULT_SEQUENCE,
 });
@@ -537,7 +541,7 @@ const privKey = hex.decode('0101010101010101010101010101010101010101010101010101
 const txP2WPKH = new btc.Transaction();
 for (const inp of TX_TEST_INPUTS) {
   txP2WPKH.addInput({
-    hash: inp.hash,
+    txid: inp.txid,
     index: inp.index,
     witnessUtxo: {
       amount: inp.amount,
@@ -576,14 +580,12 @@ const tx = new btc.Transaction(2);
 tx.addOutput({ script: '0014d85c2b71d0060b09c9886aeb815e50991dda124d', amount: '1.49990000' });
 tx.addOutput({ script: '001400aea9a2e5f0f876a588df5546e8742d1d87008f', amount: '1.00000000' });
 // and spends the following inputs:
-// NOTE: spec uses txId instead of txHash
-const rev = (t) => hex.encode(hex.decode(t).reverse());
 tx.addInput({
-  hash: rev('75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858'),
+  txid: '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858',
   index: 0,
 });
 tx.addInput({
-  hash: rev('1dea7cd05979072a3578cab271c02244ea8a090bbb46aa680a65ecd027048d83'),
+  txid: '1dea7cd05979072a3578cab271c02244ea8a090bbb46aa680a65ecd027048d83',
   index: 1,
 });
 // must create this PSBT:

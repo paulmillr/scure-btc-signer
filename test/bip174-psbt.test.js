@@ -74,13 +74,12 @@ should('BIP174: PSBT multi-sign example', () => {
   tx.addOutput({ script: '001400aea9a2e5f0f876a588df5546e8742d1d87008f', amount: '1.00000000' });
   // and spends the following inputs:
   // NOTE: spec uses txId instead of txHash
-  const rev = (t) => hex.encode(hex.decode(t).reverse());
   tx.addInput({
-    hash: rev('75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858'),
+    txid: '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858',
     index: 0,
   });
   tx.addInput({
-    hash: rev('1dea7cd05979072a3578cab271c02244ea8a090bbb46aa680a65ecd027048d83'),
+    txid: '1dea7cd05979072a3578cab271c02244ea8a090bbb46aa680a65ecd027048d83',
     index: 1,
   });
   // must create this PSBT:
