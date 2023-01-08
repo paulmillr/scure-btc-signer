@@ -32,7 +32,7 @@ enum PubT {
   ecdsa,
   schnorr,
 }
-const validatePubkey = (pub: Bytes, type: PubT) => {
+function validatePubkey(pub: Bytes, type: PubT): Bytes {
   const len = pub.length;
   if (type === PubT.ecdsa) {
     if (len === 32) throw new Error('Expected non-Schnorr key');
@@ -43,8 +43,9 @@ const validatePubkey = (pub: Bytes, type: PubT) => {
   }
   secp.Point.fromHex(pub); // does assertValidity
   return pub;
-};
-function isValidPubkey(pub: Bytes, type: PubT) {
+}
+
+function isValidPubkey(pub: Bytes, type: PubT): boolean {
   try {
     return !!validatePubkey(pub, type);
   } catch (e) {
@@ -52,9 +53,11 @@ function isValidPubkey(pub: Bytes, type: PubT) {
   }
 }
 
+// low-r signature grinding. Used to reduce tx size by 1 byte.
+// noble/secp256k1 does not support the feature: it is not used outside of BTC.
+// We implement it manually, because in BTC it's common.
 // Not best way, but closest to bitcoin implementation (easier to check)
 const hasLowR = (sig: Bytes) => secp.Signature.fromHex(sig).toCompactRawBytes()[0] < 0x80;
-// TODO: move to @noble/secp256k1?
 function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
   let sig = secp.signSync(hash, privateKey, { canonical: true });
   if (lowR && !hasLowR(sig)) {
@@ -243,16 +246,16 @@ export const Script: P.CoderType<ScriptType> = P.wrap({
   },
 });
 
-// NOTE: we can encode almost any number as ScriptNum, however, parsing will be a problem, since we cannot know
-// if buffer is number or something else
+// We can encode almost any number as ScriptNum, however, parsing will be a problem
+// since we can't know if buffer is a number or something else.
 export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<bigint> {
   return P.wrap({
     encodeStream: (w: P.Writer, value: bigint) => {
       if (value === 0n) return;
+      const neg = value < 0;
       const val = BigInt(value);
       const nums = [];
-      const neg = value < 0;
-      for (let abs = val < 0 ? -val : val; abs; abs >>= 8n) nums.push(Number(abs & 0xffn));
+      for (let abs = neg ? -val : val; abs; abs >>= 8n) nums.push(Number(abs & 0xffn));
       if (nums[nums.length - 1] >= 0x80) nums.push(neg ? 0x80 : 0);
       else if (neg) nums[nums.length - 1] |= 0x80;
       w.bytes(new Uint8Array(nums));
@@ -1094,7 +1097,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
   if (tree.length !== 2) tree = taprootListToTree(tree as TaprootNode[]) as TaprootNode[];
   if (tree.length !== 2) throw new Error('hashTree: non binary tree!');
   // branch
-  // NOTE: both nodes should exist
+  // Both nodes should exist
   const left = taprootHashTree(tree[0], allowUnknowOutput);
   const right = taprootHashTree(tree[1], allowUnknowOutput);
   // We cannot swap left/right here, since it will change structure of tree
@@ -1253,7 +1256,7 @@ export function combinations<T>(m: number, list: T[]): T[][] {
     idx[last] += 1;
     let i = last;
     // Propagate increment
-    // NOTE: idx[i] cannot be bigger than n-m+i, otherwise last elements in right part will overflow
+    // idx[i] cannot be bigger than n-m+i, otherwise last elements in right part will overflow
     for (; i >= 0 && idx[i] > n - m + i; i--) {
       idx[i] = 0;
       // Overflow in idx[0], break
@@ -2206,10 +2209,10 @@ export class Transaction {
         `Input with not allowed sigHash=${sighash}. Allowed: ${allowedSighash.join(', ')}`
       );
     }
-    // NOTE: it is possible to sign these inputs for legacy/segwit v0 (but no taproot!),
+    // It is possible to sign these inputs for legacy/segwit v0 (but no taproot!),
     // however this was because of bug in bitcoin-core, which remains here because of consensus.
-    // If this is absolutely neccessary for you workflow, please open issue. For now it is disable to
-    // avoid complicated workflow where SINGLE will block adding new outputs
+    // If this is absolutely neccessary for your case, please open issue.
+    // We disable it to avoid complicated workflow where SINGLE will block adding new outputs
     const { sigInputs, sigOutputs } = this.inputSighash(idx);
     if (sigOutputs === SignatureHash.SINGLE && idx >= this.outputs.length) {
       throw new Error(
