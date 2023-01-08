@@ -6,16 +6,17 @@ import { hmac } from '@noble/hashes/hmac';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import * as P from 'micro-packed';
 
-// as const returns readonly stuff, remove readonly property
-// TODO: update in other places
-type Writable<T> = T extends {}
-  ? T extends Uint8Array
-    ? T
-    : {
-        -readonly [P in keyof T]: Writable<T[P]>;
-      }
-  : T;
+// Basic utility types
+export type ExtendType<T, E> = {
+  [K in keyof T]: K extends keyof E ? E[K] | T[K] : T[K];
+};
+export type RequireType<T, K extends keyof T> = T & {
+  [P in K]-?: T[P];
+};
 export type Bytes = Uint8Array;
+// Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
+const def = <T>(value: T | undefined, def: T) => (value === undefined ? def : value);
+const isBytes = (b: unknown): b is Bytes => b instanceof Uint8Array;
 
 const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
@@ -117,13 +118,12 @@ const EMPTY32 = new Uint8Array(32);
 export const Decimal = P.coders.decimal(PRECISION);
 type CmpType = string | number | bigint | boolean | Bytes | undefined;
 export function cmp(a: CmpType, b: CmpType): number {
-  if (a instanceof Uint8Array && b instanceof Uint8Array) {
+  if (isBytes(a) && isBytes(b)) {
     // -1 -> a<b, 0 -> a==b, 1 -> a>b
     const len = Math.min(a.length, b.length);
     for (let i = 0; i < len; i++) if (a[i] != b[i]) return Math.sign(a[i] - b[i]);
     return Math.sign(a.length - b.length);
-  } else if (a instanceof Uint8Array || b instanceof Uint8Array)
-    throw new Error(`cmp: wrong values a=${a} b=${b}`);
+  } else if (isBytes(a) || isBytes(b)) throw new Error(`cmp: wrong values a=${a} b=${b}`);
   if (
     (typeof a === 'bigint' && typeof b === 'number') ||
     (typeof a === 'number' && typeof b === 'bigint')
@@ -168,19 +168,10 @@ export enum OP {
   // Invalid
   INVALID = 0xff,
 }
-// OP_\n to numeric value
-// TODO: maybe add numbers to script parser for this case?
-// prettier-ignore
-export enum OPNum {
-  OP_0, OP_1, OP_2, OP_3, OP_4, OP_5, OP_6, OP_7, OP_8,
-  OP_9, OP_10, OP_11, OP_12, OP_13, OP_14, OP_15, OP_16,
-}
 
-function OPtoNumber(op: keyof typeof OP & keyof typeof OPNum): number | undefined {
-  if (typeof op === 'string' && OP[op] !== undefined && OPNum[op] !== undefined) return OPNum[op];
-}
+type ScriptOP = keyof typeof OP | Bytes | number;
 
-type ScriptType = (keyof typeof OP | Bytes)[];
+type ScriptType = ScriptOP[];
 // Converts script bytes to parsed script
 // 5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae
 // =>
@@ -190,15 +181,26 @@ type ScriptType = (keyof typeof OP | Bytes)[];
 //   030000000000000000000000000000000000000000000000000000000000000003
 //   OP_3
 //   CHECKMULTISIG
-// TODO: simplify like CompactSize?
 export const Script: P.CoderType<ScriptType> = P.wrap({
   encodeStream: (w: P.Writer, value: ScriptType) => {
-    for (const o of value) {
+    for (let o of value) {
       if (typeof o === 'string') {
         if (OP[o] === undefined) throw new Error(`Unknown opcode=${o}`);
         w.byte(OP[o]);
         continue;
+      } else if (typeof o === 'number') {
+        if (o === 0x00) {
+          w.byte(0x00);
+          continue;
+        } else if (1 <= o && o <= 16) {
+          w.byte(OP.OP_1 - 1 + o);
+          continue;
+        }
       }
+      // Encode big numbers
+      if (typeof o === 'number') o = ScriptNum().encode(BigInt(o));
+      if (!isBytes(o)) throw new Error(`Wrong Script OP=${o} (${typeof o})`);
+      // Bytes
       const len = o.length;
       if (len < OP.PUSHDATA1) w.byte(len);
       else if (len <= 0xff) {
@@ -227,8 +229,12 @@ export const Script: P.CoderType<ScriptType> = P.wrap({
         else if (cur === OP.PUSHDATA4) len = P.U32LE.decodeStream(r);
         else throw new Error('Should be not possible');
         out.push(r.bytes(len));
+      } else if (cur === 0x00) {
+        out.push(0);
+      } else if (OP.OP_1 <= cur && cur <= OP.OP_16) {
+        out.push(cur - (OP.OP_1 - 1));
       } else {
-        const op = OP[cur] as any;
+        const op = OP[cur] as keyof typeof OP;
         if (op === undefined) throw new Error(`Unknown opcode=${cur.toString(16)}`);
         out.push(op);
       }
@@ -236,6 +242,61 @@ export const Script: P.CoderType<ScriptType> = P.wrap({
     return out;
   },
 });
+
+// NOTE: we can encode almost any number as ScriptNum, however, parsing will be a problem, since we cannot know
+// if buffer is number or something else
+export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<bigint> {
+  return P.wrap({
+    encodeStream: (w: P.Writer, value: bigint) => {
+      if (value === 0n) return;
+      const val = BigInt(value);
+      const nums = [];
+      const neg = value < 0;
+      for (let abs = val < 0 ? -val : val; abs; abs >>= 8n) nums.push(Number(abs & 0xffn));
+      if (nums[nums.length - 1] >= 0x80) nums.push(neg ? 0x80 : 0);
+      else if (neg) nums[nums.length - 1] |= 0x80;
+      w.bytes(new Uint8Array(nums));
+    },
+    decodeStream: (r: P.Reader): bigint => {
+      const len = r.leftBytes;
+      if (len > bytesLimit)
+        throw new Error(`ScriptNum: number (${len}) bigger than limit=${bytesLimit}`);
+      if (len === 0) return 0n;
+      if (forceMinimal) {
+        // MSB is zero (without sign bit) -> not minimally encoded
+        if ((r.data[len - 1] & 0x7f) === 0) {
+          // exception
+          if (len <= 1 || (r.data[len - 2] & 0x80) === 0)
+            throw new Error('Non-minimally encoded ScriptNum');
+        }
+      }
+      let last = 0;
+      let res = 0n;
+      for (let i = 0; i < len; ++i) {
+        last = r.byte();
+        res |= BigInt(last) << (8n * BigInt(i));
+      }
+      if (last >= 0x80) {
+        res &= (2n ** BigInt(len * 8) - 1n) >> 1n;
+        res = -res;
+      }
+      return res;
+    },
+  });
+}
+
+export function OpToNum(op: ScriptOP, bytesLimit = 4, forceMinimal = true) {
+  if (typeof op === 'number') return op;
+  if (isBytes(op)) {
+    try {
+      const val = ScriptNum(bytesLimit, forceMinimal).decode(op);
+      if (val > Number.MAX_SAFE_INTEGER) return;
+      return Number(val);
+    } catch (e) {
+      return;
+    }
+  }
+}
 
 // BTC specific variable length integer encoding
 // https://en.bitcoin.it/wiki/Protocol_documentation#Variable_length_integer
@@ -293,18 +354,15 @@ const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
 export const RawWitness = P.array(CompactSizeLen, VarBytes);
 
 // https://en.bitcoin.it/wiki/Protocol_documentation#tx
-// TODO: more tests. Unsigned tx has version=2 for some reason,
-// probably we're exporting broken unsigned tx
-// Related: https://github.com/bitcoin/bips/blob/master/bip-0068.mediawiki
 const _RawTx = P.struct({
   version: P.I32LE,
   segwitFlag: P.flag(new Uint8Array([0x00, 0x01])),
   inputs: BTCArray(RawInput),
   outputs: BTCArray(RawOutput),
   witnesses: P.flagged('segwitFlag', P.array('inputs/length', RawWitness)),
-  // Need to handle that?
   // < 500000000	Block number at which this transaction is unlocked
   // >= 500000000	UNIX timestamp at which this transaction is unlocked
+  // Handled as part of PSBTv2
   lockTime: P.U32LE,
 });
 
@@ -319,16 +377,30 @@ export const RawTx = P.validate(_RawTx, validateRawTx);
 
 type PSBTKeyCoder = P.CoderType<any> | false;
 
-type PSBTKeyMap = Record<
-  string,
-  readonly [number, PSBTKeyCoder, any, readonly number[], readonly number[], readonly number[]]
+type PSBTKeyMapInfo = Readonly<
+  [
+    number,
+    PSBTKeyCoder,
+    any,
+    readonly number[], // versionsRequiringInclusion
+    readonly number[], // versionsAllowsInclusion
+    boolean // silentIgnore
+  ]
 >;
+
+function PSBTKeyInfo(info: PSBTKeyMapInfo) {
+  const [type, kc, vc, reqInc, allowInc, silentIgnore] = info;
+  return { type, kc, vc, reqInc, allowInc, silentIgnore };
+}
+
+type PSBTKeyMap = Record<string, PSBTKeyMapInfo>;
 
 const BIP32Der = P.struct({
   fingerprint: P.U32BE,
   path: P.array(null, P.U32LE),
 });
 
+// Complex structure for PSBT fields
 // <control byte with leaf version and parity bit> <internal key p> <C> <E> <AB>
 const _TaprootControlBlock = P.struct({
   version: P.U8, // With parity :(
@@ -345,62 +417,71 @@ const TaprootBIP32Der = P.struct({
   hashes: P.array(CompactSizeLen, P.bytes(32)),
   der: BIP32Der,
 });
+// The 78 byte serialized extended public key as defined by BIP 32.
+const GlobalXPUB = P.bytes(78);
+const tapScriptSigKey = P.struct({ pubKey: PubKeySchnorr, leafHash: P.bytes(32) });
 
-// {name: [tag, keyCoder, valueCoder]}
+// {<8-bit uint depth> <8-bit uint leaf version> <compact size uint scriptlen> <bytes script>}*
+const tapTree = P.array(
+  null,
+  P.struct({
+    depth: P.U8,
+    version: P.U8,
+    script: VarBytes,
+  })
+);
+
+const BytesInf = P.bytes(null); // Bytes will conflict with Bytes type
+const Bytes20 = P.bytes(20);
+const Bytes32 = P.bytes(32);
+// versionsRequiringExclusing = !versionsAllowsInclusion (as set)
+// {name: [tag, keyCoder, valueCoder, versionsRequiringInclusion, versionsRequiringExclusing, versionsAllowsInclusion, silentIgnore]}
+// SilentIgnore: we use some v2 fields for v1 representation too, so we just clean them before serialize
+
+// Tables from BIP-0174 (https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki)
+// prettier-ignore
 const PSBTGlobal = {
-  // TODO: RAW TX here
-  unsignedTx: [0x00, false, RawTx, [0], [2], [0]],
-  // The 78 byte serialized extended public key as defined by BIP 32.
-  xpub: [0x01, P.bytes(78), BIP32Der, [], [], [0, 2]],
-  txVersion: [0x02, false, P.U32LE, [2], [0], [2]],
-  fallbackLocktime: [0x03, false, P.U32LE, [], [0], [2]],
-  inputCount: [0x04, false, CompactSizeLen, [2], [0], [2]],
-  outputCount: [0x05, false, CompactSizeLen, [2], [0], [2]],
-  // bitfield
-  txModifiable: [0x06, false, P.U8, [], [0], [2]],
-  version: [0xfb, false, P.U32LE, [], [], [0, 2]],
-  // key = <identifierlen> <identifier> <subtype> <subkeydata>
-  propietary: [0xfc, P.bytes(null), P.bytes(null), [], [], [0, 2]],
+  unsignedTx:       [0x00, false,      RawTx,          [0], [0],    false],
+  xpub:             [0x01, GlobalXPUB, BIP32Der,       [],  [0, 2], false],
+  txVersion:        [0x02, false,      P.U32LE,        [2], [2],    false],
+  fallbackLocktime: [0x03, false,      P.U32LE,        [],  [2],    false],
+  inputCount:       [0x04, false,      CompactSizeLen, [2], [2],    false],
+  outputCount:      [0x05, false,      CompactSizeLen, [2], [2],    false],
+  txModifiable:     [0x06, false,      P.U8,           [],  [2],    false],   // TODO: bitfield
+  version:          [0xfb, false,      P.U32LE,        [],  [0, 2], false],
+  propietary:       [0xfc, BytesInf,   BytesInf,       [],  [0, 2], false],
 } as const;
-
+// prettier-ignore
 const PSBTInput = {
-  nonWitnessUtxo: [0x00, false, RawTx, [], [], [0, 2]],
-  witnessUtxo: [0x01, false, RawOutput, [], [], [0, 2]],
-  partialSig: [0x02, PubKeyECDSA, P.bytes(null), [], [], [0, 2]],
-  sighashType: [0x03, false, P.U32LE, [], [], [0, 2]],
-  redeemScript: [0x04, false, P.bytes(null), [], [], [0, 2]],
-  witnessScript: [0x05, false, P.bytes(null), [], [], [0, 2]],
-  bip32Derivation: [0x06, PubKeyECDSA, BIP32Der, [], [], [0, 2]],
-  finalScriptSig: [0x07, false, P.bytes(null), [], [], [0, 2]],
-  finalScriptWitness: [0x08, false, RawWitness, [], [], [0, 2]],
-  porCommitment: [0x09, false, P.bytes(null), [], [], [0, 2]],
-  ripemd160: [0x0a, P.bytes(20), P.bytes(null), [], [], [0, 2]],
-  sha256: [0x0b, P.bytes(32), P.bytes(null), [], [], [0, 2]],
-  hash160: [0x0c, P.bytes(20), P.bytes(null), [], [], [0, 2]],
-  hash256: [0x0d, P.bytes(32), P.bytes(null), [], [], [0, 2]],
-  txid: [0x0e, false, P.bytes(32), [2], [0], [2]],
-  index: [0x0f, false, P.U32LE, [2], [0], [2]],
-  sequence: [0x10, false, P.U32LE, [], [0], [2]],
-  requiredTimeLocktime: [0x11, false, P.U32LE, [], [0], [2]],
-  requiredHeightLocktime: [0x12, false, P.U32LE, [], [0], [2]],
-  tapKeySig: [0x13, false, SignatureSchnorr, [], [], [0, 2]],
-  tapScriptSig: [
-    0x14,
-    P.struct({ pubKey: PubKeySchnorr, leafHash: P.bytes(32) }),
-    SignatureSchnorr,
-    [],
-    [],
-    [0, 2],
-  ],
-  // value = <bytes script> <8-bit uint leaf version>
-  tapLeafScript: [0x15, TaprootControlBlock, P.bytes(null), [], [], [0, 2]],
-  tapBip32Derivation: [0x16, P.bytes(32), TaprootBIP32Der, [], [], [0, 2]],
-  tapInternalKey: [0x17, false, PubKeySchnorr, [], [], [0, 2]],
-  tapMerkleRoot: [0x18, false, P.bytes(32), [], [], [0, 2]],
-  propietary: [0xfc, P.bytes(null), P.bytes(null), [], [], [0, 2]],
+  nonWitnessUtxo:         [0x00, false,               RawTx,            [],  [0, 2], false],
+  witnessUtxo:            [0x01, false,               RawOutput,        [],  [0, 2], false],
+  partialSig:             [0x02, PubKeyECDSA,         BytesInf,         [],  [0, 2], false],
+  sighashType:            [0x03, false,               P.U32LE,          [],  [0, 2], false],
+  redeemScript:           [0x04, false,               BytesInf,         [],  [0, 2], false],
+  witnessScript:          [0x05, false,               BytesInf,         [],  [0, 2], false],
+  bip32Derivation:        [0x06, PubKeyECDSA,         BIP32Der,         [],  [0, 2], false],
+  finalScriptSig:         [0x07, false,               BytesInf,         [],  [0, 2], false],
+  finalScriptWitness:     [0x08, false,               RawWitness,       [],  [0, 2], false],
+  porCommitment:          [0x09, false,               BytesInf,         [],  [0, 2], false],
+  ripemd160:              [0x0a, Bytes20,             BytesInf,         [],  [0, 2], false],
+  sha256:                 [0x0b, Bytes32,             BytesInf,         [],  [0, 2], false],
+  hash160:                [0x0c, Bytes20,             BytesInf,         [],  [0, 2], false],
+  hash256:                [0x0d, Bytes32,             BytesInf,         [],  [0, 2], false],
+  txid:                   [0x0e, false,               Bytes32,          [2], [2],    true],
+  index:                  [0x0f, false,               P.U32LE,          [2], [2],    true],
+  sequence:               [0x10, false,               P.U32LE,          [],  [2],    true],
+  requiredTimeLocktime:   [0x11, false,               P.U32LE,          [],  [2],    false],
+  requiredHeightLocktime: [0x12, false,               P.U32LE,          [],  [2],    false],
+  tapKeySig:              [0x13, false,               SignatureSchnorr, [],  [0, 2], false],
+  tapScriptSig:           [0x14, tapScriptSigKey,     SignatureSchnorr, [],  [0, 2], false],
+  tapLeafScript:          [0x15, TaprootControlBlock, BytesInf,         [],  [0, 2], false],
+  tapBip32Derivation:     [0x16, Bytes32,             TaprootBIP32Der,  [],  [0, 2], false],
+  tapInternalKey:         [0x17, false,               PubKeySchnorr,    [],  [0, 2], false],
+  tapMerkleRoot:          [0x18, false,               Bytes32,          [],  [0, 2], false],
+  propietary:             [0xfc, BytesInf,            BytesInf,         [],  [0, 2], false],
 } as const;
 // All other keys removed when finalizing
-const PSBTInputFinalKeys: (keyof typeof PSBTInput)[] = [
+const PSBTInputFinalKeys: (keyof TransactionInput)[] = [
   'txid',
   'sequence',
   'index',
@@ -408,10 +489,11 @@ const PSBTInputFinalKeys: (keyof typeof PSBTInput)[] = [
   'nonWitnessUtxo',
   'finalScriptSig',
   'finalScriptWitness',
-  'unknown' as any,
+  'unknown',
 ];
+
 // Can be modified even on signed input
-const PSBTInputUnsignedKeys: (keyof typeof PSBTInput)[] = [
+const PSBTInputUnsignedKeys: (keyof TransactionInput)[] = [
   'partialSig',
   'finalScriptSig',
   'finalScriptWitness',
@@ -419,33 +501,17 @@ const PSBTInputUnsignedKeys: (keyof typeof PSBTInput)[] = [
   'tapScriptSig',
 ];
 
+// prettier-ignore
 const PSBTOutput = {
-  redeemScript: [0x00, false, P.bytes(null), [], [], [0, 2]],
-  witnessScript: [0x01, false, P.bytes(null), [], [], [0, 2]],
-  bip32Derivation: [0x02, PubKeyECDSA, BIP32Der, [], [], [0, 2]],
-  amount: [0x03, false, P.I64LE, [2], [0], [2]],
-  script: [0x04, false, P.bytes(null), [2], [0], [2]],
-  tapInternalKey: [0x05, false, PubKeySchnorr, [], [], [0, 2]],
-  /*
-  {<8-bit uint depth> <8-bit uint leaf version> <compact size uint scriptlen> <bytes script>}*
-  */
-  tapTree: [
-    0x06,
-    false,
-    P.array(
-      null,
-      P.struct({
-        depth: P.U8,
-        version: P.U8,
-        script: VarBytes,
-      })
-    ),
-    [],
-    [],
-    [0, 2],
-  ],
-  tapBip32Derivation: [0x07, PubKeySchnorr, TaprootBIP32Der, [], [], [0, 2]],
-  propietary: [0xfc, P.bytes(null), P.bytes(null), [], [], [0, 2]],
+  redeemScript:       [0x00, false,         BytesInf,        [],  [0, 2], false],
+  witnessScript:      [0x01, false,         BytesInf,        [],  [0, 2], false],
+  bip32Derivation:    [0x02, PubKeyECDSA,   BIP32Der,        [],  [0, 2], false],
+  amount:             [0x03, false,         P.I64LE,         [2], [2],    true],
+  script:             [0x04, false,         BytesInf,        [2], [2],    true],
+  tapInternalKey:     [0x05, false,         PubKeySchnorr,   [],  [0, 2], false],
+  tapTree:            [0x06, false,         tapTree,         [],  [0, 2], false],
+  tapBip32Derivation: [0x07, PubKeySchnorr, TaprootBIP32Der, [],  [0, 2], false],
+  propietary:         [0xfc, BytesInf,      BytesInf,        [],  [0, 2], false],
 } as const;
 
 // Can be modified even on signed input
@@ -462,12 +528,12 @@ const PSBTKeyPair = P.array(
 );
 
 const PSBTUnknownKey = P.struct({ type: CompactSizeLen, key: P.bytes(null) });
-
+type PSBTUnknownFields = { unknown?: [P.UnwrapCoder<typeof PSBTUnknownKey>, Bytes][] };
 type PSBTKeyMapKeys<T extends PSBTKeyMap> = {
   -readonly [K in keyof T]?: T[K][1] extends false
     ? P.UnwrapCoder<T[K][2]>
     : [P.UnwrapCoder<T[K][1]>, P.UnwrapCoder<T[K][2]>][];
-};
+} & PSBTUnknownFields;
 // Key cannot be 'unknown', value coder cannot be array for elements with empty key
 function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKeys<T>> {
   // -> Record<type, [keyName, ...coders]>
@@ -486,11 +552,13 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
         const [type, kc, vc] = psbtEnum[name];
         if (!kc) out.push({ key: { type, key: P.EMPTY }, value: vc.encode(val) });
         else {
-          // TODO: check here if there is duplicate keys
-          const kv: [Bytes, Bytes][] = val.map(([k, v]: [any, any]) => [
-            kc.encode(k),
-            vc.encode(v),
-          ]);
+          // Low level interface, returns keys as is (with duplicates). Useful for debug
+          const kv: [Bytes, Bytes][] = val.map(
+            ([k, v]: [P.UnwrapCoder<typeof kc>, P.UnwrapCoder<typeof vc>]) => [
+              kc.encode(k),
+              vc.encode(v),
+            ]
+          );
           // sort by keys
           kv.sort((a, b) => cmp(a[0], b[0]));
           for (const [key, value] of kv) out.push({ key: { key, type }, value });
@@ -498,8 +566,7 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
       }
       if (value.unknown) {
         value.unknown.sort((a: any, b: any) => cmp(a[0], b[0]));
-        for (const [k, v] of value.unknown as any)
-          out.push({ key: PSBTUnknownKey.decode(k), value: v });
+        for (const [k, v] of value.unknown) out.push({ key: k, value: v });
       }
       PSBTKeyPair.encodeStream(w, out);
     },
@@ -531,7 +598,7 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
           }
         } else {
           // For unknown: add key type inside key
-          key = PSBTUnknownKey.encode({ type: elm.key.type, key: elm.key.key });
+          key = { type: elm.key.type, key: elm.key.key };
         }
         // Only keyed elements at this point
         if (noKey[name])
@@ -556,10 +623,9 @@ function checkWSH(s: OutWSHType, witnessScript: Bytes) {
 }
 
 function checkScript(script?: Bytes, redeemScript?: Bytes, witnessScript?: Bytes) {
-  // TODO: revalidate
   if (script) {
     const s = OutScript.decode(script);
-    // TODO: ms||pk maybe work, but there will be no address
+    // ms||pk maybe work, but there will be no address, hard to spend
     if (s.type === 'tr_ns' || s.type === 'tr_ms' || s.type === 'ms' || s.type == 'pk')
       throw new Error(`checkScript: non-wrapped ${s.type}`);
     if (s.type === 'sh' && redeemScript) {
@@ -615,6 +681,14 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
       if (v[v.length - 1] & 1)
         throw new Error('validateInput: tapLeafScript version has parity bit!');
     }
+  }
+  // Validate txid for nonWitnessUtxo is correct
+  if (i.nonWitnessUtxo && i.index && i.txid) {
+    const outputs = i.nonWitnessUtxo.outputs;
+    if (outputs.length - 1 < i.index) throw new Error('nonWitnessUtxo: incorect output index');
+    const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo));
+    const txid = base.hex.encode(i.txid);
+    if (tx.id !== txid) throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
   }
   return i;
 });
@@ -672,12 +746,11 @@ function validatePSBTFields<T extends PSBTKeyMap>(
   for (const k in lst) {
     if (k === 'unknown') continue;
     if (!info[k]) continue;
-    const [reqInc, reqExc, allowInc] = info[k].slice(-3);
-    if (reqExc.includes(version) || !allowInc.includes(version))
-      throw new Error(`PSBTv${version}: field ${k} is not allowed`);
+    const { allowInc } = PSBTKeyInfo(info[k]);
+    if (!allowInc.includes(version)) throw new Error(`PSBTv${version}: field ${k} is not allowed`);
   }
   for (const k in info) {
-    const [reqInc, reqExc, allowInc] = info[k].slice(-3);
+    const { reqInc } = PSBTKeyInfo(info[k]);
     if (reqInc.includes(version) && lst[k] === undefined)
       throw new Error(`PSBTv${version}: missing required field ${k}`);
   }
@@ -685,11 +758,17 @@ function validatePSBTFields<T extends PSBTKeyMap>(
 
 function cleanPSBTFields<T extends PSBTKeyMap>(version: number, info: T, lst: PSBTKeyMapKeys<T>) {
   const out: PSBTKeyMapKeys<T> = {};
-  for (const k in lst) {
+  for (const _k in lst) {
+    const k = _k as string & keyof PSBTKeyMapKeys<T>;
     if (k !== 'unknown') {
       if (!info[k]) continue;
-      const [reqInc, reqExc, allowInc] = info[k].slice(-3);
-      if (reqExc.includes(version) || !allowInc.includes(version)) continue;
+      const { allowInc, silentIgnore } = PSBTKeyInfo(info[k]);
+      if (!allowInc.includes(version)) {
+        if (silentIgnore) continue;
+        throw new Error(
+          `Failed to serialize in PSBTv${version}: ${k} but versions allows inclusion=${allowInc}`
+        );
+      }
     }
     out[k] = lst[k];
   }
@@ -722,7 +801,7 @@ function mergeKeyMap<T extends PSBTKeyMap>(
   cur?: PSBTKeyMapKeys<T>,
   allowedFields?: (keyof PSBTKeyMapKeys<T>)[]
 ): PSBTKeyMapKeys<T> {
-  const res = { ...cur, ...val };
+  const res: PSBTKeyMapKeys<T> = { ...cur, ...val };
   // All arguments can be provided as hex
   for (const k in psbtEnum) {
     const key = k as keyof typeof psbtEnum;
@@ -765,13 +844,18 @@ function mergeKeyMap<T extends PSBTKeyMap>(
         for (const [k, v] of newKV) {
           const kStr = base.hex.encode(kC.encode(k));
           // undefined removes previous value
-          if (v === undefined) delete map[kStr];
-          else add(kStr, k, v);
+          if (v === undefined) {
+            if (cannotChange) throw new Error(`Cannot remove signed field=${key as string}/${k}`);
+            delete map[kStr];
+          } else add(kStr, k, v);
         }
         (res as any)[key] = Object.values(map) as _KV[];
       }
     } else if (typeof res[k] === 'string') {
-      res[k] = vC.decode(base.hex.decode(res[k] as any));
+      res[k] = vC.decode(base.hex.decode(res[k] as string));
+    } else if (cannotChange && k in val && cur && cur[k] !== undefined) {
+      if (!P.equalBytes(vC.encode(val[k]), vC.encode(cur[k])))
+        throw new Error(`Cannot change signed field=${k}`);
     }
   }
   // Remove unknown keys
@@ -785,8 +869,6 @@ export const RawPSBTV2 = P.validate(_RawPSBTV2, validatePSBT);
 // (TxHash, Idx)
 const TxHashIdx = P.struct({ txid: P.bytes(32, true), index: P.U32LE });
 // /Coders
-
-const isBytes = (b: unknown): b is Bytes => b instanceof Uint8Array;
 
 // Payments
 // We need following items:
@@ -874,11 +956,11 @@ export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
 type OutWSHType = { type: 'wsh'; hash: Bytes };
 const OutWSH: base.Coder<OptScript, OutWSHType | undefined> = {
   encode(from: ScriptType): OutWSHType | undefined {
-    if (from.length !== 2 || from[0] !== 'OP_0' || !isBytes(from[1])) return;
+    if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
     if (from[1].length !== 32) return;
     return { type: 'wsh', hash: from[1] };
   },
-  decode: (to: OutWSHType): OptScript => (to.type === 'wsh' ? ['OP_0', to.hash] : undefined),
+  decode: (to: OutWSHType): OptScript => (to.type === 'wsh' ? [0, to.hash] : undefined),
 };
 export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
   const hash = sha256(child.script);
@@ -895,11 +977,11 @@ export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
 type OutWPKHType = { type: 'wpkh'; hash: Bytes };
 const OutWPKH: base.Coder<OptScript, OutWPKHType | undefined> = {
   encode(from: ScriptType): OutWPKHType | undefined {
-    if (from.length !== 2 || from[0] !== 'OP_0' || !isBytes(from[1])) return;
+    if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
     if (from[1].length !== 20) return;
     return { type: 'wpkh', hash: from[1] };
   },
-  decode: (to: OutWPKHType): OptScript => (to.type === 'wpkh' ? ['OP_0', to.hash] : undefined),
+  decode: (to: OutWPKHType): OptScript => (to.type === 'wpkh' ? [0, to.hash] : undefined),
 };
 export const p2wpkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
   if (!isValidPubkey(publicKey, PubT.ecdsa)) throw new Error('P2WPKH: invalid publicKey');
@@ -917,19 +999,17 @@ const OutMS: base.Coder<OptScript, OutMSType | undefined> = {
   encode(from: ScriptType): OutMSType | undefined {
     const last = from.length - 1;
     if (from[last] !== 'CHECKMULTISIG') return;
-    const m = OPtoNumber(from[0] as any);
-    const n = OPtoNumber(from[last - 1] as any);
-    if (m === undefined || n === undefined)
-      throw new Error('OutScript.encode/multisig wrong params');
-    const pubkeys: Bytes[] = from.slice(1, -2) as any; // Any is ok, check in for later
-    if (n !== pubkeys.length) throw new Error('OutScript.encode/multisig: wrong length');
-    return { type: 'ms', m, pubkeys }; // we don't need n, since it is the same as pubkeys
+    const m = from[0];
+    const n = from[last - 1];
+    if (typeof m !== 'number' || typeof n !== 'number') return;
+    const pubkeys = from.slice(1, -2);
+    if (n !== pubkeys.length) return;
+    for (const pub of pubkeys) if (!isBytes(pub)) return;
+    return { type: 'ms', m, pubkeys: pubkeys as Bytes[] }; // we don't need n, since it is the same as pubkeys
   },
   // checkmultisig(n, ..pubkeys, m)
   decode: (to: OutMSType): OptScript =>
-    to.type === 'ms'
-      ? [`OP_${to.m}`, ...to.pubkeys, `OP_${to.pubkeys.length}` as any, 'CHECKMULTISIG']
-      : undefined,
+    to.type === 'ms' ? [to.m, ...to.pubkeys, to.pubkeys.length, 'CHECKMULTISIG'] : undefined,
 };
 export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2Ret => {
   if (!allowSamePubkeys) uniqPubkey(pubkeys);
@@ -939,10 +1019,10 @@ export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2R
 type OutTRType = { type: 'tr'; pubkey: Bytes };
 const OutTR: base.Coder<OptScript, OutTRType | undefined> = {
   encode(from: ScriptType): OutTRType | undefined {
-    if (from.length !== 2 || from[0] !== 'OP_1' || !isBytes(from[1])) return;
+    if (from.length !== 2 || from[0] !== 1 || !isBytes(from[1])) return;
     return { type: 'tr', pubkey: from[1] };
   },
-  decode: (to: OutTRType): OptScript => (to.type === 'tr' ? ['OP_1', to.pubkey] : undefined),
+  decode: (to: OutTRType): OptScript => (to.type === 'tr' ? [1, to.pubkey] : undefined),
 };
 export type TaprootNode = {
   script: Bytes | string;
@@ -951,14 +1031,15 @@ export type TaprootNode = {
 } & Partial<P2TROut>;
 export type TaprootScriptTree = TaprootNode | TaprootScriptTree[];
 export type TaprootScriptList = TaprootNode[];
-type _TaprootListInternal = (
-  | TaprootNode
-  | { weight?: number; childs: [_TaprootListInternal, _TaprootListInternal] }
-)[];
+type _TaprootTreeInternal = {
+  weight?: number;
+  childs?: [_TaprootTreeInternal[], _TaprootTreeInternal[]];
+};
+
 // Helper for generating binary tree from list, with weights
 export function taprootListToTree(taprootList: TaprootScriptList): TaprootScriptTree {
   // Clone input in order to not corrupt it
-  const lst: _TaprootListInternal = Array.from(taprootList) as _TaprootListInternal;
+  const lst = Array.from(taprootList) as _TaprootTreeInternal[];
   // We have at least 2 elements => can create branch
   while (lst.length >= 2) {
     // Sort: elements with smallest weight are in the end of queue
@@ -969,12 +1050,13 @@ export function taprootListToTree(taprootList: TaprootScriptList): TaprootScript
     lst.push({
       weight,
       // Unwrap children array
-      childs: [(a as any).childs || a, (b as any).childs || b],
+      // TODO: Very hard to remove any here
+      childs: [a?.childs || (a as any[]), b?.childs || (b as any)],
     });
   }
   // At this point there is always 1 element in lst
   const last = lst[0];
-  return ((last as any).childs || last) as TaprootScriptTree;
+  return (last?.childs || last) as TaprootScriptTree;
 }
 type HashedTree =
   | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes; tapInternalKey?: Bytes }
@@ -998,6 +1080,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
     if (tapInternalKey && P.equalBytes(tapInternalKey, TAPROOT_UNSPENDABLE_KEY))
       throw new Error('P2TR: tapRoot leafScript cannot have unspendble key');
     const script = typeof leafScript === 'string' ? base.hex.decode(leafScript) : leafScript;
+    if (!isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
     checkTaprootScript(script, allowUnknowOutput);
     return {
       type: 'leaf',
@@ -1132,14 +1215,14 @@ const OutTRNS: base.Coder<OptScript, OutTRNSType | undefined> = {
     const last = from.length - 1;
     if (from[last] !== 'CHECKSIG') return;
     const pubkeys = [];
+    // On error return, since it can be different script
     for (let i = 0; i < last; i++) {
       const elm = from[i];
       if (i & 1) {
-        if (elm !== 'CHECKSIGVERIFY') throw new Error('OutScript.encode/tr_ns: wrong element');
-        if (i === last - 1) throw new Error('OutScript.encode/tr_ns: wrong element');
+        if (elm !== 'CHECKSIGVERIFY' || i === last - 1) return;
         continue;
       }
-      if (!isBytes(elm)) throw new Error('OutScript.encode/tr_ns: wrong element');
+      if (!isBytes(elm)) return;
       pubkeys.push(elm);
     }
     return { type: 'tr_ns', pubkeys };
@@ -1204,8 +1287,8 @@ const OutTRMS: base.Coder<OptScript, OutTRMSType | undefined> = {
     const last = from.length - 1;
     if (from[last] !== 'NUMEQUAL' || from[1] !== 'CHECKSIG') return;
     const pubkeys = [];
-    const m = OPtoNumber(from[last - 1] as any);
-    if (m === undefined) return;
+    const m = OpToNum(from[last - 1]);
+    if (typeof m !== 'number') return;
     for (let i = 0; i < last - 1; i++) {
       const elm = from[i];
       if (i & 1) {
@@ -1222,7 +1305,7 @@ const OutTRMS: base.Coder<OptScript, OutTRMSType | undefined> = {
     if (to.type !== 'tr_ms') return;
     const out: ScriptType = [to.pubkeys[0], 'CHECKSIG'];
     for (let i = 1; i < to.pubkeys.length; i++) out.push(to.pubkeys[i], 'CHECKSIGADD');
-    out.push(`OP_${to.m}` as any, 'NUMEQUAL');
+    out.push(to.m, 'NUMEQUAL');
     return out;
   },
 };
@@ -1260,6 +1343,7 @@ const OutScripts = [
 // - addOutScript
 // - removeOutScript
 // - We can do that as log we modify array in-place
+// - Actually is very hard, since there is sign/finalize logic
 const _OutScript = P.apply(Script, P.coders.match(OutScripts));
 
 // We can validate this once, because of packed & coders
@@ -1289,13 +1373,12 @@ export const OutScript = P.validate(_OutScript, (i) => {
   }
   if (i.type === 'tr_ms') {
     const n = i.pubkeys.length;
-    if (i.m <= 0 || n > 16 || i.m > n) throw new Error('OutScript/tr_ms: invalid params');
+    if (i.m <= 0 || n > 999 || i.m > n) throw new Error('OutScript/tr_ms: invalid params');
   }
   return i;
 });
 
 // Address
-// TODO: clean-up
 function validateWitness(version: number, data: Bytes) {
   if (data.length < 2 || data.length > 40) throw new Error('Witness: invalid length');
   if (version > 16) throw new Error('Witness: invalid version');
@@ -1307,13 +1390,6 @@ export function programToWitness(version: number, data: Bytes, network = NETWORK
   validateWitness(version, data);
   const coder = version === 0 ? base.bech32 : base.bech32m;
   return coder.encode(network.bech32, [version].concat(coder.toWords(data)));
-}
-
-// TODO: remove?
-export function parseWitnessProgram(version: number, data: Bytes) {
-  validateWitness(version, data);
-  const encodedVersion = version > 0 ? version + 0x50 : version;
-  return concat(new Uint8Array([encodedVersion]), VarBytes.encode(Uint8Array.from(data)));
 }
 
 function formatKey(hashed: Bytes, prefix: number[]): string {
@@ -1348,7 +1424,7 @@ export function Address(network = NETWORK) {
       else if (type === 'tr') return programToWitness(1, from.pubkey, network);
       else if (type === 'pkh') return formatKey(from.hash, [network.pubKeyHash]);
       else if (type === 'sh') return formatKey(from.hash, [network.scriptHash]);
-      return 1 as any;
+      throw new Error(`Unknown address type=${type}`);
     },
     decode(address: string): P.UnwrapCoder<typeof OutScript> {
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
@@ -1397,38 +1473,68 @@ export enum SignatureHash {
   NONE,
   SINGLE,
   ANYONECANPAY = 0x80,
-  ALL_SIGHASH_ANYONECANPAY = 0x81,
-  NONE_SIGHASH_ANYONECANPAY = 0x82,
-  SINGLE_SIGHASH_ANYONECANPAY = 0x83,
 }
 export const SigHashCoder = P.apply(P.U32LE, P.coders.tsEnum(SignatureHash));
 
-function sum(arr: (number | bigint)[]): bigint {
-  return arr.map((n) => BigInt(n)).reduce((a, b) => a + b);
-}
-
-// TODO: encoder maybe?
 function unpackSighash(hashType: number) {
   const masked = hashType & 0b0011111;
   return {
-    isAny: !!(hashType & 128),
-    isNone: masked === 2,
-    isSingle: masked === 3,
+    isAny: !!(hashType & SignatureHash.ANYONECANPAY),
+    isNone: masked === SignatureHash.NONE,
+    isSingle: masked === SignatureHash.SINGLE,
   };
 }
 
 export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(cmp);
 
-export type TransactionInput = Partial<P.UnwrapCoder<typeof RawInput>> &
-  P.UnwrapCoder<typeof PSBTInputCoder> &
-  P.UnwrapCoder<typeof TxHashIdx>;
-export type TransactionOutput = P.UnwrapCoder<typeof RawOutput> &
-  P.UnwrapCoder<typeof PSBTOutputCoder>;
-
-const def = {
-  sequence: (n?: number) => (n === undefined ? DEFAULT_SEQUENCE : n),
-  lockTime: (n?: number) => (n === undefined ? DEFAULT_LOCKTIME : n),
+export type TransactionInput = P.UnwrapCoder<typeof PSBTInputCoder>;
+// User facing API with decoders
+export type TransactionInputUpdate = ExtendType<
+  TransactionInput,
+  {
+    nonWitnessUtxo?: string | Bytes;
+    txid?: string;
+  }
+>;
+export type TransactionInputRequired = {
+  txid: Bytes;
+  index: number;
+  sequence: number;
+  finalScriptSig: Bytes;
 };
+// Force check index/txid/sequence
+function inputBeforeSign(i: TransactionInput): TransactionInputRequired {
+  if (i.txid === undefined || i.index === undefined)
+    throw new Error('Transaction/input: txid and index required');
+  return {
+    txid: i.txid,
+    index: i.index,
+    sequence: def(i.sequence, DEFAULT_SEQUENCE),
+    finalScriptSig: def(i.finalScriptSig, P.EMPTY),
+  };
+}
+function cleanFinalInput(i: TransactionInput) {
+  for (const _k in i) {
+    const k = _k as keyof TransactionInput;
+    if (!PSBTInputFinalKeys.includes(k)) delete i[k];
+  }
+}
+
+export type TransactionOutput = P.UnwrapCoder<typeof PSBTOutputCoder>;
+export type TransactionOutputUpdate = ExtendType<
+  TransactionOutput,
+  { amount?: string | number; script?: string }
+>;
+export type TransactionOutputRequired = {
+  script: Bytes;
+  amount: bigint;
+};
+// Force check amount/script
+function outputBeforeSign(i: TransactionOutput): TransactionOutputRequired {
+  if (i.script === undefined || i.amount === undefined)
+    throw new Error('Transaction/output: script and amount required');
+  return { script: i.script, amount: i.amount };
+}
 
 export const TAP_LEAF_VERSION = 0xc0;
 export const tapLeafHash = (script: Bytes, version = TAP_LEAF_VERSION) =>
@@ -1462,6 +1568,10 @@ export type Signer = Bytes | HDKey;
 // Mostly security features, hardened defaults;
 // but you still can parse other people tx with unspendable outputs and stuff if you want
 export type TxOpts = {
+  version?: number;
+  lockTime?: number;
+  PSBTVersion?: number;
+  // Flags
   // Allow output scripts to be unknown scripts (probably unspendable)
   allowUnknowOutput?: boolean;
   // Try to sign/finalize unknown input. All bets are off, but there is chance that it will work
@@ -1477,11 +1587,48 @@ export type TxOpts = {
   lowR?: boolean; // Use lowR signatures
 };
 
+// Check if object doens't have custom constructor (like Uint8Array/Array)
+const isPlainObject = (obj: any) =>
+  Object.prototype.toString.call(obj) === '[object Object]' && obj.constructor === Object;
+
+function validateOpts(opts: TxOpts) {
+  if (!isPlainObject(opts)) throw new Error(`Wrong object type for transaction options: ${opts}`);
+  const _opts = {
+    ...opts,
+    version: def(opts.version, DEFAULT_VERSION),
+    lockTime: def(opts.lockTime, 0),
+    PSBTVersion: def(opts.PSBTVersion, 0),
+  }; // Defaults
+  // 0 and -1 happens in tests
+  if (![-1, 0, 1, 2].includes(_opts.version)) throw new Error(`Unknown version: ${_opts.version}`);
+  if (typeof _opts.lockTime !== 'number') throw new Error('Transaction lock time should be number');
+  P.U32LE.encode(_opts.lockTime); // Additional range checks that lockTime
+  // There is no PSBT v1, and any new version will probably have fields which we don't know how to parse, which
+  // can lead to constructing broken transactions
+  if (_opts.PSBTVersion !== 0 && _opts.PSBTVersion !== 2)
+    throw new Error(`Unknown PSBT version ${_opts.PSBTVersion}`);
+  // Flags
+  for (const k of [
+    'allowUnknowOutput',
+    'allowUnknowInput',
+    'disableScriptCheck',
+    'bip174jsCompat',
+    'allowLegacyWitnessUtxo',
+    'lowR',
+  ] as const) {
+    const v = _opts[k];
+    if (v === undefined) continue; // optional
+    if (typeof v !== 'boolean')
+      throw new Error(`Transation options wrong type: ${k}=${v} (${typeof v})`);
+  }
+  return Object.freeze(_opts);
+}
+
 export class Transaction {
   // Import
   static fromRaw(raw: Bytes, opts: TxOpts = {}) {
     const parsed = RawTx.decode(raw);
-    const tx = new Transaction(parsed.version, parsed.lockTime, undefined, opts);
+    const tx = new Transaction({ ...opts, version: parsed.version, lockTime: parsed.lockTime });
     for (const o of parsed.outputs) tx.addOutput(o);
     tx.outputs = parsed.outputs;
     tx.inputs = parsed.inputs;
@@ -1504,44 +1651,47 @@ export class Transaction {
         throw e0;
       }
     }
-    const version = parsed.global.version || 0;
+    const PSBTVersion = parsed.global.version || 0;
+    if (PSBTVersion !== 0 && PSBTVersion !== 2)
+      throw new Error(`Wrong PSBT version=${PSBTVersion}`);
     const unsigned = parsed.global.unsignedTx;
-    const txVersion = !version ? unsigned?.version : parsed.global.txVersion;
-    const lockTime = !version ? unsigned?.lockTime : parsed.global.fallbackLocktime;
-    const tx = new Transaction(txVersion, lockTime, version, opts);
+    const version = PSBTVersion === 0 ? unsigned?.version : parsed.global.txVersion;
+    const lockTime = PSBTVersion === 0 ? unsigned?.lockTime : parsed.global.fallbackLocktime;
+    const tx = new Transaction({ ...opts, version, lockTime, PSBTVersion });
     // We need slice here, because otherwise
-    const inputCount = !version ? unsigned?.inputs.length : parsed.global.inputCount;
+    const inputCount = PSBTVersion === 0 ? unsigned?.inputs.length : parsed.global.inputCount;
     tx.inputs = parsed.inputs.slice(0, inputCount).map((i, j) => ({
       finalScriptSig: P.EMPTY,
       ...parsed.global.unsignedTx?.inputs[j],
       ...i,
-    })) as any;
-    const outputCount = !version ? unsigned?.outputs.length : parsed.global.outputCount;
+    }));
+    const outputCount = PSBTVersion === 0 ? unsigned?.outputs.length : parsed.global.outputCount;
     tx.outputs = parsed.outputs.slice(0, outputCount).map((i, j) => ({
       ...i,
       ...parsed.global.unsignedTx?.outputs[j],
-    })) as any;
-    tx.global = { ...parsed.global, txVersion }; // just in case propietary/unknown fields
+    }));
+    tx.global = { ...parsed.global, txVersion: version }; // just in case propietary/unknown fields
     if (lockTime !== DEFAULT_LOCKTIME) tx.global.fallbackLocktime = lockTime;
     return tx;
   }
-  toPSBT(ver = this.PSBTVersion) {
-    const inputs = this.inputs.map((i) => cleanPSBTFields(ver, PSBTInput, i));
+  toPSBT(PSBTVersion = this.opts.PSBTVersion) {
+    if (PSBTVersion !== 0 && PSBTVersion !== 2)
+      throw new Error(`Wrong PSBT version=${PSBTVersion}`);
+    const inputs = this.inputs.map((i) => cleanPSBTFields(PSBTVersion, PSBTInput, i));
     for (const inp of inputs) {
       // Don't serialize empty fields
       if (inp.partialSig && !inp.partialSig.length) delete inp.partialSig;
       if (inp.finalScriptSig && !inp.finalScriptSig.length) delete inp.finalScriptSig;
       if (inp.finalScriptWitness && !inp.finalScriptWitness.length) delete inp.finalScriptWitness;
     }
-    const outputs = this.outputs.map((i) => cleanPSBTFields(ver, PSBTOutput, i));
-    if (ver && ver !== 2) throw new Error(`Wrong PSBT version=${ver}`);
+    const outputs = this.outputs.map((i) => cleanPSBTFields(PSBTVersion, PSBTOutput, i));
     const global = { ...this.global };
-    if (!ver) {
+    if (PSBTVersion === 0) {
       global.unsignedTx = RawTx.decode(this.unsignedTx);
       delete global.fallbackLocktime;
       delete global.txVersion;
     } else {
-      global.version = ver;
+      global.version = PSBTVersion;
       global.txVersion = this.version;
       global.inputCount = this.inputs.length;
       global.outputCount = this.outputs.length;
@@ -1552,23 +1702,21 @@ export class Transaction {
       if (!inputs.length) inputs.push({});
       if (!outputs.length) outputs.push({});
     }
-    return (ver === 2 ? RawPSBTV2 : RawPSBTV0).encode({
+    return (PSBTVersion === 0 ? RawPSBTV0 : RawPSBTV2).encode({
       global,
       inputs,
       outputs,
     });
   }
-  private global: Writable<PSBTKeyMapKeys<typeof PSBTGlobal>> = {};
+  private global: PSBTKeyMapKeys<typeof PSBTGlobal> = {};
   private inputs: TransactionInput[] = [];
   private outputs: TransactionOutput[] = [];
-  constructor(
-    version = DEFAULT_VERSION,
-    lockTime = 0,
-    public PSBTVersion = 0,
-    readonly opts: TxOpts = {}
-  ) {
-    if (lockTime !== DEFAULT_LOCKTIME) this.global.fallbackLocktime = lockTime;
-    this.global.txVersion = version;
+  readonly opts: ReturnType<typeof validateOpts>;
+  constructor(opts: TxOpts = {}) {
+    const _opts = (this.opts = validateOpts(opts));
+    // Merge with global structure of PSBTv2
+    if (_opts.lockTime !== DEFAULT_LOCKTIME) this.global.fallbackLocktime = _opts.lockTime;
+    this.global.txVersion = _opts.version;
   }
 
   // BIP370 lockTime (https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time)
@@ -1611,7 +1759,8 @@ export class Transaction {
     if (input.partialSig && input.partialSig.length) return 'signed';
     return 'unsigned';
   }
-  // TODO: re-use in preimages
+  // Cannot replace unpackSighash, tests rely on very generic implemenetation with signing inputs outside of range
+  // We will lose some vectors -> smaller test coverage of preimages (very important!)
   private inputSighash(idx: number) {
     this.checkInputIdx(idx);
     const sighash = this.inputType(this.inputs[idx]).sighash;
@@ -1625,6 +1774,8 @@ export class Transaction {
     const sigInputs = sighash & SignatureHash.ANYONECANPAY;
     return { sigInputs, sigOutputs };
   }
+  // Very nice for debug purposes, but slow. If there is too much inputs/outputs to add, will be quadratic.
+  // Some cache will be nice, but there chance to have bugs with cache invalidation
   private signStatus() {
     // if addInput or addOutput is not possible, then all inputs or outputs are signed
     let addInput = true,
@@ -1667,12 +1818,13 @@ export class Transaction {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
     // TODO: Can we find out how much witnesses/script will be used before signing?
     let out = 32;
+    const outputs = this.outputs.map(outputBeforeSign);
     if (this.hasWitnesses) out += 2;
     out += 4 * CompactSizeLen.encode(this.inputs.length).length;
     out += 4 * CompactSizeLen.encode(this.outputs.length).length;
     for (const i of this.inputs)
       if (i.finalScriptSig) out += 160 + 4 * VarBytes.encode(i.finalScriptSig).length;
-    for (const o of this.outputs) out += 32 + 4 * VarBytes.encode(o.script).length;
+    for (const o of outputs) out += 32 + 4 * VarBytes.encode(o.script).length;
     if (this.hasWitnesses) {
       for (const i of this.inputs)
         if (i.finalScriptWitness) out += RawWitness.encode(i.finalScriptWitness).length;
@@ -1686,12 +1838,11 @@ export class Transaction {
     return RawTx.encode({
       version: this.version,
       lockTime: this.lockTime,
-      inputs: this.inputs.map((i) => ({
+      inputs: this.inputs.map(inputBeforeSign).map((i) => ({
         ...i,
-        sequence: def.sequence(i.sequence),
         finalScriptSig: (withScriptSig && i.finalScriptSig) || P.EMPTY,
       })),
-      outputs: this.outputs,
+      outputs: this.outputs.map(outputBeforeSign),
       witnesses: this.inputs.map((i) => i.finalScriptWitness || []),
       segwitFlag: withWitness && this.hasWitnesses,
     });
@@ -1703,7 +1854,6 @@ export class Transaction {
     return base.hex.encode(this.toBytes(true, this.hasWitnesses));
   }
 
-  // TODO: hash requires non-empty script in inputs, why?
   get hash() {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
     return base.hex.encode(sha256x2(this.toBytes(true)));
@@ -1719,46 +1869,47 @@ export class Transaction {
   }
   // Modification
   private normalizeInput(
-    i: P.UnwrapCoder<typeof PSBTInputCoder>,
+    i: TransactionInputUpdate,
     cur?: TransactionInput,
-    allowedFields?: (keyof typeof PSBTInput)[]
+    allowedFields?: (keyof TransactionInput)[]
   ): TransactionInput {
-    let res: PSBTKeyMapKeys<typeof PSBTInput> = { ...cur, ...i };
+    let { nonWitnessUtxo, txid } = i;
+    // String support for common fields. We usually prefer Uint8Array to avoid errors (like hex looking string accidentally passed),
+    // however in case of nonWitnessUtxo it is better to expect string, since constructing this complex object will be difficult for user
+    if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = base.hex.decode(nonWitnessUtxo);
+    if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
+    if (nonWitnessUtxo === undefined) nonWitnessUtxo = cur?.nonWitnessUtxo;
+    if (typeof txid === 'string') txid = base.hex.decode(txid);
+    if (txid === undefined) txid = cur?.txid;
+    let res: PSBTKeyMapKeys<typeof PSBTInput> = { ...cur, ...i, nonWitnessUtxo, txid };
+    if (res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
     if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
     if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
     res = mergeKeyMap(PSBTInput, res, cur, allowedFields);
-    PSBTInputCoder.encode(res);
+    PSBTInputCoder.encode(res); // Validates that everything is correct at this point
 
-    if (res.txid === undefined || res.index === undefined)
-      throw new Error('Transaction/input: txid and index required');
-    // Cannot move in PSBTInputCoder, since it requires opts for parsing
-    if (res.nonWitnessUtxo) {
-      const outputs = res.nonWitnessUtxo.outputs;
-      if (outputs.length - 1 < res.index) throw new Error('nonWitnessUtxo: incorect output index');
-      const tx = Transaction.fromRaw(RawTx.encode(res.nonWitnessUtxo), this.opts);
-      const txid = base.hex.encode(res.txid);
-      if (tx.id !== txid) throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
-    }
-    // TODO: use this.prevout?
     let prevOut;
-    if (res.nonWitnessUtxo && i.index !== undefined)
+    if (res.nonWitnessUtxo && res.index !== undefined)
       prevOut = res.nonWitnessUtxo.outputs[res.index];
     else if (res.witnessUtxo) prevOut = res.witnessUtxo;
-    if (!this.opts.disableScriptCheck)
+    if (prevOut && !this.opts.disableScriptCheck)
       checkScript(prevOut && prevOut.script, res.redeemScript, res.witnessScript);
 
-    return res as TransactionInput;
+    return res;
   }
-  addInput(input: TransactionInput): number {
-    if (!this.signStatus().addInput) throw new Error('Tx has signed inputs, cannot add new one');
+  addInput(input: TransactionInputUpdate, _ignoreSignStatus = false): number {
+    if (!_ignoreSignStatus && !this.signStatus().addInput)
+      throw new Error('Tx has signed inputs, cannot add new one');
     this.inputs.push(this.normalizeInput(input));
     return this.inputs.length - 1;
   }
-  updateInput(idx: number, input: P.UnwrapCoder<typeof PSBTInputCoder>) {
+  updateInput(idx: number, input: TransactionInputUpdate, _ignoreSignStatus = false) {
     this.checkInputIdx(idx);
     let allowedFields = undefined;
-    const status = this.signStatus();
-    if (!status.addInput || status.inputs.includes(idx)) allowedFields = PSBTInputUnsignedKeys;
+    if (!_ignoreSignStatus) {
+      const status = this.signStatus();
+      if (!status.addInput || status.inputs.includes(idx)) allowedFields = PSBTInputUnsignedKeys;
+    }
     this.inputs[idx] = this.normalizeInput(input, this.inputs[idx], allowedFields);
   }
   // Output stuff
@@ -1767,35 +1918,45 @@ export class Transaction {
       throw new Error(`Wrong output index=${idx}`);
   }
   private normalizeOutput(
-    o: P.UnwrapCoder<typeof PSBTOutputCoder>,
+    o: TransactionOutputUpdate,
     cur?: TransactionOutput,
     allowedFields?: (keyof typeof PSBTOutput)[]
   ): TransactionOutput {
-    let res: PSBTKeyMapKeys<typeof PSBTOutput> = { ...cur, ...o };
-    if (res.amount !== undefined)
-      res.amount = typeof res.amount === 'string' ? Decimal.decode(res.amount) : res.amount;
+    let { amount, script } = o;
+    if (typeof amount === 'string') amount = Decimal.decode(amount);
+    if (typeof amount === 'number') amount = BigInt(amount);
+    if (amount === undefined) amount = cur?.amount;
+    if (typeof script === 'string') script = base.hex.decode(script);
+    if (script === undefined) script = cur?.script;
+    let res: PSBTKeyMapKeys<typeof PSBTOutput> = { ...cur, ...o, amount, script };
+    if (res.amount === undefined) delete res.amount;
     res = mergeKeyMap(PSBTOutput, res, cur, allowedFields);
     PSBTOutputCoder.encode(res);
-    if (res.script === undefined || res.amount === undefined)
-      throw new Error('Transaction/output: script and amount required');
-    if (!this.opts.allowUnknowOutput && OutScript.decode(res.script).type === 'unknown') {
+    if (
+      res.script &&
+      !this.opts.allowUnknowOutput &&
+      OutScript.decode(res.script).type === 'unknown'
+    ) {
       throw new Error(
         'Transaction/output: unknown output script type, there is a chance that input is unspendable. Pass allowUnkownScript=true, if you sure'
       );
     }
     if (!this.opts.disableScriptCheck) checkScript(res.script, res.redeemScript, res.witnessScript);
-    return res as TransactionOutput;
+    return res;
   }
-  addOutput(o: TransactionOutput): number {
-    if (!this.signStatus().addOutput) throw new Error('Tx has signed outputs, cannot add new one');
+  addOutput(o: TransactionOutputUpdate, _ignoreSignStatus = false): number {
+    if (!_ignoreSignStatus && !this.signStatus().addOutput)
+      throw new Error('Tx has signed outputs, cannot add new one');
     this.outputs.push(this.normalizeOutput(o));
     return this.outputs.length - 1;
   }
-  updateOutput(idx: number, output: P.UnwrapCoder<typeof PSBTOutputCoder>) {
+  updateOutput(idx: number, output: TransactionOutputUpdate, _ignoreSignStatus = false) {
     this.checkOutputIdx(idx);
     let allowedFields = undefined;
-    const status = this.signStatus();
-    if (!status.addOutput || status.outputs.includes(idx)) allowedFields = PSBTOutputUnsignedKeys;
+    if (!_ignoreSignStatus) {
+      const status = this.signStatus();
+      if (!status.addOutput || status.outputs.includes(idx)) allowedFields = PSBTOutputUnsignedKeys;
+    }
     this.outputs[idx] = this.normalizeOutput(output, this.outputs[idx], allowedFields);
   }
   addOutputAddress(address: string, amount: string | bigint, network = NETWORK): number {
@@ -1812,7 +1973,8 @@ export class Transaction {
       if (!prevOut) throw new Error('Empty input amount');
       res += prevOut.amount;
     }
-    for (const i of this.outputs) res -= i.amount;
+    const outputs = this.outputs.map(outputBeforeSign);
+    for (const o of outputs) res -= o.amount;
     return res;
   }
 
@@ -1828,27 +1990,29 @@ export class Transaction {
     prevOutScript = Script.encode(
       Script.decode(prevOutScript).filter((i) => i !== 'CODESEPARATOR')
     );
-    let inputs = this.inputs.map((input, inputIdx) => ({
-      ...input,
-      finalScriptSig: inputIdx === idx ? prevOutScript : P.EMPTY,
-    }));
+    let inputs: TransactionInputRequired[] = this.inputs
+      .map(inputBeforeSign)
+      .map((input, inputIdx) => ({
+        ...input,
+        finalScriptSig: inputIdx === idx ? prevOutScript : P.EMPTY,
+      }));
     if (isAny) inputs = [inputs[idx]];
     else if (isNone || isSingle) {
       inputs = inputs.map((input, inputIdx) => ({
         ...input,
-        sequence: inputIdx === idx ? def.sequence(input.sequence) : 0,
+        sequence: inputIdx === idx ? input.sequence : 0,
       }));
     }
-    let outputs = this.outputs;
+    let outputs = this.outputs.map(outputBeforeSign);
     if (isNone) outputs = [];
     else if (isSingle) {
-      outputs = this.outputs.slice(0, idx).fill(EMPTY_OUTPUT).concat([outputs[idx]]);
+      outputs = outputs.slice(0, idx).fill(EMPTY_OUTPUT).concat([outputs[idx]]);
     }
     const tmpTx = RawTx.encode({
       lockTime: this.lockTime,
       version: this.version,
       segwitFlag: false,
-      inputs: inputs.map((i) => ({ ...i, sequence: def.sequence(i.sequence) })),
+      inputs,
       outputs,
     });
     return sha256x2(tmpTx, P.I32LE.encode(hashType));
@@ -1858,14 +2022,15 @@ export class Transaction {
     let inputHash = EMPTY32;
     let sequenceHash = EMPTY32;
     let outputHash = EMPTY32;
-    const { inputs } = this;
+    const inputs = this.inputs.map(inputBeforeSign);
+    const outputs = this.outputs.map(outputBeforeSign);
     if (!isAny) inputHash = sha256x2(...inputs.map(TxHashIdx.encode));
     if (!isAny && !isSingle && !isNone)
-      sequenceHash = sha256x2(...inputs.map((i) => P.U32LE.encode(def.sequence(i.sequence))));
+      sequenceHash = sha256x2(...inputs.map((i) => P.U32LE.encode(i.sequence)));
     if (!isSingle && !isNone) {
-      outputHash = sha256x2(...this.outputs.map(RawOutput.encode));
-    } else if (isSingle && idx < this.outputs.length)
-      outputHash = sha256x2(RawOutput.encode(this.outputs[idx]));
+      outputHash = sha256x2(...outputs.map(RawOutput.encode));
+    } else if (isSingle && idx < outputs.length)
+      outputHash = sha256x2(RawOutput.encode(outputs[idx]));
     const input = inputs[idx];
     return sha256x2(
       P.I32LE.encode(this.version),
@@ -1875,7 +2040,7 @@ export class Transaction {
       P.U32LE.encode(input.index),
       VarBytes.encode(prevOutScript),
       P.U64LE.encode(amount),
-      P.U32LE.encode(def.sequence(input.sequence)),
+      P.U32LE.encode(input.sequence),
       outputHash,
       P.U32LE.encode(this.lockTime),
       P.U32LE.encode(hashType)
@@ -1903,33 +2068,35 @@ export class Transaction {
     ];
     const outType = hashType === SignatureHash.DEFAULT ? SignatureHash.ALL : hashType & 0b11;
     const inType = hashType & SignatureHash.ANYONECANPAY;
+    const inputs = this.inputs.map(inputBeforeSign);
+    const outputs = this.outputs.map(outputBeforeSign);
     if (inType !== SignatureHash.ANYONECANPAY) {
       out.push(
         ...[
-          this.inputs.map(TxHashIdx.encode),
+          inputs.map(TxHashIdx.encode),
           amount.map(P.U64LE.encode),
           prevOutScript.map(VarBytes.encode),
-          this.inputs.map((i) => P.U32LE.encode(def.sequence(i.sequence))),
+          inputs.map((i) => P.U32LE.encode(i.sequence)),
         ].map((i) => sha256(concat(...i)))
       );
     }
     if (outType === SignatureHash.ALL) {
-      out.push(sha256(concat(...this.outputs.map(RawOutput.encode))));
+      out.push(sha256(concat(...outputs.map(RawOutput.encode))));
     }
     const spendType = (annex ? 1 : 0) | (leafScript ? 2 : 0);
     out.push(new Uint8Array([spendType]));
     if (inType === SignatureHash.ANYONECANPAY) {
-      const inp = this.inputs[idx];
+      const inp = inputs[idx];
       out.push(
         TxHashIdx.encode(inp),
         P.U64LE.encode(amount[idx]),
         VarBytes.encode(prevOutScript[idx]),
-        P.U32LE.encode(def.sequence(inp.sequence))
+        P.U32LE.encode(inp.sequence)
       );
     } else out.push(P.U32LE.encode(idx));
-    if (spendType & 1) out.push(sha256(VarBytes.encode(annex!)));
+    if (spendType & 1) out.push(sha256(VarBytes.encode(annex || P.EMPTY)));
     if (outType === SignatureHash.SINGLE)
-      out.push(idx < this.outputs.length ? sha256(RawOutput.encode(this.outputs[idx])) : EMPTY32);
+      out.push(idx < outputs.length ? sha256(RawOutput.encode(outputs[idx])) : EMPTY32);
     if (leafScript)
       out.push(tapLeafHash(leafScript, leafVer), P.U8.encode(0), P.I32LE.encode(codeSeparator));
     return taggedHash('TapSighash', ...out);
@@ -1944,7 +2111,6 @@ export class Transaction {
     else throw new Error('Cannot find previous output info.');
   }
   private inputType(input: TransactionInput) {
-    // TODO: check here if non-segwit tx + no nonWitnessUtxo
     let txType = 'legacy';
     let defaultSighash = SignatureHash.ALL;
     const prevOut = this.prevOut(input);
@@ -1981,7 +2147,6 @@ export class Transaction {
         cur = child;
         type += `-${child.type}`;
       }
-      // TODO: check for uncompressed public keys in segwit tx
       const last = stack[stack.length - 1];
       if (last.type === 'sh' || last.type === 'wsh')
         throw new Error('inputType: sh/wsh cannot be terminal type');
@@ -1994,11 +2159,16 @@ export class Transaction {
         defaultSighash,
         sighash: input.sighashType || defaultSighash,
       };
+      if (txType === 'legacy' && !this.opts.allowLegacyWitnessUtxo && !input.nonWitnessUtxo) {
+        throw new Error(
+          `Transaction/sign: legacy input without nonWitnessUtxo, can result in attack that forces paying higher fees. Pass allowLegacyWitnessUtxo=true, if you sure`
+        );
+      }
       return res;
     }
   }
 
-  // TODO: signer can be privateKey OR instance of bip32 HD stuff
+  // Signer can be privateKey OR instance of bip32 HD stuff
   signIdx(
     privateKey: Signer,
     idx: number,
@@ -2008,9 +2178,8 @@ export class Transaction {
     this.checkInputIdx(idx);
     const input = this.inputs[idx];
     const inputType = this.inputType(input);
-
     // Handle BIP32 HDKey
-    if (!(privateKey instanceof Uint8Array)) {
+    if (!isBytes(privateKey)) {
       if (!input.bip32Derivation || !input.bip32Derivation.length)
         throw new Error('bip32Derivation: empty');
       const signers = input.bip32Derivation
@@ -2077,7 +2246,7 @@ export class Transaction {
             secp.schnorr.signSync(hash, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
-          this.updateInput(idx, { tapKeySig: sig });
+          this.updateInput(idx, { tapKeySig: sig }, true);
           signed = true;
         }
       }
@@ -2094,9 +2263,7 @@ export class Transaction {
             cb.internalKey,
             P.EMPTY // Because we cannot have nested taproot tree
           );
-          const pos = scriptDecoded.findIndex(
-            (i) => i instanceof Uint8Array && P.equalBytes(i, pubKey)
-          );
+          const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, pubKey));
           // Skip if there is no public key in tapLeafScript
           if (pos === -1) continue;
           const msg = this.preimageWitnessV1(
@@ -2112,7 +2279,11 @@ export class Transaction {
             secp.schnorr.signSync(msg, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
-          this.updateInput(idx, { tapScriptSig: [[{ pubKey: pubKey, leafHash: hash }, sig]] });
+          this.updateInput(
+            idx,
+            { tapScriptSig: [[{ pubKey: pubKey, leafHash: hash }, sig]] },
+            true
+          );
           signed = true;
         }
       }
@@ -2125,39 +2296,39 @@ export class Transaction {
       // Check if script has public key or its has inside
       let hasPubkey = false;
       const pubKeyHash = hash160(pubKey);
-      for (const i of Script.decode(inputType.lastScript))
-        if (i instanceof Uint8Array && (P.equalBytes(i, pubKey) || P.equalBytes(i, pubKeyHash)))
+      for (const i of Script.decode(inputType.lastScript)) {
+        if (isBytes(i) && (P.equalBytes(i, pubKey) || P.equalBytes(i, pubKeyHash)))
           hasPubkey = true;
+      }
       if (!hasPubkey) throw new Error(`Input script doesn't have pubKey: ${inputType.lastScript}`);
       let hash;
       if (inputType.txType === 'legacy') {
-        if (!this.opts.allowLegacyWitnessUtxo && !input.nonWitnessUtxo) {
-          throw new Error(
-            `Transaction/sign: legacy input without nonWitnessUtxo, can result in attack that forces paying higher fees. Pass allowLegacyWitnessUtxo=true, if you sure`
-          );
-        }
         hash = this.preimageLegacy(idx, inputType.lastScript, sighash);
       } else if (inputType.txType === 'segwit') {
         let script = inputType.lastScript;
         // If wpkh OR sh-wpkh, wsh-wpkh is impossible, so looks ok
-        // TODO: re-check
         if (inputType.last.type === 'wpkh')
           script = OutScript.encode({ type: 'pkh', hash: inputType.last.hash });
         hash = this.preimageWitnessV0(idx, script, sighash, prevOut.amount);
       } else throw new Error(`Transaction/sign: unknown tx type: ${inputType.txType}`);
       const sig = signECDSA(hash, privateKey, this.opts.lowR);
-      this.updateInput(idx, {
-        partialSig: [[pubKey, concat(sig, new Uint8Array([sighash]))]],
-      });
+      this.updateInput(
+        idx,
+        {
+          partialSig: [[pubKey, concat(sig, new Uint8Array([sighash]))]],
+        },
+        true
+      );
     }
     return true;
   }
-  // TODO: this is bad API. Will work if user creates and signs tx, but if
+  // This is bad API. Will work if user creates and signs tx, but if
   // there is some complex workflow with exchanging PSBT and signing them,
   // then it is better to validate which output user signs. How could a better API look like?
   // Example: user adds input, sends to another party, then signs received input (mixer etc),
   // another user can add different input for same key and user will sign it.
   // Even worse: another user can add bip32 derivation, and spend money from different address.
+  // Better api: signIdx
   sign(privateKey: Signer, allowedSighash?: number[], _auxRand?: Bytes): number {
     let num = 0;
     for (let i = 0; i < this.inputs.length; i++) {
@@ -2178,12 +2349,7 @@ export class Transaction {
     if (inputType.txType === 'taproot') {
       if (input.tapKeySig) input.finalScriptWitness = [input.tapKeySig];
       else if (input.tapLeafScript && input.tapScriptSig) {
-        // TODO: this works the same as bitcoinjs lib fork, however it is not secure,
-        // since we add signatures to script which we don't understand.
-        // Maybe it is better to disable it?
-        // Proper way will be to create check for known scripts, however MuSig, p2tr_ns and other
-        // scripts are still not standard; and it will take significant amount of work for them.
-        // Sort leafs by control block length. TODO: maybe need to check script length too?
+        // Sort leafs by control block length.
         const leafs = input.tapLeafScript.sort(
           (a, b) =>
             TaprootControlBlock.encode(a[0]).length - TaprootControlBlock.encode(b[0]).length
@@ -2224,9 +2390,7 @@ export class Transaction {
             const scriptDecoded = Script.decode(script);
             signatures = scriptSig
               .map(([{ pubKey }, signature]) => {
-                const pos = scriptDecoded.findIndex(
-                  (i) => i instanceof Uint8Array && P.equalBytes(i, pubKey)
-                );
+                const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, pubKey));
                 if (pos === -1)
                   throw new Error('finalize/taproot: cannot find position of pubkey in script');
                 return { signature, pos };
@@ -2245,17 +2409,13 @@ export class Transaction {
         if (!input.finalScriptWitness) throw new Error('finalize/taproot: empty witness');
       } else throw new Error('finalize/taproot: unknown input');
 
-      // Clean input
-      for (const k in input) if (!PSBTInputFinalKeys.includes(k as any)) delete (input as any)[k];
+      cleanFinalInput(input);
       return;
     }
-    let outScript = inputType.lastScript;
-    let isSegwit = inputType.txType === 'segwit';
     if (!input.partialSig || !input.partialSig.length) throw new Error('Not enough partial sign');
 
-    // TODO: this is completely broken, fix.
-    let inputScript: any;
-    let witness: any[] = [];
+    let inputScript: Bytes = P.EMPTY;
+    let witness: Bytes[] = [];
     // TODO: move input scripts closer to payments/output scripts
     // Multisig
     if (inputType.last.type === 'ms') {
@@ -2274,43 +2434,42 @@ export class Transaction {
           `Multisig: wrong signatures count, m=${m} n=${pubkeys.length} signatures=${signatures.length}`
         );
       }
-      inputScript = Script.encode(['OP_0', ...signatures]);
+      inputScript = Script.encode([0, ...signatures]);
     } else if (inputType.last.type === 'pk') {
       inputScript = Script.encode([input.partialSig[0][1]]);
     } else if (inputType.last.type === 'pkh') {
-      // check if output is correct here
       inputScript = Script.encode([input.partialSig[0][1], input.partialSig[0][0]]);
     } else if (inputType.last.type === 'wpkh') {
-      // check if output is correct here
       inputScript = P.EMPTY;
       witness = [input.partialSig[0][1], input.partialSig[0][0]];
     } else if (inputType.last.type === 'unknown' && !this.opts.allowUnknowInput)
       throw new Error('Unknown inputs not allowed');
-    let finalScriptSig, finalScriptWitness;
-    if (input.witnessScript) {
+
+    // Create final scripts (generic part)
+    let finalScriptSig: Bytes | undefined, finalScriptWitness: Bytes[] | undefined;
+    if (inputType.type.includes('wsh-')) {
       // P2WSH
-      if (inputScript && inputScript.length > 0 && outScript && outScript.length > 0) {
+      if (inputScript.length && inputType.lastScript.length) {
         witness = Script.decode(inputScript).map((i) => {
-          if (i === 'OP_0') return P.EMPTY;
-          if (i instanceof Uint8Array) return i;
+          if (i === 0) return P.EMPTY;
+          if (isBytes(i)) return i;
           throw new Error(`Wrong witness op=${i}`);
         });
       }
-      if (witness && outScript) witness = witness.concat(outScript);
-      outScript = Script.encode(['OP_0', sha256(outScript)]);
-      inputScript = P.EMPTY;
+      witness = witness.concat(inputType.lastScript);
     }
-    if (isSegwit) finalScriptWitness = witness;
-    if (input.redeemScript) {
-      // P2SH
-      finalScriptSig = Script.encode([...Script.decode(inputScript), outScript]);
-    } else if (!isSegwit) finalScriptSig = inputScript;
+    if (inputType.txType === 'segwit') finalScriptWitness = witness;
+    if (inputType.type.startsWith('sh-wsh-')) {
+      finalScriptSig = Script.encode([Script.encode([0, sha256(inputType.lastScript)])]);
+    } else if (inputType.type.startsWith('sh-')) {
+      finalScriptSig = Script.encode([...Script.decode(inputScript), inputType.lastScript]);
+    } else if (inputType.type.startsWith('wsh-')) {
+    } else if (inputType.txType !== 'segwit') finalScriptSig = inputScript;
 
     if (!finalScriptSig && !finalScriptWitness) throw new Error('Unknown error finalizing input');
     if (finalScriptSig) input.finalScriptSig = finalScriptSig;
     if (finalScriptWitness) input.finalScriptWitness = finalScriptWitness;
-    // Clean input
-    for (const k in input) if (!PSBTInputFinalKeys.includes(k as any)) delete (input as any)[k];
+    cleanFinalInput(input);
   }
   finalize() {
     for (let i = 0; i < this.inputs.length; i++) this.finalizeIdx(i);
@@ -2318,13 +2477,16 @@ export class Transaction {
   extract() {
     if (!this.isFinal) throw new Error('Transaction has unfinalized inputs');
     if (!this.outputs.length) throw new Error('Transaction has no outputs');
-    // TODO: Check if inputs.amount >= outputs.amount
+    if (this.fee < 0n) throw new Error('Outputs spends more than inputs amount');
     return this.toBytes(true, true);
   }
   combine(other: Transaction): this {
     for (const k of ['PSBTVersion', 'version', 'lockTime'] as const) {
-      if (this[k] !== other[k])
-        throw new Error(`Transaction/combine: different ${k} this=${this[k]} other=${other[k]}`);
+      if (this.opts[k] !== other.opts[k]) {
+        throw new Error(
+          `Transaction/combine: different ${k} this=${this.opts[k]} other=${other.opts[k]}`
+        );
+      }
     }
     for (const k of ['inputs', 'outputs'] as const) {
       if (this[k].length !== other[k].length) {
@@ -2338,9 +2500,13 @@ export class Transaction {
     if (!P.equalBytes(thisUnsigned, otherUnsigned))
       throw new Error(`Transaction/combine: different unsigned tx`);
     this.global = mergeKeyMap(PSBTGlobal, this.global, other.global);
-    for (let i = 0; i < this.inputs.length; i++) this.updateInput(i, other.inputs[i]);
-    for (let i = 0; i < this.outputs.length; i++) this.updateOutput(i, other.outputs[i]);
+    for (let i = 0; i < this.inputs.length; i++) this.updateInput(i, other.inputs[i], true);
+    for (let i = 0; i < this.outputs.length; i++) this.updateOutput(i, other.outputs[i], true);
     return this;
+  }
+  clone() {
+    // deepClone probably faster, but this enforces that encoding is valid
+    return Transaction.fromPSBT(this.toPSBT(), this.opts);
   }
 }
 // User facing API?
@@ -2356,7 +2522,6 @@ export function getAddress(type: 'pkh' | 'wpkh' | 'tr', privKey: Bytes, network 
   throw new Error(`getAddress: unknown type=${type}`);
 }
 
-// TODO: rewrite
 export function multisig(m: number, pubkeys: Bytes[], sorted = false, witness = false) {
   const ms = p2ms(m, sorted ? _sortPubkeys(pubkeys) : pubkeys);
   return witness ? p2wsh(ms) : p2sh(ms);
@@ -2365,7 +2530,7 @@ export function multisig(m: number, pubkeys: Bytes[], sorted = false, witness = 
 export function sortedMultisig(m: number, pubkeys: Bytes[], witness = false) {
   return multisig(m, pubkeys, true, witness);
 }
-// Copy-pase from bip32 derive, maybe do something like 'bip32.parsePath'?
+// Copy-pasted from bip32 derive, maybe do something like 'bip32.parsePath'?
 const HARDENED_OFFSET: number = 0x80000000;
 export function bip32Path(path: string): number[] {
   const out: number[] = [];

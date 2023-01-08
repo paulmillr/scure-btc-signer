@@ -60,8 +60,7 @@ for (let i = 0; i < rpcPSBT.signer.length; i++) {
     wif: 0xef,
   };
   should(`rpcPSBT(${i}): signer`, () => {
-    const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt));
-    tx.opts.lowR = true;
+    const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt), { lowR: true });
     // Some inputs should be unsigned, we throw error when signer didn't sign anything
     try {
       for (const p of t.privkeys) tx.sign(btc.WIF(regtest).decode(p));

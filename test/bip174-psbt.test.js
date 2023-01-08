@@ -68,7 +68,7 @@ should('BIP174: PSBT multi-sign example', () => {
 
   const hdkey = bip32.HDKey.fromExtendedKey(epriv, testnet.bip32);
   // const seed = 'cUkG8i1RFfWGWy5ziR11zJ5V4U4W3viSFCfyJmZnvQaUsd1xuF3T';
-  const tx = new btc.Transaction(2);
+  const tx = new btc.Transaction();
   // A creator creating a PSBT for a transaction which creates the following outputs:
   tx.addOutput({ script: '0014d85c2b71d0060b09c9886aeb815e50991dda124d', amount: '1.49990000' });
   tx.addOutput({ script: '001400aea9a2e5f0f876a588df5546e8742d1d87008f', amount: '1.00000000' });

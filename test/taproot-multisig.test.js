@@ -110,10 +110,20 @@ should('p2tr_ns test', () => {
     '0101010101010101010101010101010101010101010101010101010101010101',
     '0202020202020202020202020202020202020202020202020202020202020202',
   ].map(hex.decode);
-  throws(() => btc.OutScript.decode(btc.Script.encode([p[0], 'CHECKSIGVERIFY', 'CHECKSIG'])));
-  throws(() =>
-    btc.OutScript.decode(
-      btc.Script.encode([p[0], 'CHECKSIGVERIFY', p[1], 'CHECKSIGVERIFY', 'CHECKSIG'])
+  const wrong = btc.OutScript.decode(btc.Script.encode([p[0], 'CHECKSIGVERIFY', 'CHECKSIG']));
+  deepStrictEqual(wrong.type, 'unknown');
+  deepStrictEqual(
+    wrong.script,
+    hex.decode('200101010101010101010101010101010101010101010101010101010101010101adac')
+  );
+  const wrong2 = btc.OutScript.decode(
+    btc.Script.encode([p[0], 'CHECKSIGVERIFY', p[1], 'CHECKSIGVERIFY', 'CHECKSIG'])
+  );
+  deepStrictEqual(wrong2.type, 'unknown');
+  deepStrictEqual(
+    wrong2.script,
+    hex.decode(
+      '200101010101010101010101010101010101010101010101010101010101010101ad200202020202020202020202020202020202020202020202020202020202020202adac'
     )
   );
 });

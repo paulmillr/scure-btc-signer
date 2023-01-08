@@ -5,6 +5,7 @@ import * as btc from '../../index.js';
 import * as bip32 from '@scure/bip32';
 import { default as f_transaction } from './fixtures/bitcoinjs/transaction.json' assert { type: 'json' };
 import { default as f_script } from './fixtures/bitcoinjs/script.json' assert { type: 'json' };
+import { default as f_script_number } from './fixtures/bitcoinjs/script_number.json' assert { type: 'json' };
 import { default as f_address } from './fixtures/bitcoinjs/address.json' assert { type: 'json' };
 import { default as psbt } from './fixtures/bitcoinjs/psbt.json' assert { type: 'json' };
 import * as utils from './utils.js';
@@ -60,6 +61,14 @@ for (let i = 0; i < f_script.valid.length; i++) {
     const encoded = hex.encode(btc.Script.encode(fa));
     deepStrictEqual(encoded, v.script);
     deepStrictEqual(btc.Script.decode(hex.decode(v.script)), fa);
+  });
+}
+
+for (let i = 0; i < f_script_number.length; i++) {
+  const v = f_script_number[i];
+  should(`ScriptNum(${i})`, () => {
+    deepStrictEqual(hex.encode(btc.ScriptNum().encode(v.number)), v.hex, 'encode');
+    deepStrictEqual(Number(btc.ScriptNum().decode(hex.decode(v.hex))), v.number, 'decode');
   });
 }
 
@@ -620,27 +629,6 @@ for (let i = 0; i < psbt.signInputHD.checks.length; i++) {
         tx.sign(bip32.HDKey.fromExtendedKey(t.xprv));
       });
     }
-  });
-}
-
-for (let i = 0; i < psbt.addInput.checks.length; i++) {
-  const t = psbt.addInput.checks[i];
-  should(`PSBT/addInput(${i}): ${t.description}`, () => {
-    const tx = new btc.Transaction();
-    const data = {};
-    for (const k in t.inputData) {
-      const val = t.inputData[k];
-      data[k] =
-        typeof val === 'string' ? val.replace("Buffer.from('", '').replace("', 'hex')", '') : val;
-    }
-    console.log('Z', data);
-
-    try {
-      tx.addInput(data);
-    } catch (e) {
-      console.log('E', e);
-    }
-    //throws(() => tx.addInput(data));
   });
 }
 

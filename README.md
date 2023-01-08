@@ -2,13 +2,13 @@
 
 Create, sign & decode BTC transactions with minimum deps.
 
-- 🪶 Small: ~2.2K lines
-- Create transactions, inputs, outputs, sign them
-- No network code: allows simpler audits and offline usage
-- Classic & SegWit support: P2PK, P2PKH, P2WPKH, P2SH, P2WSH, P2MS
+- ✍️ Create transactions, inputs, outputs, sign them
+- 📡 No network code: simplified audits and offline usage
+- 🎻 Classic & SegWit: P2PK, P2PKH, P2WPKH, P2SH, P2WSH, P2MS
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
 - 📨 BIP174 PSBT
-- Multisig support
+- 👥 Multisig support
+- 🪶 ~2.6K lines
 
 The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
 
@@ -370,6 +370,9 @@ deepStrictEqual(tr(btc.p2tr(undefined, [btc.p2tr_pk(PubKey)])), {
 ### Encode/decode
 
 **_NOTE_**: we support both PSBTv0 and draft PSBTv2 (there is no PSBTv1). If PSBTv2 transaction encoded into PSBTv1, all PSBTv2 fields will be stripped.
+**_NOTE_**: we strip 'unknown' keys inside PSBT, they needed for new version/features support, however any unsupported feature/new version can significantly break assumptions about code.
+If you have use-case where they needed, please open issue.
+For PSBTv2: tx_modifiable, taproot+bip32 is not supported yet.
 
 ```ts
 // Decode
@@ -389,8 +392,8 @@ as txid - so hash is not consistent.
 
 ```ts
 type TransactionInput = {
-  txid: Bytes,
-  index: number,
+  txid?: Bytes,
+  index?: number,
   nonWitnessUtxo?: <RawTransactionBytesOrHex>,
   witnessUtxo?: {script?: Bytes; amount: bigint},
   partialSig?: [Bytes, Bytes][]; // [PubKey, Signature]
@@ -477,10 +480,14 @@ deepStrictEqual(tx.inputs[0], {
 
 ### Outputs
 
+**_NOTE_**: amount in addOutputAddress handled as 'bitcoins' if string, and as satoshi if bigint.
+Why? BigInt usually comes from calculations/API, which is usually in satoshi. String is probably user input, so it is worth
+to handle conversion to satoshi's in that case.
+
 ```ts
 type TransactionOutput = {
-  script: Bytes,
-  amount: bigint,
+  script?: Bytes,
+  amount?: bigint,
   redeemScript?: Bytes,
   witnessScript?: Bytes,
   bip32Derivation?: [Bytes, {fingerprint: number; path: number[]}]; // [PubKey, DeriviationPath]

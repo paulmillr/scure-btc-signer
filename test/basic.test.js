@@ -3,7 +3,10 @@ import { should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../index.js';
 import * as secp256k1 from '@noble/secp256k1';
+import { sha256 } from '@noble/hashes/sha256';
 import * as P from 'micro-packed';
+
+const testClone = (tx) => deepStrictEqual(tx.clone(), tx);
 
 should('BTC: parseAddress', () => {
   const CASES = [
@@ -72,13 +75,13 @@ const RAW_TX_HEX =
 
 should('BTC: tx (from P2PKH)', async () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
-  const opts = { allowLegacyWitnessUtxo: true };
-  const tx = new btc.Transaction(1, undefined, undefined, opts);
+  const opts = { version: 1, allowLegacyWitnessUtxo: true };
+  const tx = new btc.Transaction(opts);
   for (const [address, amount] of TX_TEST_OUTPUTS) tx.addOutputAddress(address, amount);
   for (const inp of TX_TEST_INPUTS) tx.addInput(inp);
   deepStrictEqual(tx.hex, RAW_TX_HEX);
   // Replace input scripts with ours, so we can sign
-  const tx2 = new btc.Transaction(1, undefined, undefined, opts);
+  const tx2 = new btc.Transaction(opts);
   for (const [address, amount] of TX_TEST_OUTPUTS) tx2.addOutputAddress(address, amount);
   const pub = secp256k1.getPublicKey(privKey, true);
   for (const inp of TX_TEST_INPUTS) {
@@ -103,7 +106,7 @@ should('BTC: tx (from P2PKH)', async () => {
 
 should('BTC: tx (from bech32)', async () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
-  const tx32 = new btc.Transaction(1);
+  const tx32 = new btc.Transaction({ version: 1 });
   for (const [address, amount] of TX_TEST_OUTPUTS) tx32.addOutputAddress(address, amount);
   for (const inp of TX_TEST_INPUTS) {
     tx32.addInput({
@@ -155,22 +158,22 @@ should('Script', () => {
       )
     ).map((i) => (P.isBytes(i) ? hex.encode(i) : i)),
     [
-      'OP_2',
+      2,
       '030000000000000000000000000000000000000000000000000000000000000001',
       '030000000000000000000000000000000000000000000000000000000000000002',
       '030000000000000000000000000000000000000000000000000000000000000003',
-      'OP_3',
+      3,
       'CHECKMULTISIG',
     ]
   );
   deepStrictEqual(
     hex.encode(
       btc.Script.encode([
-        'OP_2',
+        2,
         hex.decode('030000000000000000000000000000000000000000000000000000000000000001'),
         hex.decode('030000000000000000000000000000000000000000000000000000000000000002'),
         hex.decode('030000000000000000000000000000000000000000000000000000000000000003'),
-        'OP_3',
+        3,
         'CHECKMULTISIG',
       ])
     ),
@@ -209,6 +212,31 @@ should('OutScript', () => {
     ),
     '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
   );
+
+  // OpNum
+  const OpNumVectors = [
+    [0, ''],
+    [1, '01'],
+    [-1, '81'],
+    [-2, '82'],
+    [127, '7f'],
+    [128, '8000'],
+    [-255, 'ff80'],
+    [256, '0001'],
+    [998, 'e603'],
+    [32767, 'ff7f'],
+    [-65536, '000081'],
+    [16777215, 'ffffff00'],
+    [2147483648, '0000008000'],
+    [-4294967295, 'ffffffff80'],
+    [1099511627776, '000000000001'],
+    [1500, 'dc05'],
+    [-1500, 'dc85'],
+  ];
+  for (const [num, exp] of OpNumVectors) {
+    deepStrictEqual(hex.encode(btc.ScriptNum().encode(num)), exp, 'encode');
+    deepStrictEqual(Number(btc.ScriptNum().decode(hex.decode(exp))), num, 'decode');
+  }
 });
 
 should('payTo API', () => {
@@ -993,7 +1021,7 @@ should('Big transaction regtest validation', () => {
       'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
     ]
   );
-  const tx = new btc.Transaction(undefined, undefined, undefined, {
+  const tx = new btc.Transaction({
     allowLegacyWitnessUtxo: true,
   });
   const enabled = [
@@ -1030,6 +1058,9 @@ should('Big transaction regtest validation', () => {
   const BTCamount = 10n ** 8n; // 1btc
   // Input
   const txid = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
+
+  let ts = Date.now();
+
   for (let index = 0; index < spends.length; index++) {
     const { spend, name } = spends[index];
     if (!enabled.includes(name)) continue;
@@ -1041,6 +1072,8 @@ should('Big transaction regtest validation', () => {
     });
     //console.log('SPENDING', index, spend.address, btc.Decimal.encode(amount));
   }
+  // console.log('ADD INPUTS', Date.now() - ts);
+  ts = Date.now();
   // Output
   const privOut = hex.decode('0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e');
   // TODO: btc.getPublic with types or something?
@@ -1055,9 +1088,14 @@ should('Big transaction regtest validation', () => {
     for (const p of privKeys) tx.signIdx(p, idx, undefined, new Uint8Array(32));
     idx++;
   }
+  // console.log('SIGN', Date.now() - ts);
+  ts = Date.now();
   tx.finalize();
+  // console.log('FINALIZE', Date.now() - ts);
+  ts = Date.now();
 
   const txHex = hex.encode(tx.extract());
+  // console.log('EXTRACT', Date.now() - ts);
   /*
   This is verified against bitcoin regtest via functional tests:
   - test/_create_tx_for_regnet.js <- creates funding tx
@@ -1073,7 +1111,7 @@ should('Big transaction regtest validation', () => {
 
 should('SignatureHash tests', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
-  const tx = new btc.Transaction(undefined, undefined, undefined, {
+  const tx = new btc.Transaction({
     allowLegacyWitnessUtxo: true,
   });
   const BTCamount = 10n ** 8n; // 1btc
@@ -1093,10 +1131,10 @@ should('SignatureHash tests', () => {
   const S2 = btc.p2wpkh(P1, regtest);
   const S3 = btc.p2tr(P1S, undefined, regtest);
   const spends = [S1, S2, S3];
-  console.log(
-    'SPENDS',
-    spends.map((i) => i.address)
-  );
+  // console.log(
+  //   'SPENDS',
+  //   spends.map((i) => i.address)
+  // );
   const auxRand = new Uint8Array(32);
   let index = 0;
   const addInput = (spend, sighash) => {
@@ -1222,51 +1260,371 @@ should('taproot single array as script', () => {
   );
 });
 
-should('big multisig', () => {
+should('Finalize negative fee', () => {
+  const opts = { version: 1, allowLegacyWitnessUtxo: true };
+  const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  const pub = secp256k1.getPublicKey(privKey, true);
+
+  // Fails
+  {
+    const tx = new btc.Transaction(opts);
+    for (const inp of TX_TEST_INPUTS) {
+      tx.addInput({
+        ...inp,
+        witnessUtxo: {
+          script: btc.p2pkh(pub).script,
+          amount: inp.amount,
+        },
+      });
+    }
+    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], Number(tx.fee) + 1);
+    tx.sign(privKey);
+    //testClone(tx);
+    throws(() => tx.finalize());
+  }
+  // OK
+  {
+    const tx = new btc.Transaction(opts);
+    for (const inp of TX_TEST_INPUTS) {
+      tx.addInput({
+        ...inp,
+        witnessUtxo: {
+          script: btc.p2pkh(pub).script,
+          amount: inp.amount,
+        },
+      });
+    }
+    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], Number(tx.fee));
+    tx.sign(privKey);
+    tx.finalize();
+  }
+});
+
+should('Issue #13', () => {
+  const keypairFromSecret = (hexSecretKey) => {
+    const secretKey = hex.decode(hexSecretKey);
+    const schnorrPublicKey = secp256k1.schnorr.getPublicKey(secretKey);
+    return {
+      schnorrPublicKey,
+      secretKey,
+    };
+  };
+
+  const aliceKeyPair = keypairFromSecret(
+    '2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90'
+  );
+  const bobKeyPair = keypairFromSecret(
+    '81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9'
+  );
+  const internalKeyPair = keypairFromSecret(
+    '1229101a0fcf2104e8808dab35661134aa5903867d44deb73ce1c7e4eb925be8'
+  );
+  const preimage = sha256(
+    hex.decode('107661134f21fc7c02223d50ab9eb3600bc3ffc3712423a1e47bb1f9a9dbf55f')
+  );
+
+  const scriptAlice = new Uint8Array([
+    0x02,
+    144,
+    0x00,
+    btc.OP.CHECKSEQUENCEVERIFY,
+    btc.OP.DROP,
+    0x20,
+    ...aliceKeyPair.schnorrPublicKey,
+    0xac,
+  ]);
+
+  const scriptBob = new Uint8Array([
+    btc.OP.SHA256,
+    0x20,
+    ...preimage,
+    btc.OP.EQUALVERIFY,
+    0x20,
+    ...bobKeyPair.schnorrPublicKey,
+    0xac,
+  ]);
+
+  const taprootTree = btc.taprootListToTree([
+    {
+      script: scriptAlice,
+      leafVersion: 0xc0,
+    },
+    {
+      script: scriptBob,
+      leafVersion: 0xc0,
+    },
+  ]);
+
+  const taprootCommitment = btc.p2tr(
+    internalKeyPair.schnorrPublicKey,
+    taprootTree,
+    undefined,
+    true
+  );
+  deepStrictEqual(
+    { ...taprootCommitment, leaves: undefined, tapLeafScript: undefined },
+    {
+      type: 'tr',
+      script: hex.decode('5120a5ba0871796eb49fb4caa6bf78e675b9455e2d66e751676420f8381d5dda8951'),
+      address: 'bc1p5kaqsuted66fldx256lh3en4h9z4uttxuagkwepqlqup6hw639gspmmz4d',
+      tweakedPubkey: hex.decode('a5ba0871796eb49fb4caa6bf78e675b9455e2d66e751676420f8381d5dda8951'),
+      tapInternalKey: hex.decode(
+        'f30544d6009c8d8d94f5d030b2e844b1a3ca036255161c479db1cca5b374dd1c'
+      ),
+      tapMerkleRoot: hex.decode('41646f8c1fe2a96ddad7f5471bc4fee7da98794ef8c45a4f4fc6a559d60c9f6b'),
+      leaves: undefined,
+      tapLeafScript: undefined,
+    }
+  );
+});
+
+should('TapRoot export version', () => {
+  const opts = {};
+  const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  // without taproot
+  {
+    const pub = secp256k1.getPublicKey(privKey, true);
+    const tx = new btc.Transaction(opts);
+    for (const inp of TX_TEST_INPUTS) {
+      tx.addInput({
+        ...inp,
+        witnessUtxo: {
+          script: btc.p2wpkh(pub).script,
+          amount: inp.amount,
+        },
+      });
+    }
+    tx.toPSBT(0);
+    throws(() => tx.toPSBT(1));
+    tx.toPSBT(2);
+  }
+  // with taproot
+  {
+    const pubS = secp256k1.schnorr.getPublicKey(privKey);
+    const tx = new btc.Transaction(opts);
+    for (const inp of TX_TEST_INPUTS) {
+      const tr = btc.p2tr(pubS);
+      tx.addInput({
+        ...inp,
+        ...tr,
+        witnessUtxo: {
+          script: tr.script,
+          amount: inp.amount,
+        },
+      });
+    }
+    // As per BIP-371, version 0 can have taproot fields!
+    tx.toPSBT(0);
+    throws(() => tx.toPSBT(1));
+    tx.toPSBT(2);
+  }
+  // requiredHeightLocktime (PSBTv2 only field)
+  {
+    const pubS = secp256k1.schnorr.getPublicKey(privKey);
+    const tx = new btc.Transaction(opts);
+    for (const inp of TX_TEST_INPUTS) {
+      const tr = btc.p2tr(pubS);
+      tx.addInput({
+        ...inp,
+        ...tr,
+        witnessUtxo: {
+          script: tr.script,
+          amount: inp.amount,
+        },
+        requiredHeightLocktime: 1,
+      });
+    }
+    // As per BIP-371, version 0 can have taproot fields!
+    throws(() => tx.toPSBT(0));
+    throws(() => tx.toPSBT(1));
+    tx.toPSBT(2);
+  }
+});
+
+should('big multisig (real)', () => {
+  // https://gist.github.com/AdamISZ/9b2395ddcb43890d9611df99287cfe6b
+  // -> https://www.blockchain.com/explorer/transactions/btc/7393096d97bfee8660f4100ffd61874d62f9a65de9fb6acf740c4c386990ef73
+
+  // ScriptNum in last part
+  deepStrictEqual(hex.encode(btc.Script.encode([998, 'GREATERTHANOREQUAL'])), '02e603a2');
+
+  const pub = hex.decode('1ea539fd851574f6802e6cc0cda3b2bd60afcfca9cd72d9279c5dc8c2054f6b6');
+
+  // Uses different multisig
+  const script = [pub, 'CHECKSIG'];
+  for (let i = 0; i < 998; i++) script.push(pub, 'CHECKSIGADD');
+  script.push(998, 'GREATERTHANOREQUAL');
+
+  const script2 = script.slice(0, -1);
+  script2.push('NUMEQUAL');
+  btc.OutScript.decode(btc.Script.encode(script2));
+
+  const tx = new btc.Transaction({ allowUnknowInput: true });
+  tx.addOutputAddress('bc1q34yl3qzqv4qlxf0gj9tguv23tzh99syawhmekm', 750n);
+
+  const controlBlock = hex.decode(
+    'c11dae61a4a8f841952be3a511502d4f56e889ffa0685aa0098773ea2d4309f624'
+  );
+  const sig = hex.decode(
+    '809edb01f5931cc992763731cda9e983d7e2030a0863352530907490ef2a289721358c386d0b23d82fe78aab1e2f7f3bcf9ae7409bb771c98e7222dc136209f9'
+  );
+
+  const payment = btc.p2tr(pub, { script: btc.Script.encode(script) }, undefined, true);
+  const cb = btc.TaprootControlBlock.decode(controlBlock);
+  tx.addInput({
+    txid: '6c0d4d4c715945b2e495f8878d42db16675f080f53fb84c521261774a0636148',
+    index: 0,
+    witnessUtxo: {
+      script: hex.decode('512056e1005938333d0095cd0b7225e47216417619867bc12ae91c5b61cbc95a315e'),
+      amount: 26000n,
+    },
+    ...payment,
+    tapScriptSig: [[{ pubKey: pub, leafHash: payment.leaves[0].hash }, sig]],
+    sequence: 0,
+  });
+  tx.finalize();
+  deepStrictEqual(tx.id, '7393096d97bfee8660f4100ffd61874d62f9a65de9fb6acf740c4c386990ef73');
+});
+
+should('big multisig (ours)', () => {
+  //return; // too slow, but works
+  // Slow: sign + preimage. We can cache preimage, but sign is more complex
+
   // Limits: p2_ms=20, p2tr_ms/p2tr_ns=999 (stacksize)
   // 999 encode as number support? check with bitcoin core
+  const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
 
   const pkeys = [];
   for (let i = 1; i < 1000; i++) pkeys.push(P.U256BE.encode(i));
 
-  // console.log(
-  //   'WTF',
-  //   JSON.stringify(pkeys.map((i) => hex.encode(secp256k1.schnorr.getPublicKey(i))))
-  // );
+  const pubs = pkeys.map(secp256k1.schnorr.getPublicKey);
+  const spend = btc.p2tr(undefined, btc.p2tr_ms(999, pubs), regtest);
+  const outAddr = btc.p2wpkh(secp256k1.getPublicKey(pkeys[0], true), regtest);
+
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: '3d9955e6d03771e276f7b713734bade9c2c5e3c80d90b4b1da35deaa1c0c9bc6',
+    index: 0,
+    ...spend,
+    witnessUtxo: { script: spend.script, amount: btc.Decimal.decode('1.5') },
+  });
+  tx.addOutputAddress(outAddr.address, '1', regtest);
+  let ts = Date.now();
+  for (const p of pkeys) tx.sign(p);
+  // console.log('SIGN', Date.now() - ts);
+  ts = Date.now();
+  tx.finalize();
+  // console.log('FINALIZE', Date.now() - ts);
+
+  // Verified against regnet
+  //console.log(hex.encode(tx.extract()))
+  deepStrictEqual(tx.id, '2687c4795c995431d934432def1cda8264c95920ce404229ca5c21328d7c9bcc');
 });
 
-should('todododo', () => {
-  // What we need to test && fix bugs?
-  // ? Move input generation for specific output scripts near them
-  //
-  // TODO: don't allow modification of signed fields in inputs/outputs
-  /* 
-  
-  // Check if object doens't have custom constructor (like Uint8Array/Array)
-const isPlainObject = (obj: any) =>
-  Object.prototype.toString.call(obj) === '[object Object]' && obj.constructor === Object;
+should('Signed fields', () => {
+  const opts = {};
+  const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 
-function type<T>(v: T) {
-  if (v instanceof Uint8Array) return 'bytes';
-  if (Array.isArray(v)) return 'array';
-  if (['number', 'string', 'bigint', 'boolean', 'undefined'].includes(typeof v)) return typeof v;
-  if (v === null) return 'null'; // typeof null=object
-  if (isPlainObject(v)) return 'object';
-  throw new Error(`Unknown type=${v}`);
-}
-// Basic structure merge: object = {...old, ...new}, arrays = old.concat(new). other -> replace
-// function merge<T extends PSBTKeyMap>(
-//   psbtEnum: T,
-//   val: PSBTKeyMapKeys<T>,
-//   cur?: PSBTKeyMapKeys<T>
-// ): PSBTKeyMapKeys<T> {
+  const pub = secp256k1.getPublicKey(privKey, true);
 
-// }
-  */
-  // TODO: taprot scriptSig - select best element by size if multiple available
-  // TODO: check for unique output addresses? same as btc, nice to have (but only if can disable)
-  // TODO: taprot+bip32?
-  // TODO: rawtr descriptor support?
+  const out = btc.p2pkh(pub);
+  const tx = new btc.Transaction(opts);
+  const inp = TX_TEST_INPUTS[0];
+  tx.addInput(inp);
+  tx.updateInput(0, {
+    witnessUtxo: {
+      script: btc.p2wpkh(pub).script,
+      amount: inp.amount,
+    },
+  });
+  const fingerprint = 12345;
+  tx.updateInput(0, {
+    bip32Derivation: [
+      [
+        '03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc',
+        { fingerprint: fingerprint, path: [0, 1, 2] },
+      ],
+    ],
+  });
+  tx.addOutputAddress(out.address, 123n);
+  tx.updateOutput(0, { amount: 122n });
+  tx.sign(privKey);
+  // At this point tx is signed
+
+  // Same input -> no issues
+  tx.updateInput(0, {
+    witnessUtxo: {
+      script: btc.p2wpkh(pub).script,
+      amount: inp.amount,
+    },
+  });
+
+  throws(
+    () =>
+      tx.updateInput(0, {
+        witnessUtxo: {
+          script: btc.p2wpkh(pub).script,
+          amount: inp.amount + 1n,
+        },
+      }),
+    'modify signed input'
+  );
+  // Same works
+  tx.updateInput(0, {
+    bip32Derivation: [
+      [
+        '03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc',
+        { fingerprint: fingerprint, path: [0, 1, 2] },
+      ],
+    ],
+  });
+
+  throws(() =>
+    tx.updateInput(0, {
+      bip32Derivation: [
+        ['03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc', undefined],
+      ],
+    })
+  );
+
+  // Addition of new values is still works
+  tx.updateInput(0, {
+    bip32Derivation: [
+      [
+        '03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02db',
+        { fingerprint: fingerprint, path: [0, 1, 2] },
+      ],
+    ],
+  });
+
+  tx.updateOutput(0, { amount: 122n }); // Same
+  throws(() => tx.updateOutput(0, { amount: 121n }), 'modify signed output');
+
+  // Remove signatures
+  tx.updateInput(0, {
+    partialSig: undefined,
+  });
+
+  tx.updateInput(0, {
+    witnessUtxo: {
+      script: btc.p2wpkh(pub).script,
+      amount: inp.amount + 1n,
+    },
+  });
+  tx.updateInput(0, {
+    bip32Derivation: [
+      ['03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc', undefined],
+    ],
+  });
+  tx.updateInput(0, {
+    bip32Derivation: [
+      [
+        '03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02db',
+        { fingerprint: fingerprint, path: [0, 1, 2] },
+      ],
+    ],
+  });
+  tx.updateOutput(0, { amount: 121n });
 });
 
 // ESM is broken.
