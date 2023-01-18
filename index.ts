@@ -105,11 +105,25 @@ function uniqPubkey(pubkeys: Bytes[]) {
   }
 }
 
-export const NETWORK = {
+export type Network = {
+  bech32: string;
+  pubKeyHash: number;
+  scriptHash: number;
+  wif: number;
+}
+
+export const NETWORK: Network = {
   bech32: 'bc',
   pubKeyHash: 0x00,
   scriptHash: 0x05,
   wif: 0x80,
+};
+
+export const TEST_NETWORK: Network = {
+  bech32: "tb",
+  pubKeyHash: 0x6f,
+  scriptHash: 0xc4,
+  wif: 0xef,
 };
 
 export const PRECISION = 8;
