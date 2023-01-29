@@ -1,13 +1,12 @@
 /*! micro-btc-signer - MIT License (c) 2022 Paul Miller (paulmillr.com) */
-import { secp256k1 as secp, schnorr as secp_schnorr } from '@noble/curves/secp256k1';
-import * as base from '@scure/base';
+import { secp256k1 as _secp, schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
-import { hmac } from '@noble/hashes/hmac';
 import { ripemd160 } from '@noble/hashes/ripemd160';
+import * as base from '@scure/base';
 import * as P from 'micro-packed';
-import { ProjPointType } from '@noble/curves/abstract/weierstrass';
-import { numberToBytesBE, bytesToNumberBE } from '@noble/curves/abstract/utils';
-import { mod } from '@noble/curves/abstract/modular';
+
+const { ProjectivePoint: ProjPoint, sign: _signECDSA, getPublicKey: _pubECDSA } = _secp;
+const CURVE_ORDER = _secp.CURVE.n;
 
 // Basic utility types
 export type ExtendType<T, E> = {
@@ -20,29 +19,25 @@ export type Bytes = Uint8Array;
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
 const def = <T>(value: T | undefined, def: T) => (value === undefined ? def : value);
 const isBytes = (b: unknown): b is Bytes => b instanceof Uint8Array;
-const toRawX = (p: ProjPointType<bigint>) => p.toRawBytes(true).slice(1);
-
 const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
 const concat = P.concatBytes;
 // Make base58check work
 export const base58check = base.base58check(sha256);
-const taggedHash = secp_schnorr.utils.taggedHash;
 
 enum PubT {
   ecdsa,
   schnorr,
 }
-const point_from_schnorr_hex = (pub: Bytes) => secp_schnorr.utils.lift_x(bytesToNumberBE(pub));
 function validatePubkey(pub: Bytes, type: PubT): Bytes {
   const len = pub.length;
   if (type === PubT.ecdsa) {
     if (len === 32) throw new Error('Expected non-Schnorr key');
-    secp.ProjectivePoint.fromHex(pub); // does assertValidity
+    ProjPoint.fromHex(pub); // does assertValidity
     return pub;
   } else if (type === PubT.schnorr) {
     if (len !== 32) throw new Error('Expected 32-byte Schnorr key');
-    point_from_schnorr_hex(pub);
+    schnorr.utils.lift_x(schnorr.utils.bytesToNumberBE(pub));
     return pub;
   } else {
     throw new Error('Unknown key type');
@@ -61,34 +56,46 @@ function isValidPubkey(pub: Bytes, type: PubT): boolean {
 // noble/secp256k1 does not support the feature: it is not used outside of BTC.
 // We implement it manually, because in BTC it's common.
 // Not best way, but closest to bitcoin implementation (easier to check)
-const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < secp.CURVE.n / 2n;
+const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < CURVE_ORDER / 2n;
 function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
-  let sig = secp.sign(hash, privateKey);
+  let sig = _signECDSA(hash, privateKey);
   if (lowR && !hasLowR(sig)) {
     const extraEntropy = new Uint8Array(32);
     for (let cnt = 0; cnt < Number.MAX_SAFE_INTEGER; cnt++) {
       extraEntropy.set(P.U32LE.encode(cnt));
-      sig = secp.sign(hash, privateKey, { extraEntropy });
+      sig = _signECDSA(hash, privateKey, { extraEntropy });
       if (hasLowR(sig)) break;
     }
   }
   return sig.toDERRawBytes();
 }
 
-export function taprootTweakPrivKey(privKey: Uint8Array, merkleRoot = new Uint8Array()) {
-  const { n } = secp.CURVE;
-  const priv = secp.utils._normalizePrivateKey(privKey);
-  const point = secp.ProjectivePoint.fromPrivateKey(priv);
-  const tweak = taggedHash('TapTweak', toRawX(point), merkleRoot);
-  const privWithProperY = point.hasEvenY() ? priv : n - priv;
-  const tweaked = mod(privWithProperY + secp.utils._normalizePrivateKey(tweak), n);
-  return numberToBytesBE(tweaked, 32);
+function tapTweak(a: Bytes, b: Bytes): bigint {
+  const u = schnorr.utils;
+  const t = u.taggedHash('TapTweak', a, b);
+  const tn = u.bytesToNumberBE(t);
+  if (tn >= CURVE_ORDER) throw new Error('tweak higher than curve order');
+  return tn;
 }
 
-export function taprootTweakPubkey(pubKey: Uint8Array, h: Uint8Array): [Uint8Array, boolean] {
-  const tweak = taggedHash('TapTweak', pubKey, h);
-  const tweaked = point_from_schnorr_hex(pubKey).add(secp.ProjectivePoint.fromPrivateKey(tweak));
-  return [toRawX(tweaked), !tweaked.hasEvenY()];
+export function taprootTweakPrivKey(privKey: Uint8Array, merkleRoot = new Uint8Array()) {
+  const u = schnorr.utils;
+  // seckey0 = int_from_bytes(seckey0); P = point_mul(G, seckey0)
+  // seckey = seckey0 if has_even_y(P) else SECP256K1_ORDER - seckey0
+  const { scalar: seckey, bytes } = u.getExtendedPublicKey(privKey);
+  // t = int_from_bytes(tagged_hash("TapTweak", bytes_from_int(x(P)) + h)); >= SECP256K1_ORDER check
+  const t = tapTweak(bytes, merkleRoot);
+  // bytes_from_int((seckey + t) % SECP256K1_ORDER)
+  return u.numberToBytesBE(u.mod(seckey + t, CURVE_ORDER), 32);
+}
+
+export function taprootTweakPubkey(pubKey: Uint8Array, h: Uint8Array): [Uint8Array, number] {
+  const u = schnorr.utils;
+  const t = tapTweak(pubKey, h); // t = int_from_bytes(tagged_hash("TapTweak", pubkey + h))
+  const P = u.lift_x(u.bytesToNumberBE(pubKey)); // P = lift_x(int_from_bytes(pubkey))
+  const Q = P.add(ProjPoint.fromPrivateKey(t)); // Q = point_add(P, point_mul(G, t))
+  const parity = Q.hasEvenY() ? 0 : 1; // 0 if has_even_y(Q) else 1
+  return [u.pointToBytes(Q), parity]; // bytes_from_int(x(Q))
 }
 
 // Can be 33 or 64 bytes
@@ -1107,7 +1114,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
   // We cannot swap left/right here, since it will change structure of tree
   let [lH, rH] = [left.hash, right.hash];
   if (cmp(rH, lH) === -1) [lH, rH] = [rH, lH];
-  return { type: 'branch', left, right, hash: taggedHash('TapBranch', lH, rH) };
+  return { type: 'branch', left, right, hash: schnorr.utils.taggedHash('TapBranch', lH, rH) };
 }
 type TaprootLeaf = {
   type: 'leaf';
@@ -1153,7 +1160,7 @@ function taprootWalkTree(tree: HashedTreeWithPath): TaprootLeaf[] {
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
 // Also used by bitcoin-core and bitcoinjs-lib
-export const TAPROOT_UNSPENDABLE_KEY = sha256(secp.ProjectivePoint.BASE.toRawBytes(false));
+export const TAPROOT_UNSPENDABLE_KEY = sha256(ProjPoint.BASE.toRawBytes(false));
 
 export type P2TROut = P2Ret & {
   tweakedPubkey: Uint8Array;
@@ -1186,7 +1193,7 @@ export function p2tr(
     leaves = taprootWalkTree(hashedTree).map((l) => ({
       ...l,
       controlBlock: TaprootControlBlock.encode({
-        version: (l.version || TAP_LEAF_VERSION) + +parity,
+        version: (l.version || TAP_LEAF_VERSION) + parity,
         internalKey: l.tapInternalKey || pubKey,
         merklePath: l.path,
       }),
@@ -1545,7 +1552,7 @@ function outputBeforeSign(i: TransactionOutput): TransactionOutputRequired {
 
 export const TAP_LEAF_VERSION = 0xc0;
 export const tapLeafHash = (script: Bytes, version = TAP_LEAF_VERSION) =>
-  taggedHash('TapLeaf', new Uint8Array([version]), VarBytes.encode(script));
+  schnorr.utils.taggedHash('TapLeaf', new Uint8Array([version]), VarBytes.encode(script));
 
 function getTaprootKeys(
   privKey: Bytes,
@@ -1555,7 +1562,7 @@ function getTaprootKeys(
 ) {
   if (P.equalBytes(internalKey, pubKey)) {
     privKey = taprootTweakPrivKey(privKey, merkleRoot);
-    pubKey = secp_schnorr.getPublicKey(privKey);
+    pubKey = schnorr.getPublicKey(privKey);
   }
   return { privKey, pubKey };
 }
@@ -2106,7 +2113,7 @@ export class Transaction {
       out.push(idx < outputs.length ? sha256(RawOutput.encode(outputs[idx])) : EMPTY32);
     if (leafScript)
       out.push(tapLeafHash(leafScript, leafVer), P.U8.encode(0), P.I32LE.encode(codeSeparator));
-    return taggedHash('TapSighash', ...out);
+    return schnorr.utils.taggedHash('TapSighash', ...out);
   }
   // Utils for sign/finalize
   // Used pretty often, should be fast
@@ -2233,7 +2240,7 @@ export class Transaction {
       const prevOutScript = prevOuts.map((i) => i.script);
       const amount = prevOuts.map((i) => i.amount);
       let signed = false;
-      let schnorrPub = secp_schnorr.getPublicKey(privateKey);
+      let schnorrPub = schnorr.getPublicKey(privateKey);
       let merkleRoot = input.tapMerkleRoot || P.EMPTY;
       if (input.tapInternalKey) {
         // internal + tweak = tweaked key
@@ -2250,7 +2257,7 @@ export class Transaction {
         if (P.equalBytes(taprootPubKey, pubKey)) {
           const hash = this.preimageWitnessV1(idx, prevOutScript, sighash, amount);
           const sig = concat(
-            secp_schnorr.sign(hash, privKey, _auxRand),
+            schnorr.sign(hash, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
           this.updateInput(idx, { tapKeySig: sig }, true);
@@ -2283,7 +2290,7 @@ export class Transaction {
             ver
           );
           const sig = concat(
-            secp_schnorr.sign(msg, privKey, _auxRand),
+            schnorr.sign(msg, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
           this.updateInput(
@@ -2298,7 +2305,7 @@ export class Transaction {
       return true;
     } else {
       // only compressed keys are supported for now
-      const pubKey = secp.getPublicKey(privateKey, true);
+      const pubKey = _pubECDSA(privateKey);
       // TODO: replace with explicit checks
       // Check if script has public key or its has inside
       let hasPubkey = false;
@@ -2521,9 +2528,9 @@ export class Transaction {
 // Simple pubkey address, without complex scripts
 export function getAddress(type: 'pkh' | 'wpkh' | 'tr', privKey: Bytes, network = NETWORK) {
   if (type === 'tr') {
-    return p2tr(secp_schnorr.getPublicKey(privKey), undefined, network).address;
+    return p2tr(schnorr.getPublicKey(privKey), undefined, network).address;
   }
-  const pubKey = secp.getPublicKey(privKey, true);
+  const pubKey = _pubECDSA(privKey);
   if (type === 'pkh') return p2pkh(pubKey, network).address;
   if (type === 'wpkh') return p2wpkh(pubKey, network).address;
   throw new Error(`getAddress: unknown type=${type}`);
