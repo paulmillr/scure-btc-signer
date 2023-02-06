@@ -1277,7 +1277,7 @@ should('Finalize negative fee', () => {
         },
       });
     }
-    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], Number(tx.fee) + 1);
+    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], tx.fee + 1n);
     tx.sign(privKey);
     //testClone(tx);
     throws(() => tx.finalize());
@@ -1294,7 +1294,7 @@ should('Finalize negative fee', () => {
         },
       });
     }
-    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], Number(tx.fee));
+    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], (tx.fee));
     tx.sign(privKey);
     tx.finalize();
   }

@@ -124,7 +124,7 @@ export const NETWORK = {
 };
 
 export const TEST_NETWORK: typeof NETWORK = {
-  bech32: "tb",
+  bech32: 'tb',
   pubKeyHash: 0x6f,
   scriptHash: 0xc4,
   wif: 0xef,
@@ -1944,9 +1944,8 @@ export class Transaction {
     allowedFields?: (keyof typeof PSBTOutput)[]
   ): TransactionOutput {
     let { amount, script } = o;
-    if (typeof amount === 'string') amount = Decimal.decode(amount);
-    if (typeof amount === 'number') amount = BigInt(amount);
     if (amount === undefined) amount = cur?.amount;
+    if (typeof amount !== 'bigint') throw new Error('amount must be bigint sats');
     if (typeof script === 'string') script = base.hex.decode(script);
     if (script === undefined) script = cur?.script;
     let res: PSBTKeyMapKeys<typeof PSBTOutput> = { ...cur, ...o, amount, script };
@@ -1980,11 +1979,8 @@ export class Transaction {
     }
     this.outputs[idx] = this.normalizeOutput(output, this.outputs[idx], allowedFields);
   }
-  addOutputAddress(address: string, amount: string | bigint, network = NETWORK): number {
-    return this.addOutput({
-      script: OutScript.encode(Address(network).decode(address)),
-      amount: typeof amount === 'string' ? Decimal.decode(amount) : amount,
-    });
+  addOutputAddress(address: string, amount: bigint, network = NETWORK): number {
+    return this.addOutput({ script: OutScript.encode(Address(network).decode(address)), amount });
   }
   // Utils
   get fee(): bigint {

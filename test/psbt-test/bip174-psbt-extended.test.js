@@ -42,7 +42,7 @@ for (let i = 0; i < rpcPSBT.creator.length; i++) {
     for (const i of t.inputs) tx.addInput({ txid: hex.decode(i.txid), index: i.vout });
     for (const o of t.outputs) {
       const [k, v] = Object.entries(o)[0];
-      tx.addOutputAddress(k, '' + v, regtest);
+      tx.addOutputAddress(k, btc.Decimal.decode(v.toString()), regtest);
     }
     deepStrictEqual(base64.encode(tx.toPSBT()), t.result);
   });
