@@ -123,6 +123,13 @@ export const NETWORK = {
   wif: 0x80,
 };
 
+export const TEST_NETWORK: typeof NETWORK = {
+  bech32: "tb",
+  pubKeyHash: 0x6f,
+  scriptHash: 0xc4,
+  wif: 0xef,
+};
+
 export const PRECISION = 8;
 export const DEFAULT_VERSION = 2;
 export const DEFAULT_LOCKTIME = 0;
