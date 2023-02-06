@@ -46,7 +46,8 @@ function validatePubkey(pub: Bytes, type: PubT): Bytes {
 
 function isValidPubkey(pub: Bytes, type: PubT): boolean {
   try {
-    return !!validatePubkey(pub, type);
+    validatePubkey(pub, type);
+    return true;
   } catch (e) {
     return false;
   }
