@@ -138,24 +138,13 @@ export const DEFAULT_SEQUENCE = 4294967295;
 const EMPTY32 = new Uint8Array(32);
 // Utils
 export const Decimal = P.coders.decimal(PRECISION);
-type CmpType = string | number | bigint | boolean | Bytes | undefined;
-export function cmp(a: CmpType, b: CmpType): number {
-  if (isBytes(a) && isBytes(b)) {
-    // -1 -> a<b, 0 -> a==b, 1 -> a>b
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++) if (a[i] != b[i]) return Math.sign(a[i] - b[i]);
-    return Math.sign(a.length - b.length);
-  } else if (isBytes(a) || isBytes(b)) throw new Error(`cmp: wrong values a=${a} b=${b}`);
-  if (
-    (typeof a === 'bigint' && typeof b === 'number') ||
-    (typeof a === 'number' && typeof b === 'bigint')
-  ) {
-    a = BigInt(a);
-    b = BigInt(b);
-  }
-  if (a === undefined || b === undefined) throw new Error(`cmp: wrong values a=${a} b=${b}`);
-  // Default js comparasion
-  return Number(a > b) - Number(a < b);
+// Exported for tests, internal method
+export function _cmpBytes(a: Bytes, b: Bytes) {
+  if (!isBytes(a) || !isBytes(b)) throw new Error(`cmp: wrong type a=${typeof a} b=${typeof b}`);
+  // -1 -> a<b, 0 -> a==b, 1 -> a>b
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) if (a[i] != b[i]) return Math.sign(a[i] - b[i]);
+  return Math.sign(a.length - b.length);
 }
 
 // Coders
@@ -582,12 +571,12 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
             ]
           );
           // sort by keys
-          kv.sort((a, b) => cmp(a[0], b[0]));
+          kv.sort((a, b) => _cmpBytes(a[0], b[0]));
           for (const [key, value] of kv) out.push({ key: { key, type }, value });
         }
       }
       if (value.unknown) {
-        value.unknown.sort((a: any, b: any) => cmp(a[0], b[0]));
+        value.unknown.sort((a, b) => _cmpBytes(a[0].key, b[0].key));
         for (const [k, v] of value.unknown) out.push({ key: k, value: v });
       }
       PSBTKeyPair.encodeStream(w, out);
@@ -962,12 +951,15 @@ const OutSH: base.Coder<OptScript, OutSHType | undefined> = {
     to.type === 'sh' ? ['HASH160', to.hash, 'EQUAL'] : undefined,
 };
 export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
-  const hash = hash160(child.script);
+  // It is already tested inside noble-hashes and checkScript
+  const cs = child.script;
+  if (!isBytes(cs)) throw new Error(`Wrong script: ${typeof child.script}, expected Uint8Array`);
+  const hash = hash160(cs);
   const script = OutScript.encode({ type: 'sh', hash });
-  checkScript(script, child.script, child.witnessScript);
+  checkScript(script, cs, child.witnessScript);
   const res: P2Ret = {
     type: 'sh',
-    redeemScript: child.script,
+    redeemScript: cs,
     script: OutScript.encode({ type: 'sh', hash }),
     address: Address(network).encode({ type: 'sh', hash }),
   };
@@ -985,12 +977,14 @@ const OutWSH: base.Coder<OptScript, OutWSHType | undefined> = {
   decode: (to: OutWSHType): OptScript => (to.type === 'wsh' ? [0, to.hash] : undefined),
 };
 export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
-  const hash = sha256(child.script);
+  const cs = child.script;
+  if (!isBytes(cs)) throw new Error(`Wrong script: ${typeof cs}, expected Uint8Array`);
+  const hash = sha256(cs);
   const script = OutScript.encode({ type: 'wsh', hash });
-  checkScript(script, undefined, child.script);
+  checkScript(script, undefined, cs);
   return {
     type: 'wsh',
-    witnessScript: child.script,
+    witnessScript: cs,
     script: OutScript.encode({ type: 'wsh', hash }),
     address: Address(network).encode({ type: 'wsh', hash }),
   };
@@ -1121,7 +1115,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
   const right = taprootHashTree(tree[1], allowUnknowOutput);
   // We cannot swap left/right here, since it will change structure of tree
   let [lH, rH] = [left.hash, right.hash];
-  if (cmp(rH, lH) === -1) [lH, rH] = [rH, lH];
+  if (_cmpBytes(rH, lH) === -1) [lH, rH] = [rH, lH];
   return { type: 'branch', left, right, hash: schnorr.utils.taggedHash('TapBranch', lH, rH) };
 }
 type TaprootLeaf = {
@@ -1507,7 +1501,7 @@ function unpackSighash(hashType: number) {
   };
 }
 
-export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(cmp);
+export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(_cmpBytes);
 
 export type TransactionInput = P.UnwrapCoder<typeof PSBTInputCoder>;
 // User facing API with decoders
