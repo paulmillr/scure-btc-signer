@@ -2,7 +2,8 @@
 import { secp256k1 as _secp, schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { ripemd160 } from '@noble/hashes/ripemd160';
-import * as base from '@scure/base';
+import { hex, base58, base58check as _b58, bech32, bech32m } from '@scure/base';
+import type { Coder } from '@scure/base';
 import * as P from 'micro-packed';
 
 const { ProjectivePoint: ProjPoint, sign: _signECDSA, getPublicKey: _pubECDSA } = _secp;
@@ -23,7 +24,7 @@ const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
 const concat = P.concatBytes;
 // Make base58check work
-export const base58check = base.base58check(sha256);
+export const base58check = _b58(sha256);
 
 enum PubT {
   ecdsa,
@@ -111,8 +112,8 @@ const SignatureSchnorr = P.validate(P.bytes(null), (sig) => {
 function uniqPubkey(pubkeys: Bytes[]) {
   const map: Record<string, boolean> = {};
   for (const pub of pubkeys) {
-    const key = base.hex.encode(pub);
-    if (map[key]) throw new Error(`Multisig: non-uniq pubkey: ${pubkeys.map(base.hex.encode)}`);
+    const key = hex.encode(pub);
+    if (map[key]) throw new Error(`Multisig: non-uniq pubkey: ${pubkeys.map(hex.encode)}`);
     map[key] = true;
   }
 }
@@ -594,9 +595,7 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
           name = _name;
           if (!kc && key.length) {
             throw new Error(
-              `PSBT: Non-empty key for ${name} (key=${base.hex.encode(key)} value=${base.hex.encode(
-                value
-              )}`
+              `PSBT: Non-empty key for ${name} (key=${hex.encode(key)} value=${hex.encode(value)}`
             );
           }
           key = kc ? kc.decode(key) : undefined;
@@ -698,7 +697,7 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     const outputs = i.nonWitnessUtxo.outputs;
     if (outputs.length - 1 < i.index) throw new Error('nonWitnessUtxo: incorect output index');
     const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo));
-    const txid = base.hex.encode(i.txid);
+    const txid = hex.encode(i.txid);
     if (tx.id !== txid) throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
   }
   return i;
@@ -831,8 +830,8 @@ function mergeKeyMap<T extends PSBTKeyMap>(
         newKV = newKV.map((val: _KV): _KV => {
           if (val.length !== 2) throw new Error(`keyMap(${k}): KV pairs should be [k, v][]`);
           return [
-            typeof val[0] === 'string' ? kC.decode(base.hex.decode(val[0])) : val[0],
-            typeof val[1] === 'string' ? vC.decode(base.hex.decode(val[1])) : val[1],
+            typeof val[0] === 'string' ? kC.decode(hex.decode(val[0])) : val[0],
+            typeof val[1] === 'string' ? vC.decode(hex.decode(val[1])) : val[1],
           ];
         });
         const map: Record<string, _KV> = {};
@@ -841,19 +840,19 @@ function mergeKeyMap<T extends PSBTKeyMap>(
             map[kStr] = [k, v];
             return;
           }
-          const oldVal = base.hex.encode(vC.encode(map[kStr][1]));
-          const newVal = base.hex.encode(vC.encode(v));
+          const oldVal = hex.encode(vC.encode(map[kStr][1]));
+          const newVal = hex.encode(vC.encode(v));
           if (oldVal !== newVal)
             throw new Error(
               `keyMap(${key as string}): same key=${kStr} oldVal=${oldVal} newVal=${newVal}`
             );
         };
         for (const [k, v] of oldKV) {
-          const kStr = base.hex.encode(kC.encode(k));
+          const kStr = hex.encode(kC.encode(k));
           add(kStr, k, v);
         }
         for (const [k, v] of newKV) {
-          const kStr = base.hex.encode(kC.encode(k));
+          const kStr = hex.encode(kC.encode(k));
           // undefined removes previous value
           if (v === undefined) {
             if (cannotChange) throw new Error(`Cannot remove signed field=${key as string}/${k}`);
@@ -863,7 +862,7 @@ function mergeKeyMap<T extends PSBTKeyMap>(
         (res as any)[key] = Object.values(map) as _KV[];
       }
     } else if (typeof res[k] === 'string') {
-      res[k] = vC.decode(base.hex.decode(res[k] as string));
+      res[k] = vC.decode(hex.decode(res[k] as string));
     } else if (cannotChange && k in val && cur && cur[k] !== undefined) {
       if (!P.equalBytes(vC.encode(val[k]), vC.encode(cur[k])))
         throw new Error(`Cannot change signed field=${k}`);
@@ -897,7 +896,7 @@ type P2Ret = {
 // Public Key (P2PK)
 type OutPKType = { type: 'pk'; pubkey: Bytes };
 type OptScript = ScriptType | undefined;
-const OutPK: base.Coder<OptScript, OutPKType | undefined> = {
+const OutPK: Coder<OptScript, OutPKType | undefined> = {
   encode(from: ScriptType): OutPKType | undefined {
     if (
       from.length !== 2 ||
@@ -920,7 +919,7 @@ export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
 
 // Publick Key Hash (P2PKH)
 type OutPKHType = { type: 'pkh'; hash: Bytes };
-const OutPKH: base.Coder<OptScript, OutPKHType | undefined> = {
+const OutPKH: Coder<OptScript, OutPKHType | undefined> = {
   encode(from: ScriptType): OutPKHType | undefined {
     if (from.length !== 5 || from[0] !== 'DUP' || from[1] !== 'HASH160' || !isBytes(from[2]))
       return;
@@ -941,7 +940,7 @@ export const p2pkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
 };
 // Script Hash (P2SH)
 type OutSHType = { type: 'sh'; hash: Bytes };
-const OutSH: base.Coder<OptScript, OutSHType | undefined> = {
+const OutSH: Coder<OptScript, OutSHType | undefined> = {
   encode(from: ScriptType): OutSHType | undefined {
     if (from.length !== 3 || from[0] !== 'HASH160' || !isBytes(from[1]) || from[2] !== 'EQUAL')
       return;
@@ -968,7 +967,7 @@ export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
 };
 // Witness Script Hash (P2WSH)
 type OutWSHType = { type: 'wsh'; hash: Bytes };
-const OutWSH: base.Coder<OptScript, OutWSHType | undefined> = {
+const OutWSH: Coder<OptScript, OutWSHType | undefined> = {
   encode(from: ScriptType): OutWSHType | undefined {
     if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
     if (from[1].length !== 32) return;
@@ -991,7 +990,7 @@ export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
 };
 // Witness Public Key Hash (P2WPKH)
 type OutWPKHType = { type: 'wpkh'; hash: Bytes };
-const OutWPKH: base.Coder<OptScript, OutWPKHType | undefined> = {
+const OutWPKH: Coder<OptScript, OutWPKHType | undefined> = {
   encode(from: ScriptType): OutWPKHType | undefined {
     if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
     if (from[1].length !== 20) return;
@@ -1011,7 +1010,7 @@ export const p2wpkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
 };
 // Multisig (P2MS)
 type OutMSType = { type: 'ms'; pubkeys: Bytes[]; m: number };
-const OutMS: base.Coder<OptScript, OutMSType | undefined> = {
+const OutMS: Coder<OptScript, OutMSType | undefined> = {
   encode(from: ScriptType): OutMSType | undefined {
     const last = from.length - 1;
     if (from[last] !== 'CHECKMULTISIG') return;
@@ -1033,7 +1032,7 @@ export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2R
 };
 // Taproot (P2TR)
 type OutTRType = { type: 'tr'; pubkey: Bytes };
-const OutTR: base.Coder<OptScript, OutTRType | undefined> = {
+const OutTR: Coder<OptScript, OutTRType | undefined> = {
   encode(from: ScriptType): OutTRType | undefined {
     if (from.length !== 2 || from[0] !== 1 || !isBytes(from[1])) return;
     return { type: 'tr', pubkey: from[1] };
@@ -1095,7 +1094,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
     // Just to be sure that it is spendable
     if (tapInternalKey && P.equalBytes(tapInternalKey, TAPROOT_UNSPENDABLE_KEY))
       throw new Error('P2TR: tapRoot leafScript cannot have unspendble key');
-    const script = typeof leafScript === 'string' ? base.hex.decode(leafScript) : leafScript;
+    const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
     if (!isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
     checkTaprootScript(script, allowUnknowOutput);
     return {
@@ -1184,7 +1183,7 @@ export function p2tr(
   if (!internalPubKey && !tree) throw new Error('p2tr: should have pubKey or scriptTree (or both)');
   const pubKey =
     typeof internalPubKey === 'string'
-      ? base.hex.decode(internalPubKey)
+      ? hex.decode(internalPubKey)
       : internalPubKey || TAPROOT_UNSPENDABLE_KEY;
   if (!isValidPubkey(pubKey, PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
   let hashedTree = tree ? taprootAddPath(taprootHashTree(tree, allowUnknowOutput)) : undefined;
@@ -1226,7 +1225,7 @@ export function p2tr(
 
 // Taproot N-of-N multisig (P2TR_NS)
 type OutTRNSType = { type: 'tr_ns'; pubkeys: Bytes[] };
-const OutTRNS: base.Coder<OptScript, OutTRNSType | undefined> = {
+const OutTRNS: Coder<OptScript, OutTRNSType | undefined> = {
   encode(from: ScriptType): OutTRNSType | undefined {
     const last = from.length - 1;
     if (from[last] !== 'CHECKSIG') return;
@@ -1298,7 +1297,7 @@ export const p2tr_pk = (pubkey: Bytes): P2Ret => p2tr_ns(1, [pubkey], undefined)
 
 // Taproot M-of-N Multisig (P2TR_MS)
 type OutTRMSType = { type: 'tr_ms'; pubkeys: Bytes[]; m: number };
-const OutTRMS: base.Coder<OptScript, OutTRMSType | undefined> = {
+const OutTRMS: Coder<OptScript, OutTRMSType | undefined> = {
   encode(from: ScriptType): OutTRMSType | undefined {
     const last = from.length - 1;
     if (from[last] !== 'NUMEQUAL' || from[1] !== 'CHECKSIG') return;
@@ -1334,7 +1333,7 @@ export function p2tr_ms(m: number, pubkeys: Bytes[], allowSamePubkeys = false) {
 }
 // Uknown output type
 type OutUnknownType = { type: 'unknown'; script: Bytes };
-const OutUnknown: base.Coder<OptScript, OutUnknownType | undefined> = {
+const OutUnknown: Coder<OptScript, OutUnknownType | undefined> = {
   encode(from: ScriptType): OutUnknownType | undefined {
     return { type: 'unknown', script: Script.encode(from) };
   },
@@ -1404,7 +1403,7 @@ function validateWitness(version: number, data: Bytes) {
 
 export function programToWitness(version: number, data: Bytes, network = NETWORK) {
   validateWitness(version, data);
-  const coder = version === 0 ? base.bech32 : base.bech32m;
+  const coder = version === 0 ? bech32 : bech32m;
   return coder.encode(network.bech32, [version].concat(coder.toWords(data)));
 }
 
@@ -1412,7 +1411,7 @@ function formatKey(hashed: Bytes, prefix: number[]): string {
   return base58check.encode(concat(Uint8Array.from(prefix), hashed));
 }
 
-export function WIF(network = NETWORK): base.Coder<Bytes, string> {
+export function WIF(network = NETWORK): Coder<Bytes, string> {
   return {
     encode(privKey: Bytes) {
       const compressed = concat(privKey, new Uint8Array([0x01]));
@@ -1448,33 +1447,33 @@ export function Address(network = NETWORK) {
       if (network.bech32 && address.toLowerCase().startsWith(network.bech32)) {
         let res;
         try {
-          res = base.bech32.decode(address);
+          res = bech32.decode(address);
           if (res.words[0] !== 0) throw new Error(`bech32: wrong version=${res.words[0]}`);
         } catch (_) {
           // Starting from version 1 it is decoded as bech32m
-          res = base.bech32m.decode(address);
+          res = bech32m.decode(address);
           if (res.words[0] === 0) throw new Error(`bech32m: wrong version=${res.words[0]}`);
         }
         if (res.prefix !== network.bech32) throw new Error(`wrong bech32 prefix=${res.prefix}`);
         const [version, ...program] = res.words;
-        const data = base.bech32.fromWords(program);
+        const data = bech32.fromWords(program);
         validateWitness(version, data);
         if (version === 0 && data.length === 32) return { type: 'wsh', hash: data };
         else if (version === 0 && data.length === 20) return { type: 'wpkh', hash: data };
         else if (version === 1 && data.length === 32) return { type: 'tr', pubkey: data };
         else throw new Error('Unkown witness program');
       }
-      const data = base.base58.decode(address);
+      const data = base58.decode(address);
       if (data.length !== 25) throw new Error('Invalid base58 address');
       // Pay To Public Key Hash
       if (data[0] === network.pubKeyHash) {
-        const bytes = base.base58.decode(address);
+        const bytes = base58.decode(address);
         return { type: 'pkh', hash: bytes.slice(1, bytes.length - 4) };
       } else if (data[0] === network.scriptHash) {
-        const bytes = base.base58.decode(address);
+        const bytes = base58.decode(address);
         return {
           type: 'sh',
-          hash: base.base58.decode(address).slice(1, bytes.length - 4),
+          hash: base58.decode(address).slice(1, bytes.length - 4),
         };
       }
       throw new Error(`Invalid address prefix=${data[0]}`);
@@ -1867,16 +1866,16 @@ export class Transaction {
     return this.toBytes(false, false);
   }
   get hex() {
-    return base.hex.encode(this.toBytes(true, this.hasWitnesses));
+    return hex.encode(this.toBytes(true, this.hasWitnesses));
   }
 
   get hash() {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
-    return base.hex.encode(sha256x2(this.toBytes(true)));
+    return hex.encode(sha256x2(this.toBytes(true)));
   }
   get id() {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
-    return base.hex.encode(sha256x2(this.toBytes(true)).reverse());
+    return hex.encode(sha256x2(this.toBytes(true)).reverse());
   }
   // Input stuff
   private checkInputIdx(idx: number) {
@@ -1892,10 +1891,10 @@ export class Transaction {
     let { nonWitnessUtxo, txid } = i;
     // String support for common fields. We usually prefer Uint8Array to avoid errors (like hex looking string accidentally passed),
     // however in case of nonWitnessUtxo it is better to expect string, since constructing this complex object will be difficult for user
-    if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = base.hex.decode(nonWitnessUtxo);
+    if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = hex.decode(nonWitnessUtxo);
     if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
     if (nonWitnessUtxo === undefined) nonWitnessUtxo = cur?.nonWitnessUtxo;
-    if (typeof txid === 'string') txid = base.hex.decode(txid);
+    if (typeof txid === 'string') txid = hex.decode(txid);
     if (txid === undefined) txid = cur?.txid;
     let res: PSBTKeyMapKeys<typeof PSBTInput> = { ...cur, ...i, nonWitnessUtxo, txid };
     if (res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
@@ -1941,7 +1940,7 @@ export class Transaction {
     let { amount, script } = o;
     if (amount === undefined) amount = cur?.amount;
     if (typeof amount !== 'bigint') throw new Error('amount must be bigint sats');
-    if (typeof script === 'string') script = base.hex.decode(script);
+    if (typeof script === 'string') script = hex.decode(script);
     if (script === undefined) script = cur?.script;
     let res: PSBTKeyMapKeys<typeof PSBTOutput> = { ...cur, ...o, amount, script };
     if (res.amount === undefined) delete res.amount;
