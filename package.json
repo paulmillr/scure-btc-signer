@@ -14,7 +14,7 @@
   "types": "index.d.ts",
   "dependencies": {
     "@noble/curves": "~0.6.1",
-    "@noble/hashes": "~1.1.1",
+    "@noble/hashes": "~1.2.0",
     "@scure/base": "~1.1.0",
     "micro-packed": "~0.3.2"
   },
