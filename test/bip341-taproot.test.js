@@ -3,7 +3,7 @@ import { should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../index.js';
 import { default as v341 } from './fixtures/bip341.json' assert { type: 'json' };
-import * as secp256k1 from '@noble/secp256k1';
+import { schnorr } from '@noble/curves/secp256k1';
 
 for (let i = 0; i < v341.keyPathSpending.length; i++) {
   const t = v341.keyPathSpending[i];
@@ -29,7 +29,7 @@ for (let i = 0; i < v341.keyPathSpending.length; i++) {
     for (const s of t.inputSpending) {
       const idx = s.given.txinIndex;
       const priv = hex.decode(s.given.internalPrivkey);
-      const pub = secp256k1.schnorr.getPublicKey(priv);
+      const pub = schnorr.getPublicKey(priv);
       deepStrictEqual(hex.encode(pub), s.intermediary.internalPubkey);
       tx.updateInput(idx, {
         tapMerkleRoot: s.given.merkleRoot,

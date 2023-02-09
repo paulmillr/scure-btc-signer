@@ -45,7 +45,11 @@ should('cmp', () => {
     [[1, 2, 3], [4, 5, 6], -1],
   ];
   for (let [l, r, ret] of CASES)
-    deepStrictEqual(btc.cmp(new Uint8Array(l), new Uint8Array(r)), ret, `l=${l} r=${r} ret=${ret}`);
+    deepStrictEqual(
+      btc._cmpBytes(new Uint8Array(l), new Uint8Array(r)),
+      ret,
+      `l=${l} r=${r} ret=${ret}`
+    );
 });
 
 should('combinations', () => {

@@ -1,7 +1,7 @@
 import { deepStrictEqual } from 'assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
-import * as secp256k1 from '@noble/secp256k1';
+import { schnorr } from '@noble/curves/secp256k1';
 // Required for sync sha
 import * as btc from '../index.js';
 import { default as v340 } from './fixtures/bip340.json' assert { type: 'json' };
@@ -15,16 +15,16 @@ for (const v of v340) {
     if (v['secret key']) {
       const sec = v['secret key'];
       const rnd = v['aux_rand'];
-      deepStrictEqual(hex.encode(secp256k1.schnorr.getPublicKey(sec)), pub);
-      const sig = await secp256k1.schnorr.sign(msg, sec, rnd);
-      const sigS = secp256k1.schnorr.signSync(msg, sec, rnd);
+      deepStrictEqual(hex.encode(schnorr.getPublicKey(sec)), pub);
+      const sig = await schnorr.sign(msg, sec, rnd);
+      const sigS = schnorr.sign(msg, sec, rnd);
       deepStrictEqual(hex.encode(sig), expSig.toLowerCase());
       deepStrictEqual(hex.encode(sigS), expSig.toLowerCase());
-      deepStrictEqual(await secp256k1.schnorr.verify(sigS, msg, pub), true);
-      deepStrictEqual(secp256k1.schnorr.verifySync(sig, msg, pub), true);
+      deepStrictEqual(await schnorr.verify(sigS, msg, pub), true);
+      deepStrictEqual(schnorr.verify(sig, msg, pub), true);
     } else {
-      const passed = await secp256k1.schnorr.verify(expSig, msg, pub);
-      const passedS = secp256k1.schnorr.verifySync(expSig, msg, pub);
+      const passed = await schnorr.verify(expSig, msg, pub);
+      const passedS = schnorr.verify(expSig, msg, pub);
       const res = v['verification result'] === 'TRUE';
       deepStrictEqual(passed, res);
       deepStrictEqual(passedS, res);

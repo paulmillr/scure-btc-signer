@@ -1,10 +1,13 @@
 /*! micro-btc-signer - MIT License (c) 2022 Paul Miller (paulmillr.com) */
-import * as secp from '@noble/secp256k1';
-import * as base from '@scure/base';
+import { secp256k1 as _secp, schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
-import { hmac } from '@noble/hashes/hmac';
 import { ripemd160 } from '@noble/hashes/ripemd160';
+import { hex, base58, base58check as _b58, bech32, bech32m } from '@scure/base';
+import type { Coder } from '@scure/base';
 import * as P from 'micro-packed';
+
+const { ProjectivePoint: ProjPoint, sign: _signECDSA, getPublicKey: _pubECDSA } = _secp;
+const CURVE_ORDER = _secp.CURVE.n;
 
 // Basic utility types
 export type ExtendType<T, E> = {
@@ -17,16 +20,11 @@ export type Bytes = Uint8Array;
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
 const def = <T>(value: T | undefined, def: T) => (value === undefined ? def : value);
 const isBytes = (b: unknown): b is Bytes => b instanceof Uint8Array;
-
 const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
 const concat = P.concatBytes;
 // Make base58check work
-export const base58check = base.base58check(sha256);
-// Enable sync API for noble-secp256k1
-secp.utils.hmacSha256Sync = (key, ...msgs) => hmac(sha256, key, concat(...msgs));
-secp.utils.sha256Sync = (...msgs) => sha256(concat(...msgs));
-const taggedHash = secp.utils.taggedHashSync;
+export const base58check = _b58(sha256);
 
 enum PubT {
   ecdsa,
@@ -36,18 +34,21 @@ function validatePubkey(pub: Bytes, type: PubT): Bytes {
   const len = pub.length;
   if (type === PubT.ecdsa) {
     if (len === 32) throw new Error('Expected non-Schnorr key');
+    ProjPoint.fromHex(pub); // does assertValidity
+    return pub;
   } else if (type === PubT.schnorr) {
     if (len !== 32) throw new Error('Expected 32-byte Schnorr key');
+    schnorr.utils.lift_x(schnorr.utils.bytesToNumberBE(pub));
+    return pub;
   } else {
     throw new Error('Unknown key type');
   }
-  secp.Point.fromHex(pub); // does assertValidity
-  return pub;
 }
 
 function isValidPubkey(pub: Bytes, type: PubT): boolean {
   try {
-    return !!validatePubkey(pub, type);
+    validatePubkey(pub, type);
+    return true;
   } catch (e) {
     return false;
   }
@@ -57,34 +58,46 @@ function isValidPubkey(pub: Bytes, type: PubT): boolean {
 // noble/secp256k1 does not support the feature: it is not used outside of BTC.
 // We implement it manually, because in BTC it's common.
 // Not best way, but closest to bitcoin implementation (easier to check)
-const hasLowR = (sig: Bytes) => secp.Signature.fromHex(sig).toCompactRawBytes()[0] < 0x80;
+const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < CURVE_ORDER / 2n;
 function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
-  let sig = secp.signSync(hash, privateKey, { canonical: true });
+  let sig = _signECDSA(hash, privateKey);
   if (lowR && !hasLowR(sig)) {
     const extraEntropy = new Uint8Array(32);
     for (let cnt = 0; cnt < Number.MAX_SAFE_INTEGER; cnt++) {
       extraEntropy.set(P.U32LE.encode(cnt));
-      sig = secp.signSync(hash, privateKey, { canonical: true, extraEntropy });
+      sig = _signECDSA(hash, privateKey, { extraEntropy });
       if (hasLowR(sig)) break;
     }
   }
-  return sig;
+  return sig.toDERRawBytes();
+}
+
+function tapTweak(a: Bytes, b: Bytes): bigint {
+  const u = schnorr.utils;
+  const t = u.taggedHash('TapTweak', a, b);
+  const tn = u.bytesToNumberBE(t);
+  if (tn >= CURVE_ORDER) throw new Error('tweak higher than curve order');
+  return tn;
 }
 
 export function taprootTweakPrivKey(privKey: Uint8Array, merkleRoot = new Uint8Array()) {
-  const { n } = secp.CURVE;
-  const priv = secp.utils._normalizePrivateKey(privKey);
-  const point = secp.Point.fromPrivateKey(priv);
-  const tweak = taggedHash('TapTweak', point.toRawX(), merkleRoot);
-  const privWithProperY = point.hasEvenY() ? priv : n - priv;
-  const tweaked = secp.utils.mod(privWithProperY + secp.utils._normalizePrivateKey(tweak), n);
-  return secp.utils._bigintTo32Bytes(tweaked);
+  const u = schnorr.utils;
+  // seckey0 = int_from_bytes(seckey0); P = point_mul(G, seckey0)
+  // seckey = seckey0 if has_even_y(P) else SECP256K1_ORDER - seckey0
+  const { scalar: seckey, bytes } = u.getExtendedPublicKey(privKey);
+  // t = int_from_bytes(tagged_hash("TapTweak", bytes_from_int(x(P)) + h)); >= SECP256K1_ORDER check
+  const t = tapTweak(bytes, merkleRoot);
+  // bytes_from_int((seckey + t) % SECP256K1_ORDER)
+  return u.numberToBytesBE(u.mod(seckey + t, CURVE_ORDER), 32);
 }
 
-export function taprootTweakPubkey(pubKey: Uint8Array, h: Uint8Array): [Uint8Array, boolean] {
-  const tweak = taggedHash('TapTweak', pubKey, h);
-  const tweaked = secp.Point.fromHex(pubKey).add(secp.Point.fromPrivateKey(tweak));
-  return [tweaked.toRawX(), !tweaked.hasEvenY()];
+export function taprootTweakPubkey(pubKey: Uint8Array, h: Uint8Array): [Uint8Array, number] {
+  const u = schnorr.utils;
+  const t = tapTweak(pubKey, h); // t = int_from_bytes(tagged_hash("TapTweak", pubkey + h))
+  const P = u.lift_x(u.bytesToNumberBE(pubKey)); // P = lift_x(int_from_bytes(pubkey))
+  const Q = P.add(ProjPoint.fromPrivateKey(t)); // Q = point_add(P, point_mul(G, t))
+  const parity = Q.hasEvenY() ? 0 : 1; // 0 if has_even_y(Q) else 1
+  return [u.pointToBytes(Q), parity]; // bytes_from_int(x(Q))
 }
 
 // Can be 33 or 64 bytes
@@ -99,8 +112,8 @@ const SignatureSchnorr = P.validate(P.bytes(null), (sig) => {
 function uniqPubkey(pubkeys: Bytes[]) {
   const map: Record<string, boolean> = {};
   for (const pub of pubkeys) {
-    const key = base.hex.encode(pub);
-    if (map[key]) throw new Error(`Multisig: non-uniq pubkey: ${pubkeys.map(base.hex.encode)}`);
+    const key = hex.encode(pub);
+    if (map[key]) throw new Error(`Multisig: non-uniq pubkey: ${pubkeys.map(hex.encode)}`);
     map[key] = true;
   }
 }
@@ -112,6 +125,13 @@ export const NETWORK = {
   wif: 0x80,
 };
 
+export const TEST_NETWORK: typeof NETWORK = {
+  bech32: 'tb',
+  pubKeyHash: 0x6f,
+  scriptHash: 0xc4,
+  wif: 0xef,
+};
+
 export const PRECISION = 8;
 export const DEFAULT_VERSION = 2;
 export const DEFAULT_LOCKTIME = 0;
@@ -119,24 +139,13 @@ export const DEFAULT_SEQUENCE = 4294967295;
 const EMPTY32 = new Uint8Array(32);
 // Utils
 export const Decimal = P.coders.decimal(PRECISION);
-type CmpType = string | number | bigint | boolean | Bytes | undefined;
-export function cmp(a: CmpType, b: CmpType): number {
-  if (isBytes(a) && isBytes(b)) {
-    // -1 -> a<b, 0 -> a==b, 1 -> a>b
-    const len = Math.min(a.length, b.length);
-    for (let i = 0; i < len; i++) if (a[i] != b[i]) return Math.sign(a[i] - b[i]);
-    return Math.sign(a.length - b.length);
-  } else if (isBytes(a) || isBytes(b)) throw new Error(`cmp: wrong values a=${a} b=${b}`);
-  if (
-    (typeof a === 'bigint' && typeof b === 'number') ||
-    (typeof a === 'number' && typeof b === 'bigint')
-  ) {
-    a = BigInt(a);
-    b = BigInt(b);
-  }
-  if (a === undefined || b === undefined) throw new Error(`cmp: wrong values a=${a} b=${b}`);
-  // Default js comparasion
-  return Number(a > b) - Number(a < b);
+// Exported for tests, internal method
+export function _cmpBytes(a: Bytes, b: Bytes) {
+  if (!isBytes(a) || !isBytes(b)) throw new Error(`cmp: wrong type a=${typeof a} b=${typeof b}`);
+  // -1 -> a<b, 0 -> a==b, 1 -> a>b
+  const len = Math.min(a.length, b.length);
+  for (let i = 0; i < len; i++) if (a[i] != b[i]) return Math.sign(a[i] - b[i]);
+  return Math.sign(a.length - b.length);
 }
 
 // Coders
@@ -563,12 +572,12 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
             ]
           );
           // sort by keys
-          kv.sort((a, b) => cmp(a[0], b[0]));
+          kv.sort((a, b) => _cmpBytes(a[0], b[0]));
           for (const [key, value] of kv) out.push({ key: { key, type }, value });
         }
       }
       if (value.unknown) {
-        value.unknown.sort((a: any, b: any) => cmp(a[0], b[0]));
+        value.unknown.sort((a, b) => _cmpBytes(a[0].key, b[0].key));
         for (const [k, v] of value.unknown) out.push({ key: k, value: v });
       }
       PSBTKeyPair.encodeStream(w, out);
@@ -586,9 +595,7 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
           name = _name;
           if (!kc && key.length) {
             throw new Error(
-              `PSBT: Non-empty key for ${name} (key=${base.hex.encode(key)} value=${base.hex.encode(
-                value
-              )}`
+              `PSBT: Non-empty key for ${name} (key=${hex.encode(key)} value=${hex.encode(value)}`
             );
           }
           key = kc ? kc.decode(key) : undefined;
@@ -690,7 +697,7 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     const outputs = i.nonWitnessUtxo.outputs;
     if (outputs.length - 1 < i.index) throw new Error('nonWitnessUtxo: incorect output index');
     const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo));
-    const txid = base.hex.encode(i.txid);
+    const txid = hex.encode(i.txid);
     if (tx.id !== txid) throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
   }
   return i;
@@ -823,8 +830,8 @@ function mergeKeyMap<T extends PSBTKeyMap>(
         newKV = newKV.map((val: _KV): _KV => {
           if (val.length !== 2) throw new Error(`keyMap(${k}): KV pairs should be [k, v][]`);
           return [
-            typeof val[0] === 'string' ? kC.decode(base.hex.decode(val[0])) : val[0],
-            typeof val[1] === 'string' ? vC.decode(base.hex.decode(val[1])) : val[1],
+            typeof val[0] === 'string' ? kC.decode(hex.decode(val[0])) : val[0],
+            typeof val[1] === 'string' ? vC.decode(hex.decode(val[1])) : val[1],
           ];
         });
         const map: Record<string, _KV> = {};
@@ -833,19 +840,19 @@ function mergeKeyMap<T extends PSBTKeyMap>(
             map[kStr] = [k, v];
             return;
           }
-          const oldVal = base.hex.encode(vC.encode(map[kStr][1]));
-          const newVal = base.hex.encode(vC.encode(v));
+          const oldVal = hex.encode(vC.encode(map[kStr][1]));
+          const newVal = hex.encode(vC.encode(v));
           if (oldVal !== newVal)
             throw new Error(
               `keyMap(${key as string}): same key=${kStr} oldVal=${oldVal} newVal=${newVal}`
             );
         };
         for (const [k, v] of oldKV) {
-          const kStr = base.hex.encode(kC.encode(k));
+          const kStr = hex.encode(kC.encode(k));
           add(kStr, k, v);
         }
         for (const [k, v] of newKV) {
-          const kStr = base.hex.encode(kC.encode(k));
+          const kStr = hex.encode(kC.encode(k));
           // undefined removes previous value
           if (v === undefined) {
             if (cannotChange) throw new Error(`Cannot remove signed field=${key as string}/${k}`);
@@ -855,7 +862,7 @@ function mergeKeyMap<T extends PSBTKeyMap>(
         (res as any)[key] = Object.values(map) as _KV[];
       }
     } else if (typeof res[k] === 'string') {
-      res[k] = vC.decode(base.hex.decode(res[k] as string));
+      res[k] = vC.decode(hex.decode(res[k] as string));
     } else if (cannotChange && k in val && cur && cur[k] !== undefined) {
       if (!P.equalBytes(vC.encode(val[k]), vC.encode(cur[k])))
         throw new Error(`Cannot change signed field=${k}`);
@@ -889,7 +896,7 @@ type P2Ret = {
 // Public Key (P2PK)
 type OutPKType = { type: 'pk'; pubkey: Bytes };
 type OptScript = ScriptType | undefined;
-const OutPK: base.Coder<OptScript, OutPKType | undefined> = {
+const OutPK: Coder<OptScript, OutPKType | undefined> = {
   encode(from: ScriptType): OutPKType | undefined {
     if (
       from.length !== 2 ||
@@ -912,7 +919,7 @@ export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
 
 // Publick Key Hash (P2PKH)
 type OutPKHType = { type: 'pkh'; hash: Bytes };
-const OutPKH: base.Coder<OptScript, OutPKHType | undefined> = {
+const OutPKH: Coder<OptScript, OutPKHType | undefined> = {
   encode(from: ScriptType): OutPKHType | undefined {
     if (from.length !== 5 || from[0] !== 'DUP' || from[1] !== 'HASH160' || !isBytes(from[2]))
       return;
@@ -933,7 +940,7 @@ export const p2pkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
 };
 // Script Hash (P2SH)
 type OutSHType = { type: 'sh'; hash: Bytes };
-const OutSH: base.Coder<OptScript, OutSHType | undefined> = {
+const OutSH: Coder<OptScript, OutSHType | undefined> = {
   encode(from: ScriptType): OutSHType | undefined {
     if (from.length !== 3 || from[0] !== 'HASH160' || !isBytes(from[1]) || from[2] !== 'EQUAL')
       return;
@@ -943,12 +950,15 @@ const OutSH: base.Coder<OptScript, OutSHType | undefined> = {
     to.type === 'sh' ? ['HASH160', to.hash, 'EQUAL'] : undefined,
 };
 export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
-  const hash = hash160(child.script);
+  // It is already tested inside noble-hashes and checkScript
+  const cs = child.script;
+  if (!isBytes(cs)) throw new Error(`Wrong script: ${typeof child.script}, expected Uint8Array`);
+  const hash = hash160(cs);
   const script = OutScript.encode({ type: 'sh', hash });
-  checkScript(script, child.script, child.witnessScript);
+  checkScript(script, cs, child.witnessScript);
   const res: P2Ret = {
     type: 'sh',
-    redeemScript: child.script,
+    redeemScript: cs,
     script: OutScript.encode({ type: 'sh', hash }),
     address: Address(network).encode({ type: 'sh', hash }),
   };
@@ -957,7 +967,7 @@ export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
 };
 // Witness Script Hash (P2WSH)
 type OutWSHType = { type: 'wsh'; hash: Bytes };
-const OutWSH: base.Coder<OptScript, OutWSHType | undefined> = {
+const OutWSH: Coder<OptScript, OutWSHType | undefined> = {
   encode(from: ScriptType): OutWSHType | undefined {
     if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
     if (from[1].length !== 32) return;
@@ -966,19 +976,21 @@ const OutWSH: base.Coder<OptScript, OutWSHType | undefined> = {
   decode: (to: OutWSHType): OptScript => (to.type === 'wsh' ? [0, to.hash] : undefined),
 };
 export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
-  const hash = sha256(child.script);
+  const cs = child.script;
+  if (!isBytes(cs)) throw new Error(`Wrong script: ${typeof cs}, expected Uint8Array`);
+  const hash = sha256(cs);
   const script = OutScript.encode({ type: 'wsh', hash });
-  checkScript(script, undefined, child.script);
+  checkScript(script, undefined, cs);
   return {
     type: 'wsh',
-    witnessScript: child.script,
+    witnessScript: cs,
     script: OutScript.encode({ type: 'wsh', hash }),
     address: Address(network).encode({ type: 'wsh', hash }),
   };
 };
 // Witness Public Key Hash (P2WPKH)
 type OutWPKHType = { type: 'wpkh'; hash: Bytes };
-const OutWPKH: base.Coder<OptScript, OutWPKHType | undefined> = {
+const OutWPKH: Coder<OptScript, OutWPKHType | undefined> = {
   encode(from: ScriptType): OutWPKHType | undefined {
     if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
     if (from[1].length !== 20) return;
@@ -998,7 +1010,7 @@ export const p2wpkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
 };
 // Multisig (P2MS)
 type OutMSType = { type: 'ms'; pubkeys: Bytes[]; m: number };
-const OutMS: base.Coder<OptScript, OutMSType | undefined> = {
+const OutMS: Coder<OptScript, OutMSType | undefined> = {
   encode(from: ScriptType): OutMSType | undefined {
     const last = from.length - 1;
     if (from[last] !== 'CHECKMULTISIG') return;
@@ -1020,7 +1032,7 @@ export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2R
 };
 // Taproot (P2TR)
 type OutTRType = { type: 'tr'; pubkey: Bytes };
-const OutTR: base.Coder<OptScript, OutTRType | undefined> = {
+const OutTR: Coder<OptScript, OutTRType | undefined> = {
   encode(from: ScriptType): OutTRType | undefined {
     if (from.length !== 2 || from[0] !== 1 || !isBytes(from[1])) return;
     return { type: 'tr', pubkey: from[1] };
@@ -1082,7 +1094,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
     // Just to be sure that it is spendable
     if (tapInternalKey && P.equalBytes(tapInternalKey, TAPROOT_UNSPENDABLE_KEY))
       throw new Error('P2TR: tapRoot leafScript cannot have unspendble key');
-    const script = typeof leafScript === 'string' ? base.hex.decode(leafScript) : leafScript;
+    const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
     if (!isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
     checkTaprootScript(script, allowUnknowOutput);
     return {
@@ -1102,8 +1114,8 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
   const right = taprootHashTree(tree[1], allowUnknowOutput);
   // We cannot swap left/right here, since it will change structure of tree
   let [lH, rH] = [left.hash, right.hash];
-  if (cmp(rH, lH) === -1) [lH, rH] = [rH, lH];
-  return { type: 'branch', left, right, hash: taggedHash('TapBranch', lH, rH) };
+  if (_cmpBytes(rH, lH) === -1) [lH, rH] = [rH, lH];
+  return { type: 'branch', left, right, hash: schnorr.utils.taggedHash('TapBranch', lH, rH) };
 }
 type TaprootLeaf = {
   type: 'leaf';
@@ -1149,7 +1161,7 @@ function taprootWalkTree(tree: HashedTreeWithPath): TaprootLeaf[] {
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
 // Also used by bitcoin-core and bitcoinjs-lib
-export const TAPROOT_UNSPENDABLE_KEY = sha256(secp.Point.BASE.toRawBytes(false));
+export const TAPROOT_UNSPENDABLE_KEY = sha256(ProjPoint.BASE.toRawBytes(false));
 
 export type P2TROut = P2Ret & {
   tweakedPubkey: Uint8Array;
@@ -1171,7 +1183,7 @@ export function p2tr(
   if (!internalPubKey && !tree) throw new Error('p2tr: should have pubKey or scriptTree (or both)');
   const pubKey =
     typeof internalPubKey === 'string'
-      ? base.hex.decode(internalPubKey)
+      ? hex.decode(internalPubKey)
       : internalPubKey || TAPROOT_UNSPENDABLE_KEY;
   if (!isValidPubkey(pubKey, PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
   let hashedTree = tree ? taprootAddPath(taprootHashTree(tree, allowUnknowOutput)) : undefined;
@@ -1182,7 +1194,7 @@ export function p2tr(
     leaves = taprootWalkTree(hashedTree).map((l) => ({
       ...l,
       controlBlock: TaprootControlBlock.encode({
-        version: (l.version || TAP_LEAF_VERSION) + +parity,
+        version: (l.version || TAP_LEAF_VERSION) + parity,
         internalKey: l.tapInternalKey || pubKey,
         merklePath: l.path,
       }),
@@ -1213,7 +1225,7 @@ export function p2tr(
 
 // Taproot N-of-N multisig (P2TR_NS)
 type OutTRNSType = { type: 'tr_ns'; pubkeys: Bytes[] };
-const OutTRNS: base.Coder<OptScript, OutTRNSType | undefined> = {
+const OutTRNS: Coder<OptScript, OutTRNSType | undefined> = {
   encode(from: ScriptType): OutTRNSType | undefined {
     const last = from.length - 1;
     if (from[last] !== 'CHECKSIG') return;
@@ -1285,7 +1297,7 @@ export const p2tr_pk = (pubkey: Bytes): P2Ret => p2tr_ns(1, [pubkey], undefined)
 
 // Taproot M-of-N Multisig (P2TR_MS)
 type OutTRMSType = { type: 'tr_ms'; pubkeys: Bytes[]; m: number };
-const OutTRMS: base.Coder<OptScript, OutTRMSType | undefined> = {
+const OutTRMS: Coder<OptScript, OutTRMSType | undefined> = {
   encode(from: ScriptType): OutTRMSType | undefined {
     const last = from.length - 1;
     if (from[last] !== 'NUMEQUAL' || from[1] !== 'CHECKSIG') return;
@@ -1321,7 +1333,7 @@ export function p2tr_ms(m: number, pubkeys: Bytes[], allowSamePubkeys = false) {
 }
 // Uknown output type
 type OutUnknownType = { type: 'unknown'; script: Bytes };
-const OutUnknown: base.Coder<OptScript, OutUnknownType | undefined> = {
+const OutUnknown: Coder<OptScript, OutUnknownType | undefined> = {
   encode(from: ScriptType): OutUnknownType | undefined {
     return { type: 'unknown', script: Script.encode(from) };
   },
@@ -1391,7 +1403,7 @@ function validateWitness(version: number, data: Bytes) {
 
 export function programToWitness(version: number, data: Bytes, network = NETWORK) {
   validateWitness(version, data);
-  const coder = version === 0 ? base.bech32 : base.bech32m;
+  const coder = version === 0 ? bech32 : bech32m;
   return coder.encode(network.bech32, [version].concat(coder.toWords(data)));
 }
 
@@ -1399,7 +1411,7 @@ function formatKey(hashed: Bytes, prefix: number[]): string {
   return base58check.encode(concat(Uint8Array.from(prefix), hashed));
 }
 
-export function WIF(network = NETWORK): base.Coder<Bytes, string> {
+export function WIF(network = NETWORK): Coder<Bytes, string> {
   return {
     encode(privKey: Bytes) {
       const compressed = concat(privKey, new Uint8Array([0x01]));
@@ -1435,33 +1447,33 @@ export function Address(network = NETWORK) {
       if (network.bech32 && address.toLowerCase().startsWith(network.bech32)) {
         let res;
         try {
-          res = base.bech32.decode(address);
+          res = bech32.decode(address);
           if (res.words[0] !== 0) throw new Error(`bech32: wrong version=${res.words[0]}`);
         } catch (_) {
           // Starting from version 1 it is decoded as bech32m
-          res = base.bech32m.decode(address);
+          res = bech32m.decode(address);
           if (res.words[0] === 0) throw new Error(`bech32m: wrong version=${res.words[0]}`);
         }
         if (res.prefix !== network.bech32) throw new Error(`wrong bech32 prefix=${res.prefix}`);
         const [version, ...program] = res.words;
-        const data = base.bech32.fromWords(program);
+        const data = bech32.fromWords(program);
         validateWitness(version, data);
         if (version === 0 && data.length === 32) return { type: 'wsh', hash: data };
         else if (version === 0 && data.length === 20) return { type: 'wpkh', hash: data };
         else if (version === 1 && data.length === 32) return { type: 'tr', pubkey: data };
         else throw new Error('Unkown witness program');
       }
-      const data = base.base58.decode(address);
+      const data = base58.decode(address);
       if (data.length !== 25) throw new Error('Invalid base58 address');
       // Pay To Public Key Hash
       if (data[0] === network.pubKeyHash) {
-        const bytes = base.base58.decode(address);
+        const bytes = base58.decode(address);
         return { type: 'pkh', hash: bytes.slice(1, bytes.length - 4) };
       } else if (data[0] === network.scriptHash) {
-        const bytes = base.base58.decode(address);
+        const bytes = base58.decode(address);
         return {
           type: 'sh',
-          hash: base.base58.decode(address).slice(1, bytes.length - 4),
+          hash: base58.decode(address).slice(1, bytes.length - 4),
         };
       }
       throw new Error(`Invalid address prefix=${data[0]}`);
@@ -1488,7 +1500,7 @@ function unpackSighash(hashType: number) {
   };
 }
 
-export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(cmp);
+export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(_cmpBytes);
 
 export type TransactionInput = P.UnwrapCoder<typeof PSBTInputCoder>;
 // User facing API with decoders
@@ -1541,7 +1553,7 @@ function outputBeforeSign(i: TransactionOutput): TransactionOutputRequired {
 
 export const TAP_LEAF_VERSION = 0xc0;
 export const tapLeafHash = (script: Bytes, version = TAP_LEAF_VERSION) =>
-  taggedHash('TapLeaf', new Uint8Array([version]), VarBytes.encode(script));
+  schnorr.utils.taggedHash('TapLeaf', new Uint8Array([version]), VarBytes.encode(script));
 
 function getTaprootKeys(
   privKey: Bytes,
@@ -1551,7 +1563,7 @@ function getTaprootKeys(
 ) {
   if (P.equalBytes(internalKey, pubKey)) {
     privKey = taprootTweakPrivKey(privKey, merkleRoot);
-    pubKey = secp.schnorr.getPublicKey(privKey);
+    pubKey = schnorr.getPublicKey(privKey);
   }
   return { privKey, pubKey };
 }
@@ -1854,16 +1866,16 @@ export class Transaction {
     return this.toBytes(false, false);
   }
   get hex() {
-    return base.hex.encode(this.toBytes(true, this.hasWitnesses));
+    return hex.encode(this.toBytes(true, this.hasWitnesses));
   }
 
   get hash() {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
-    return base.hex.encode(sha256x2(this.toBytes(true)));
+    return hex.encode(sha256x2(this.toBytes(true)));
   }
   get id() {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
-    return base.hex.encode(sha256x2(this.toBytes(true)).reverse());
+    return hex.encode(sha256x2(this.toBytes(true)).reverse());
   }
   // Input stuff
   private checkInputIdx(idx: number) {
@@ -1879,10 +1891,10 @@ export class Transaction {
     let { nonWitnessUtxo, txid } = i;
     // String support for common fields. We usually prefer Uint8Array to avoid errors (like hex looking string accidentally passed),
     // however in case of nonWitnessUtxo it is better to expect string, since constructing this complex object will be difficult for user
-    if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = base.hex.decode(nonWitnessUtxo);
+    if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = hex.decode(nonWitnessUtxo);
     if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
     if (nonWitnessUtxo === undefined) nonWitnessUtxo = cur?.nonWitnessUtxo;
-    if (typeof txid === 'string') txid = base.hex.decode(txid);
+    if (typeof txid === 'string') txid = hex.decode(txid);
     if (txid === undefined) txid = cur?.txid;
     let res: PSBTKeyMapKeys<typeof PSBTInput> = { ...cur, ...i, nonWitnessUtxo, txid };
     if (res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
@@ -1926,10 +1938,9 @@ export class Transaction {
     allowedFields?: (keyof typeof PSBTOutput)[]
   ): TransactionOutput {
     let { amount, script } = o;
-    if (typeof amount === 'string') amount = Decimal.decode(amount);
-    if (typeof amount === 'number') amount = BigInt(amount);
     if (amount === undefined) amount = cur?.amount;
-    if (typeof script === 'string') script = base.hex.decode(script);
+    if (typeof amount !== 'bigint') throw new Error('amount must be bigint sats');
+    if (typeof script === 'string') script = hex.decode(script);
     if (script === undefined) script = cur?.script;
     let res: PSBTKeyMapKeys<typeof PSBTOutput> = { ...cur, ...o, amount, script };
     if (res.amount === undefined) delete res.amount;
@@ -1962,11 +1973,8 @@ export class Transaction {
     }
     this.outputs[idx] = this.normalizeOutput(output, this.outputs[idx], allowedFields);
   }
-  addOutputAddress(address: string, amount: string | bigint, network = NETWORK): number {
-    return this.addOutput({
-      script: OutScript.encode(Address(network).decode(address)),
-      amount: typeof amount === 'string' ? Decimal.decode(amount) : amount,
-    });
+  addOutputAddress(address: string, amount: bigint, network = NETWORK): number {
+    return this.addOutput({ script: OutScript.encode(Address(network).decode(address)), amount });
   }
   // Utils
   get fee(): bigint {
@@ -2102,7 +2110,7 @@ export class Transaction {
       out.push(idx < outputs.length ? sha256(RawOutput.encode(outputs[idx])) : EMPTY32);
     if (leafScript)
       out.push(tapLeafHash(leafScript, leafVer), P.U8.encode(0), P.I32LE.encode(codeSeparator));
-    return taggedHash('TapSighash', ...out);
+    return schnorr.utils.taggedHash('TapSighash', ...out);
   }
   // Utils for sign/finalize
   // Used pretty often, should be fast
@@ -2229,7 +2237,7 @@ export class Transaction {
       const prevOutScript = prevOuts.map((i) => i.script);
       const amount = prevOuts.map((i) => i.amount);
       let signed = false;
-      let schnorrPub = secp.schnorr.getPublicKey(privateKey);
+      let schnorrPub = schnorr.getPublicKey(privateKey);
       let merkleRoot = input.tapMerkleRoot || P.EMPTY;
       if (input.tapInternalKey) {
         // internal + tweak = tweaked key
@@ -2246,7 +2254,7 @@ export class Transaction {
         if (P.equalBytes(taprootPubKey, pubKey)) {
           const hash = this.preimageWitnessV1(idx, prevOutScript, sighash, amount);
           const sig = concat(
-            secp.schnorr.signSync(hash, privKey, _auxRand),
+            schnorr.sign(hash, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
           this.updateInput(idx, { tapKeySig: sig }, true);
@@ -2279,7 +2287,7 @@ export class Transaction {
             ver
           );
           const sig = concat(
-            secp.schnorr.signSync(msg, privKey, _auxRand),
+            schnorr.sign(msg, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
           this.updateInput(
@@ -2294,7 +2302,7 @@ export class Transaction {
       return true;
     } else {
       // only compressed keys are supported for now
-      const pubKey = secp.getPublicKey(privateKey, true);
+      const pubKey = _pubECDSA(privateKey);
       // TODO: replace with explicit checks
       // Check if script has public key or its has inside
       let hasPubkey = false;
@@ -2517,9 +2525,9 @@ export class Transaction {
 // Simple pubkey address, without complex scripts
 export function getAddress(type: 'pkh' | 'wpkh' | 'tr', privKey: Bytes, network = NETWORK) {
   if (type === 'tr') {
-    return p2tr(secp.schnorr.getPublicKey(privKey), undefined, network).address;
+    return p2tr(schnorr.getPublicKey(privKey), undefined, network).address;
   }
-  const pubKey = secp.getPublicKey(privKey, true);
+  const pubKey = _pubECDSA(privKey);
   if (type === 'pkh') return p2pkh(pubKey, network).address;
   if (type === 'wpkh') return p2wpkh(pubKey, network).address;
   throw new Error(`getAddress: unknown type=${type}`);

@@ -2,7 +2,7 @@ import { deepStrictEqual, throws } from 'assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../index.js';
-import * as secp256k1 from '@noble/secp256k1';
+import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import * as P from 'micro-packed';
 
@@ -765,10 +765,10 @@ should('Big transaction regtest validation', () => {
   const P5 = secp256k1.getPublicKey(privKey5, true);
   const P6 = secp256k1.getPublicKey(privKey6, true);
   const P7 = secp256k1.getPublicKey(privKey7, true);
-  const P7S = secp256k1.schnorr.getPublicKey(privKey7);
-  const P8S = secp256k1.schnorr.getPublicKey(privKey8);
-  const P9S = secp256k1.schnorr.getPublicKey(privKey9);
-  const P10S = secp256k1.schnorr.getPublicKey(privKey10);
+  const P7S = secp256k1_schnorr.getPublicKey(privKey7);
+  const P8S = secp256k1_schnorr.getPublicKey(privKey8);
+  const P9S = secp256k1_schnorr.getPublicKey(privKey9);
+  const P10S = secp256k1_schnorr.getPublicKey(privKey10);
 
   // TODO: btc.getPublic with types or something?
   const spend1_1 = btc.p2sh(btc.p2pk(P1), regtest);
@@ -1126,7 +1126,7 @@ should('SignatureHash tests', () => {
 
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const P1 = secp256k1.getPublicKey(privKey, true);
-  const P1S = secp256k1.schnorr.getPublicKey(privKey);
+  const P1S = secp256k1_schnorr.getPublicKey(privKey);
   const S1 = btc.p2pkh(P1, regtest);
   const S2 = btc.p2wpkh(P1, regtest);
   const S3 = btc.p2tr(P1S, undefined, regtest);
@@ -1277,7 +1277,7 @@ should('Finalize negative fee', () => {
         },
       });
     }
-    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], Number(tx.fee) + 1);
+    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], tx.fee + 1n);
     tx.sign(privKey);
     //testClone(tx);
     throws(() => tx.finalize());
@@ -1294,7 +1294,7 @@ should('Finalize negative fee', () => {
         },
       });
     }
-    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], Number(tx.fee));
+    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], (tx.fee));
     tx.sign(privKey);
     tx.finalize();
   }
@@ -1303,7 +1303,7 @@ should('Finalize negative fee', () => {
 should('Issue #13', () => {
   const keypairFromSecret = (hexSecretKey) => {
     const secretKey = hex.decode(hexSecretKey);
-    const schnorrPublicKey = secp256k1.schnorr.getPublicKey(secretKey);
+    const schnorrPublicKey = secp256k1_schnorr.getPublicKey(secretKey);
     return {
       schnorrPublicKey,
       secretKey,
@@ -1400,7 +1400,7 @@ should('TapRoot export version', () => {
   }
   // with taproot
   {
-    const pubS = secp256k1.schnorr.getPublicKey(privKey);
+    const pubS = secp256k1_schnorr.getPublicKey(privKey);
     const tx = new btc.Transaction(opts);
     for (const inp of TX_TEST_INPUTS) {
       const tr = btc.p2tr(pubS);
@@ -1420,7 +1420,7 @@ should('TapRoot export version', () => {
   }
   // requiredHeightLocktime (PSBTv2 only field)
   {
-    const pubS = secp256k1.schnorr.getPublicKey(privKey);
+    const pubS = secp256k1_schnorr.getPublicKey(privKey);
     const tx = new btc.Transaction(opts);
     for (const inp of TX_TEST_INPUTS) {
       const tr = btc.p2tr(pubS);
@@ -1487,7 +1487,7 @@ should('big multisig (real)', () => {
 });
 
 should('big multisig (ours)', () => {
-  //return; // too slow, but works
+  return; // too slow, but works
   // Slow: sign + preimage. We can cache preimage, but sign is more complex
 
   // Limits: p2_ms=20, p2tr_ms/p2tr_ns=999 (stacksize)
@@ -1497,7 +1497,7 @@ should('big multisig (ours)', () => {
   const pkeys = [];
   for (let i = 1; i < 1000; i++) pkeys.push(P.U256BE.encode(i));
 
-  const pubs = pkeys.map(secp256k1.schnorr.getPublicKey);
+  const pubs = pkeys.map(secp256k1_schnorr.getPublicKey);
   const spend = btc.p2tr(undefined, btc.p2tr_ms(999, pubs), regtest);
   const outAddr = btc.p2wpkh(secp256k1.getPublicKey(pkeys[0], true), regtest);
 
