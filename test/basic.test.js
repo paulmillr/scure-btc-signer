@@ -1294,7 +1294,7 @@ should('Finalize negative fee', () => {
         },
       });
     }
-    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], (tx.fee));
+    tx.addOutputAddress(TX_TEST_OUTPUTS[0][0], tx.fee);
     tx.sign(privKey);
     tx.finalize();
   }
@@ -1625,6 +1625,34 @@ should('Signed fields', () => {
     ],
   });
   tx.updateOutput(0, { amount: 121n });
+});
+
+should('have proper vsize for cloned transactions (gh-18)', () => {
+  const opts = {};
+  const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  // setup taproot tx
+  const pubS = secp256k1_schnorr.getPublicKey(privKey);
+  const tx = new btc.Transaction(opts);
+  for (const inp of TX_TEST_INPUTS) {
+    const tr = btc.p2tr(pubS);
+    tx.addInput({
+      ...inp,
+      ...tr,
+      witnessUtxo: {
+        script: tr.script,
+        amount: inp.amount,
+      },
+    });
+  }
+  const clone = tx.clone();
+  tx.sign(privKey, undefined, new Uint8Array(32));
+  tx.finalize();
+  //console.log(tx.vsize); // A
+  clone.sign(privKey, undefined, new Uint8Array(32));
+  clone.finalize();
+  //console.log(clone.vsize); // B
+  deepStrictEqual(tx.vsize, clone.vsize);
+  deepStrictEqual(tx.vsize, 183);
 });
 
 // ESM is broken.

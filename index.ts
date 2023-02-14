@@ -2419,7 +2419,7 @@ export class Transaction {
         }
         if (!input.finalScriptWitness) throw new Error('finalize/taproot: empty witness');
       } else throw new Error('finalize/taproot: unknown input');
-
+      input.finalScriptSig = P.EMPTY;
       cleanFinalInput(input);
       return;
     }
@@ -2517,7 +2517,7 @@ export class Transaction {
   }
   clone() {
     // deepClone probably faster, but this enforces that encoding is valid
-    return Transaction.fromPSBT(this.toPSBT(), this.opts);
+    return Transaction.fromPSBT(this.toPSBT(2), this.opts);
   }
 }
 // User facing API?
