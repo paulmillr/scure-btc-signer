@@ -28,10 +28,10 @@
   },
   "author": "Paul Miller (https://paulmillr.com)",
   "license": "MIT",
-  "homepage": "https://github.com/paulmillr/micro-btc-signer",
+  "homepage": "https://github.com/paulmillr/scure-btc-signer",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/paulmillr/micro-btc-signer.git"
+    "url": "git+https://github.com/paulmillr/scure-btc-signer.git"
   },
   "scripts": {
     "build": "tsc",

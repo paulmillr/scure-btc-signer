@@ -1,4 +1,4 @@
-# micro-btc-signer
+# scure-btc-signer
 
 Create, sign & decode BTC transactions with minimum deps.
 
@@ -8,23 +8,34 @@ Create, sign & decode BTC transactions with minimum deps.
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
 - 📨 BIP174 PSBT
 - 👥 Multisig support
-- 🪶 ~2.6K lines
+- 🪶 ~2600 lines
 
 The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
 
-_Check out all web3 utility libraries:_ [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [micro-btc-signer](https://github.com/paulmillr/micro-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+### This library belongs to *scure*
+
+> **scure** — secure, independently audited packages for every use case.
+
+- All releases are signed with PGP keys
+- Check out all libraries:
+  [base](https://github.com/paulmillr/scure-base),
+  [bip32](https://github.com/paulmillr/scure-bip32),
+  [bip39](https://github.com/paulmillr/scure-bip39),
+  [btc-signer](https://github.com/paulmillr/scure-btc-signer)
+
+Also, check out all *web3 utility libraries:* [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [scure-btc-signer](https://github.com/paulmillr/scure-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
 Use NPM for browser / node.js:
 
-> npm install @noble/curves
+> npm install @scure/btc-signer
 
 For [Deno](https://deno.land), use it with [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
 
 ```ts
-import * as btc from 'micro-btc-signer';
-// import * as btc from "npm:micro-btc-signer@0.4.2"; // Deno
+import * as btc from '@scure/btc-signer';
+// import * as btc from "npm:@scure/btc-signer@0.4.2"; // Deno
 ```
 
 ### Table of Contents
@@ -64,11 +75,11 @@ BTC has several UTXO types:
 For test examples, the usage is as following:
 
 ```sh
-npm install micro-btc-signer @scure/base assert
+npm install @scure/btc-signer @scure/base assert
 ```
 
 ```ts
-import * as btc from 'micro-btc-signer';
+import * as btc from '@scure/btc-signer';
 import { hex } from '@scure/base';
 import { deepStrictEqual, throws } from 'assert';
 ```
