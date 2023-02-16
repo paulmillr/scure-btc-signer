@@ -16,14 +16,15 @@ _Check out all web3 utility libraries:_ [micro-eth-signer](https://github.com/pa
 
 ## Usage
 
-### General Usage
+Use NPM for browser / node.js:
 
-```sh
-npm install micro-btc-signer
-```
+> npm install @noble/curves
+
+For [Deno](https://deno.land), use it with [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
 
 ```ts
 import * as btc from 'micro-btc-signer';
+// import * as btc from "npm:micro-btc-signer@0.4.2"; // Deno
 ```
 
 ### Table of Contents
