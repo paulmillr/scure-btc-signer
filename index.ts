@@ -20,8 +20,7 @@ export type Bytes = Uint8Array;
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
 const def = <T>(value: T | undefined, def: T) => (value === undefined ? def : value);
 const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
-const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
-const concat = P.concatBytes;
+const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(P.concatBytes(...msgs)));
 // Make base58check work
 export const base58check = _b58(sha256);
 
@@ -1203,7 +1202,7 @@ export function p2tr(
   if (leaves) {
     tapLeafScript = leaves.map((l) => [
       TaprootControlBlock.decode(l.controlBlock),
-      concat(l.script, new Uint8Array([l.version || TAP_LEAF_VERSION])),
+      P.concatBytes(l.script, new Uint8Array([l.version || TAP_LEAF_VERSION])),
     ]);
   }
   const res: P2TROut = {
@@ -1407,13 +1406,13 @@ export function programToWitness(version: number, data: Bytes, network = NETWORK
 }
 
 function formatKey(hashed: Bytes, prefix: number[]): string {
-  return base58check.encode(concat(Uint8Array.from(prefix), hashed));
+  return base58check.encode(P.concatBytes(Uint8Array.from(prefix), hashed));
 }
 
 export function WIF(network = NETWORK): Coder<Bytes, string> {
   return {
     encode(privKey: Bytes) {
-      const compressed = concat(privKey, new Uint8Array([0x01]));
+      const compressed = P.concatBytes(privKey, new Uint8Array([0x01]));
       return formatKey(compressed.subarray(0, 33), [network.wif]);
     },
     decode(wif: string) {
@@ -2087,11 +2086,11 @@ export class Transaction {
           amount.map(P.U64LE.encode),
           prevOutScript.map(VarBytes.encode),
           inputs.map((i) => P.U32LE.encode(i.sequence)),
-        ].map((i) => sha256(concat(...i)))
+        ].map((i) => sha256(P.concatBytes(...i)))
       );
     }
     if (outType === SignatureHash.ALL) {
-      out.push(sha256(concat(...outputs.map(RawOutput.encode))));
+      out.push(sha256(P.concatBytes(...outputs.map(RawOutput.encode))));
     }
     const spendType = (annex ? 1 : 0) | (leafScript ? 2 : 0);
     out.push(new Uint8Array([spendType]));
@@ -2252,7 +2251,7 @@ export class Transaction {
         const [taprootPubKey, parity] = taprootTweakPubkey(input.tapInternalKey, merkleRoot);
         if (P.equalBytes(taprootPubKey, pubKey)) {
           const hash = this.preimageWitnessV1(idx, prevOutScript, sighash, amount);
-          const sig = concat(
+          const sig = P.concatBytes(
             schnorr.sign(hash, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
@@ -2285,7 +2284,7 @@ export class Transaction {
             script,
             ver
           );
-          const sig = concat(
+          const sig = P.concatBytes(
             schnorr.sign(msg, privKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
@@ -2325,7 +2324,7 @@ export class Transaction {
       this.updateInput(
         idx,
         {
-          partialSig: [[pubKey, concat(sig, new Uint8Array([sighash]))]],
+          partialSig: [[pubKey, P.concatBytes(sig, new Uint8Array([sighash]))]],
         },
         true
       );
