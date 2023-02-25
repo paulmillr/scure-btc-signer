@@ -335,10 +335,11 @@ deepStrictEqual(btc.p2tr_ns(3, [PubKey, PubKey2, PubKey3]), [
 ]);
 // Simple 2-of-3 multisig
 // If M (pubkeys required) is less than N (# of pubkeys), then multiple scripts are created: [[PubKey, PubKey2], [PubKey, PubKey3], [PubKey2, PubKey3]]
-deepStrictEqual(btc.p2tr(undefined, btc.p2tr_ns(2, [PubKey, PubKey2, PubKey3])), {
+const clean = (x) => ({ type: x.type, address: x.address, script: hex.encode(x.script) });
+deepStrictEqual(clean(btc.p2tr(undefined, btc.p2tr_ns(2, [PubKey, PubKey2, PubKey3]))), {
   type: 'tr',
   address: 'bc1pevfcmnkqqq09a4n0fs8c7mwlc6r4efqpvgyqpjvegllavgw235fq3kz7a0',
-  script: hex.decode('5120cb138dcec0001e5ed66f4c0f8f6ddfc6875ca401620800c99947ffd621ca8d12'),
+  script: '5120cb138dcec0001e5ed66f4c0f8f6ddfc6875ca401620800c99947ffd621ca8d12',
 });
 ```
 
@@ -363,10 +364,11 @@ deepStrictEqual(btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3]), {
   ),
 });
 // Creates a single script for [PubKey, PubKey2, PubKey3]
-deepStrictEqual(btc.p2tr(undefined, btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3])), {
-  type: 'tr_ms',
+const clean = (x) => ({ type: x.type, address: x.address, script: hex.encode(x.script) });
+deepStrictEqual(clean(btc.p2tr(undefined, btc.p2tr_ms(2, [PubKey, PubKey2, PubKey3]))), {
+  type: 'tr',
   address: 'bc1p6m2xevckax9zucumnnyvu4xhxem66ugc5r2zlw2a20s0hxnutl8qfef23s',
-  script: hex.decode('5120d6d46cb316e98a2e639b9cc8ce54d73677ad7118a0d42fb95d53e0fb9a7c5fce'),
+  script: '5120d6d46cb316e98a2e639b9cc8ce54d73677ad7118a0d42fb95d53e0fb9a7c5fce',
 });
 ```
 
@@ -377,10 +379,11 @@ This is a specific case of `p2tr_ns(1, [pubkey])`, which is the same as the BTC 
 ```ts
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 // P2PK for taproot
-deepStrictEqual(tr(btc.p2tr(undefined, [btc.p2tr_pk(PubKey)])), {
+const clean = (x) => ({ type: x.type, address: x.address, script: hex.encode(x.script) });
+deepStrictEqual(clean(btc.p2tr(undefined, [btc.p2tr_pk(PubKey)])), {
   type: 'tr',
   address: 'bc1pfj6w68w3v2f4pkzesc9tsqfvy5znw5qgydwa832v3v83vjn76kdsmr4360',
-  script: hex.decode('51204cb4ed1dd1629350d859860ab8012c2505375008235dd3c54c8b0f164a7ed59b'),
+  script: '51204cb4ed1dd1629350d859860ab8012c2505375008235dd3c54c8b0f164a7ed59b',
 });
 ```
 
