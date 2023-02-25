@@ -12,7 +12,7 @@ Create, sign & decode BTC transactions with minimum deps.
 
 The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
 
-### This library belongs to *scure*
+### This library belongs to _scure_
 
 > **scure** — secure, independently audited packages for every use case.
 
@@ -23,7 +23,7 @@ The library is new and has not been audited or battle-tested, **use at your own 
   [bip39](https://github.com/paulmillr/scure-bip39),
   [btc-signer](https://github.com/paulmillr/scure-btc-signer)
 
-Also, check out all *web3 utility libraries:* [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [scure-btc-signer](https://github.com/paulmillr/scure-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+Also, check out all _web3 utility libraries:_ [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [scure-btc-signer](https://github.com/paulmillr/scure-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
@@ -277,27 +277,34 @@ deepStrictEqual(btc.p2tr(PubKey), {
   script: hex.decode('5120f13946c3e43c648a2ec6c7e50ec5ec985a1fa94e1e86b214ebd1b41d66c2522c'),
   tweakedPubkey: hex.decode('f13946c3e43c648a2ec6c7e50ec5ec985a1fa94e1e86b214ebd1b41d66c2522c'),
   tapInternalKey: hex.decode('0101010101010101010101010101010101010101010101010101010101010101'),
-  tapMerkleRoot: hex.decode(''),
 });
+
+const clean = (x) => ({ type: x.type, address: x.address, script: hex.encode(x.script) });
 
 const PubKey2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
 const PubKey3 = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
 // Nested P2TR, owner of private key for any of PubKeys can spend whole
 // NOTE: by default P2TR expects binary tree, but btc.p2tr can build it if list of scripts passed.
 // Also, you can include {weight: N} to scripts to create differently balanced tree.
-deepStrictEqual(btc.p2tr(undefined, [btc.p2tr(PubKey), btc.p2tr(PubKey2), btc.p2tr(PubKey3)]), {
-  type: 'tr',
-  // weights for bitcoinjs-lib: [3,2,1]
-  address: 'bc1p58hcmfcjaee0jwzlgluzw86paw0h7sqmw2c8yq8t4wleqlqdn3qqv3rxf0',
-  script: hex.decode('5120a1ef8da712ee72f9385f47f8271f41eb9f7f401b72b07200ebabbf907c0d9c40'),
-});
+deepStrictEqual(
+  clean(btc.p2tr(undefined, [btc.p2tr_pk(PubKey), btc.p2tr_pk(PubKey2), btc.p2tr_pk(PubKey3)])),
+  {
+    type: 'tr',
+    // weights for bitcoinjs-lib: [3,2,1]
+    address: 'bc1pj2uvajyygyu2zw0rg0d6yxdsc920kzc5pamfgtlqepe30za922cqjjmkta',
+    script: '512092b8cec8844138a139e343dba219b0c154fb0b140f76942fe0c873178ba552b0',
+  }
+);
 // If scriptsTree is already binary tree, it will be used as-is
-deepStrictEqual(btc.p2tr(undefined, [btc.p2tr(PubKey2), [btc.p2tr(PubKey), btc.p2tr(PubKey3)]]), {
-  type: 'tr',
-  // default weights for bitcoinjs-lib
-  address: 'bc1pepwhs2tvnn6uj9eqy8kqdwjk2n3r8wjkunqcmahvkn4r2uyvzsxqqae82s',
-  script: hex.decode('5120c85d78296c9cf5c9172021ec06ba5654e233ba56e4c18df6ecb4ea35708c140c'),
-});
+deepStrictEqual(
+  clean(btc.p2tr(undefined, [btc.p2tr_pk(PubKey2), [btc.p2tr_pk(PubKey), btc.p2tr_pk(PubKey3)]])),
+  {
+    type: 'tr',
+    // default weights for bitcoinjs-lib
+    address: 'bc1pvue6sk9efyvcvpzzqkg8at4qy2u67zj7rj5sfsy573m7alxavqjqucc26a',
+    script: '51206733a858b9491986044205907eaea022b9af0a5e1ca904c094f477eefcdd6024',
+  }
+);
 ```
 
 ### P2TR-NS (Taproot multisig)
