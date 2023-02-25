@@ -19,7 +19,6 @@ export type RequireType<T, K extends keyof T> = T & {
 export type Bytes = Uint8Array;
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
 const def = <T>(value: T | undefined, def: T) => (value === undefined ? def : value);
-const isBytes = (b: unknown): b is Bytes => b instanceof Uint8Array;
 const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
 const concat = P.concatBytes;
@@ -141,7 +140,7 @@ const EMPTY32 = new Uint8Array(32);
 export const Decimal = P.coders.decimal(PRECISION);
 // Exported for tests, internal method
 export function _cmpBytes(a: Bytes, b: Bytes) {
-  if (!isBytes(a) || !isBytes(b)) throw new Error(`cmp: wrong type a=${typeof a} b=${typeof b}`);
+  if (!P.isBytes(a) || !P.isBytes(b)) throw new Error(`cmp: wrong type a=${typeof a} b=${typeof b}`);
   // -1 -> a<b, 0 -> a==b, 1 -> a>b
   const len = Math.min(a.length, b.length);
   for (let i = 0; i < len; i++) if (a[i] != b[i]) return Math.sign(a[i] - b[i]);
@@ -211,7 +210,7 @@ export const Script: P.CoderType<ScriptType> = P.wrap({
       }
       // Encode big numbers
       if (typeof o === 'number') o = ScriptNum().encode(BigInt(o));
-      if (!isBytes(o)) throw new Error(`Wrong Script OP=${o} (${typeof o})`);
+      if (!P.isBytes(o)) throw new Error(`Wrong Script OP=${o} (${typeof o})`);
       // Bytes
       const len = o.length;
       if (len < OP.PUSHDATA1) w.byte(len);
@@ -299,7 +298,7 @@ export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<big
 
 export function OpToNum(op: ScriptOP, bytesLimit = 4, forceMinimal = true) {
   if (typeof op === 'number') return op;
-  if (isBytes(op)) {
+  if (P.isBytes(op)) {
     try {
       const val = ScriptNum(bytesLimit, forceMinimal).decode(op);
       if (val > Number.MAX_SAFE_INTEGER) return;
@@ -921,7 +920,7 @@ export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
 type OutPKHType = { type: 'pkh'; hash: Bytes };
 const OutPKH: Coder<OptScript, OutPKHType | undefined> = {
   encode(from: ScriptType): OutPKHType | undefined {
-    if (from.length !== 5 || from[0] !== 'DUP' || from[1] !== 'HASH160' || !isBytes(from[2]))
+    if (from.length !== 5 || from[0] !== 'DUP' || from[1] !== 'HASH160' || !P.isBytes(from[2]))
       return;
     if (from[3] !== 'EQUALVERIFY' || from[4] !== 'CHECKSIG') return;
     return { type: 'pkh', hash: from[2] };
@@ -942,7 +941,7 @@ export const p2pkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
 type OutSHType = { type: 'sh'; hash: Bytes };
 const OutSH: Coder<OptScript, OutSHType | undefined> = {
   encode(from: ScriptType): OutSHType | undefined {
-    if (from.length !== 3 || from[0] !== 'HASH160' || !isBytes(from[1]) || from[2] !== 'EQUAL')
+    if (from.length !== 3 || from[0] !== 'HASH160' || !P.isBytes(from[1]) || from[2] !== 'EQUAL')
       return;
     return { type: 'sh', hash: from[1] };
   },
@@ -952,7 +951,7 @@ const OutSH: Coder<OptScript, OutSHType | undefined> = {
 export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
   // It is already tested inside noble-hashes and checkScript
   const cs = child.script;
-  if (!isBytes(cs)) throw new Error(`Wrong script: ${typeof child.script}, expected Uint8Array`);
+  if (!P.isBytes(cs)) throw new Error(`Wrong script: ${typeof child.script}, expected Uint8Array`);
   const hash = hash160(cs);
   const script = OutScript.encode({ type: 'sh', hash });
   checkScript(script, cs, child.witnessScript);
@@ -969,7 +968,7 @@ export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
 type OutWSHType = { type: 'wsh'; hash: Bytes };
 const OutWSH: Coder<OptScript, OutWSHType | undefined> = {
   encode(from: ScriptType): OutWSHType | undefined {
-    if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
+    if (from.length !== 2 || from[0] !== 0 || !P.isBytes(from[1])) return;
     if (from[1].length !== 32) return;
     return { type: 'wsh', hash: from[1] };
   },
@@ -977,7 +976,7 @@ const OutWSH: Coder<OptScript, OutWSHType | undefined> = {
 };
 export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
   const cs = child.script;
-  if (!isBytes(cs)) throw new Error(`Wrong script: ${typeof cs}, expected Uint8Array`);
+  if (!P.isBytes(cs)) throw new Error(`Wrong script: ${typeof cs}, expected Uint8Array`);
   const hash = sha256(cs);
   const script = OutScript.encode({ type: 'wsh', hash });
   checkScript(script, undefined, cs);
@@ -992,7 +991,7 @@ export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
 type OutWPKHType = { type: 'wpkh'; hash: Bytes };
 const OutWPKH: Coder<OptScript, OutWPKHType | undefined> = {
   encode(from: ScriptType): OutWPKHType | undefined {
-    if (from.length !== 2 || from[0] !== 0 || !isBytes(from[1])) return;
+    if (from.length !== 2 || from[0] !== 0 || !P.isBytes(from[1])) return;
     if (from[1].length !== 20) return;
     return { type: 'wpkh', hash: from[1] };
   },
@@ -1019,7 +1018,7 @@ const OutMS: Coder<OptScript, OutMSType | undefined> = {
     if (typeof m !== 'number' || typeof n !== 'number') return;
     const pubkeys = from.slice(1, -2);
     if (n !== pubkeys.length) return;
-    for (const pub of pubkeys) if (!isBytes(pub)) return;
+    for (const pub of pubkeys) if (!P.isBytes(pub)) return;
     return { type: 'ms', m, pubkeys: pubkeys as Bytes[] }; // we don't need n, since it is the same as pubkeys
   },
   // checkmultisig(n, ..pubkeys, m)
@@ -1034,7 +1033,7 @@ export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2R
 type OutTRType = { type: 'tr'; pubkey: Bytes };
 const OutTR: Coder<OptScript, OutTRType | undefined> = {
   encode(from: ScriptType): OutTRType | undefined {
-    if (from.length !== 2 || from[0] !== 1 || !isBytes(from[1])) return;
+    if (from.length !== 2 || from[0] !== 1 || !P.isBytes(from[1])) return;
     return { type: 'tr', pubkey: from[1] };
   },
   decode: (to: OutTRType): OptScript => (to.type === 'tr' ? [1, to.pubkey] : undefined),
@@ -1095,7 +1094,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
     if (tapInternalKey && P.equalBytes(tapInternalKey, TAPROOT_UNSPENDABLE_KEY))
       throw new Error('P2TR: tapRoot leafScript cannot have unspendble key');
     const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
-    if (!isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
+    if (!P.isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
     checkTaprootScript(script, allowUnknowOutput);
     return {
       type: 'leaf',
@@ -1237,7 +1236,7 @@ const OutTRNS: Coder<OptScript, OutTRNSType | undefined> = {
         if (elm !== 'CHECKSIGVERIFY' || i === last - 1) return;
         continue;
       }
-      if (!isBytes(elm)) return;
+      if (!P.isBytes(elm)) return;
       pubkeys.push(elm);
     }
     return { type: 'tr_ns', pubkeys };
@@ -1311,7 +1310,7 @@ const OutTRMS: Coder<OptScript, OutTRMSType | undefined> = {
           throw new Error('OutScript.encode/tr_ms: wrong element');
         continue;
       }
-      if (!isBytes(elm)) throw new Error('OutScript.encode/tr_ms: wrong key element');
+      if (!P.isBytes(elm)) throw new Error('OutScript.encode/tr_ms: wrong key element');
       pubkeys.push(elm);
     }
     return { type: 'tr_ms', pubkeys, m };
@@ -1367,12 +1366,12 @@ export const OutScript = P.validate(_OutScript, (i) => {
     throw new Error('OutScript/pk: wrong key');
   if (
     (i.type === 'pkh' || i.type === 'sh' || i.type === 'wpkh') &&
-    (!isBytes(i.hash) || i.hash.length !== 20)
+    (!P.isBytes(i.hash) || i.hash.length !== 20)
   )
     throw new Error(`OutScript/${i.type}: wrong hash`);
-  if (i.type === 'wsh' && (!isBytes(i.hash) || i.hash.length !== 32))
+  if (i.type === 'wsh' && (!P.isBytes(i.hash) || i.hash.length !== 32))
     throw new Error(`OutScript/wsh: wrong hash`);
-  if (i.type === 'tr' && (!isBytes(i.pubkey) || !isValidPubkey(i.pubkey, PubT.schnorr)))
+  if (i.type === 'tr' && (!P.isBytes(i.pubkey) || !isValidPubkey(i.pubkey, PubT.schnorr)))
     throw new Error('OutScript/tr: wrong taproot public key');
   if (i.type === 'ms' || i.type === 'tr_ns' || i.type === 'tr_ms')
     if (!Array.isArray(i.pubkeys)) throw new Error('OutScript/multisig: wrong pubkeys array');
@@ -1892,7 +1891,7 @@ export class Transaction {
     // String support for common fields. We usually prefer Uint8Array to avoid errors (like hex looking string accidentally passed),
     // however in case of nonWitnessUtxo it is better to expect string, since constructing this complex object will be difficult for user
     if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = hex.decode(nonWitnessUtxo);
-    if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
+    if (P.isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
     if (nonWitnessUtxo === undefined) nonWitnessUtxo = cur?.nonWitnessUtxo;
     if (typeof txid === 'string') txid = hex.decode(txid);
     if (txid === undefined) txid = cur?.txid;
@@ -2190,7 +2189,7 @@ export class Transaction {
     const input = this.inputs[idx];
     const inputType = this.inputType(input);
     // Handle BIP32 HDKey
-    if (!isBytes(privateKey)) {
+    if (!P.isBytes(privateKey)) {
       if (!input.bip32Derivation || !input.bip32Derivation.length)
         throw new Error('bip32Derivation: empty');
       const signers = input.bip32Derivation
@@ -2274,7 +2273,7 @@ export class Transaction {
             cb.internalKey,
             P.EMPTY // Because we cannot have nested taproot tree
           );
-          const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, pubKey));
+          const pos = scriptDecoded.findIndex((i) => P.isBytes(i) && P.equalBytes(i, pubKey));
           // Skip if there is no public key in tapLeafScript
           if (pos === -1) continue;
           const msg = this.preimageWitnessV1(
@@ -2308,7 +2307,7 @@ export class Transaction {
       let hasPubkey = false;
       const pubKeyHash = hash160(pubKey);
       for (const i of Script.decode(inputType.lastScript)) {
-        if (isBytes(i) && (P.equalBytes(i, pubKey) || P.equalBytes(i, pubKeyHash)))
+        if (P.isBytes(i) && (P.equalBytes(i, pubKey) || P.equalBytes(i, pubKeyHash)))
           hasPubkey = true;
       }
       if (!hasPubkey) throw new Error(`Input script doesn't have pubKey: ${inputType.lastScript}`);
@@ -2401,7 +2400,7 @@ export class Transaction {
             const scriptDecoded = Script.decode(script);
             signatures = scriptSig
               .map(([{ pubKey }, signature]) => {
-                const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, pubKey));
+                const pos = scriptDecoded.findIndex((i) => P.isBytes(i) && P.equalBytes(i, pubKey));
                 if (pos === -1)
                   throw new Error('finalize/taproot: cannot find position of pubkey in script');
                 return { signature, pos };
@@ -2463,7 +2462,7 @@ export class Transaction {
       if (inputScript.length && inputType.lastScript.length) {
         witness = Script.decode(inputScript).map((i) => {
           if (i === 0) return P.EMPTY;
-          if (isBytes(i)) return i;
+          if (P.isBytes(i)) return i;
           throw new Error(`Wrong witness op=${i}`);
         });
       }
