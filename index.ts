@@ -19,7 +19,7 @@ export type RequireType<T, K extends keyof T> = T & {
 export type Bytes = Uint8Array;
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
 const def = <T>(value: T | undefined, def: T) => (value === undefined ? def : value);
-const isBytes = (b: unknown): b is Bytes => b instanceof Uint8Array;
+const isBytes = P.isBytes;
 const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
 const concat = P.concatBytes;
@@ -900,7 +900,7 @@ const OutPK: Coder<OptScript, OutPKType | undefined> = {
   encode(from: ScriptType): OutPKType | undefined {
     if (
       from.length !== 2 ||
-      !P.isBytes(from[0]) ||
+      !isBytes(from[0]) ||
       !isValidPubkey(from[0], PubT.ecdsa) ||
       from[1] !== 'CHECKSIG'
     )
