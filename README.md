@@ -1,6 +1,6 @@
 # scure-btc-signer
 
-Create, sign & decode BTC transactions with minimum deps.
+Audited minimal library for creating, signing & decoding Bitcoin transactions.
 
 - ✍️ Create transactions, inputs, outputs, sign them
 - 📡 No network code: simplified audits and offline usage
@@ -8,9 +8,10 @@ Create, sign & decode BTC transactions with minimum deps.
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
 - 📨 BIP174 PSBT
 - 👥 Multisig support
+- 🔒 [**Audited**](#security) by an independent security firm
 - 🪶 ~2600 lines
 
-The library is new and has not been audited or battle-tested, **use at your own risk**. Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
+Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
 
 ### This library belongs to _scure_
 
@@ -816,6 +817,19 @@ deepStrictEqual(
   '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
 );
 ```
+
+## Security
+
+The library has been audited on Feb 21, 2023 by an independent security firm cure53: [PDF](./audit/2023-02-21-cure53-audit-report.pdf). The audit has been funded by Ryan Shea.
+
+Target was v0.3.0 (commit 397ed56), see [changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/0.3.0..main).
+
+We consider infrastructure attacks like rogue NPM modules very important; that's why it's crucial to minimize the amount of 3rd-party dependencies & native bindings. If your app uses 500 dependencies, any dep could get hacked and you'll be downloading malware with every `npm install`. Our goal is to minimize this attack vector. As for dependencies used by the library:
+
+- noble-curves, noble-hashes are audited cryptography libraries also developed by us and follow the same practices
+- scure-base is used for bech32 / base64 and was also audited
+- micro-packed is used for binary encoding, has not been audited
+- devDependencies contain scure-bip32, micro-packed-debugger, micro-should (our packages). Locked versions of prettier (linter) and typescript which are rarely updated. Every update is checked with `npm-diff`. They are only used if you clone the git repo and want to add some feature to it. End-users won't use them
 
 ## License
 
