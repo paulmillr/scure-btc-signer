@@ -1,4 +1,4 @@
-/*! micro-btc-signer - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+/*! scure-btc-signer - MIT License (c) 2022 Paul Miller (paulmillr.com) */
 import { secp256k1 as _secp, schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { ripemd160 } from '@noble/hashes/ripemd160';

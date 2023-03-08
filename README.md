@@ -36,7 +36,7 @@ For [Deno](https://deno.land), use it with [npm specifier](https://deno.land/man
 
 ```ts
 import * as btc from '@scure/btc-signer';
-// import * as btc from "npm:@scure/btc-signer@0.4.2"; // Deno
+// import * as btc from "npm:@scure/btc-signer@0.5.0"; // Deno
 ```
 
 ### Table of Contents
