@@ -579,8 +579,8 @@ for (const inp of TX_TEST_INPUTS) {
     },
   });
 }
-for (const [address, amount] of TX_TEST_OUTPUTS) tx32.addOutputAddress(address, amount);
-deepStrictEqual(hex.encode(tx32.unsignedTx), RAW_TX_HEX);
+for (const [address, amount] of TX_TEST_OUTPUTS) txP2WPKH.addOutputAddress(address, amount);
+deepStrictEqual(hex.encode(txP2WPKH.unsignedTx), RAW_TX_HEX);
 txP2WPKH.sign(privKey);
 txP2WPKH.finalize();
 deepStrictEqual(txP2WPKH.id, 'cbb94443b19861df0824914fa654212facc071854e0df6f7388b482a6394526d');
