@@ -82,11 +82,13 @@ function tapTweak(a: Bytes, b: Bytes): bigint {
 
 export function taprootTweakPrivKey(privKey: Uint8Array, merkleRoot = new Uint8Array()) {
   const u = schnorr.utils;
-  // seckey0 = int_from_bytes(seckey0); P = point_mul(G, seckey0)
+  const seckey0 = u.bytesToNumberBE(privKey); // seckey0 = int_from_bytes(seckey0)
+  const P = ProjPoint.fromPrivateKey(seckey0); // P = point_mul(G, seckey0)
   // seckey = seckey0 if has_even_y(P) else SECP256K1_ORDER - seckey0
-  const { scalar: seckey, bytes } = u.getExtendedPublicKey(privKey);
+  const seckey = P.hasEvenY() ? seckey0 : u.mod(-seckey0, CURVE_ORDER);
+  const xP = u.pointToBytes(P);
   // t = int_from_bytes(tagged_hash("TapTweak", bytes_from_int(x(P)) + h)); >= SECP256K1_ORDER check
-  const t = tapTweak(bytes, merkleRoot);
+  const t = tapTweak(xP, merkleRoot);
   // bytes_from_int((seckey + t) % SECP256K1_ORDER)
   return u.numberToBytesBE(u.mod(seckey + t, CURVE_ORDER), 32);
 }
