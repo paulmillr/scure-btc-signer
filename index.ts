@@ -463,7 +463,7 @@ const PSBTGlobal = {
   outputCount:      [0x05, false,      CompactSizeLen, [2], [2],    false],
   txModifiable:     [0x06, false,      P.U8,           [],  [2],    false],   // TODO: bitfield
   version:          [0xfb, false,      P.U32LE,        [],  [0, 2], false],
-  propietary:       [0xfc, BytesInf,   BytesInf,       [],  [0, 2], false],
+  proprietary:      [0xfc, BytesInf,   BytesInf,       [],  [0, 2], false],
 } as const;
 // prettier-ignore
 const PSBTInput = {
@@ -492,7 +492,7 @@ const PSBTInput = {
   tapBip32Derivation:     [0x16, Bytes32,             TaprootBIP32Der,  [],  [0, 2], false],
   tapInternalKey:         [0x17, false,               PubKeySchnorr,    [],  [0, 2], false],
   tapMerkleRoot:          [0x18, false,               Bytes32,          [],  [0, 2], false],
-  propietary:             [0xfc, BytesInf,            BytesInf,         [],  [0, 2], false],
+  proprietary:            [0xfc, BytesInf,            BytesInf,         [],  [0, 2], false],
 } as const;
 // All other keys removed when finalizing
 const PSBTInputFinalKeys: (keyof TransactionInput)[] = [
@@ -525,7 +525,7 @@ const PSBTOutput = {
   tapInternalKey:     [0x05, false,         PubKeySchnorr,   [],  [0, 2], false],
   tapTree:            [0x06, false,         tapTree,         [],  [0, 2], false],
   tapBip32Derivation: [0x07, PubKeySchnorr, TaprootBIP32Der, [],  [0, 2], false],
-  propietary:         [0xfc, BytesInf,      BytesInf,        [],  [0, 2], false],
+  proprietary:        [0xfc, BytesInf,      BytesInf,        [],  [0, 2], false],
 } as const;
 
 // Can be modified even on signed input
@@ -1687,7 +1687,7 @@ export class Transaction {
       ...i,
       ...parsed.global.unsignedTx?.outputs[j],
     }));
-    tx.global = { ...parsed.global, txVersion: version }; // just in case propietary/unknown fields
+    tx.global = { ...parsed.global, txVersion: version }; // just in case proprietary/unknown fields
     if (lockTime !== DEFAULT_LOCKTIME) tx.global.fallbackLocktime = lockTime;
     return tx;
   }
