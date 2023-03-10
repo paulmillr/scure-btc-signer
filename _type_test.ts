@@ -51,7 +51,17 @@ tx.addInput({
 // });
 // Outputs
 tx.addOutput({ amount: 123n });
-tx.updateOutput(0, { amount: '1' });
-tx.updateOutput(0, { amount: 1 });
-tx.addOutput({ amount: '123' });
-tx.addOutput({ amount: 123 });
+// should fail
+// tx.updateOutput(0, { amount: '1' });
+// tx.updateOutput(0, { amount: 1 });
+// should fail
+// tx.addOutput({ amount: '123' });
+// tx.addOutput({ amount: 123 });
+
+for (let i = 0; i < tx.inputsLength; i++) {
+  console.log('I', tx.getInput(i));
+}
+
+for (let i = 0; i < tx.outputsLength; i++) {
+  console.log('O', tx.getOutput(i));
+}

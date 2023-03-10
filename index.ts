@@ -26,6 +26,23 @@ const concat = P.concatBytes;
 // Make base58check work
 export const base58check = _b58(sha256);
 
+export function cloneDeep<T>(obj: T): T {
+  if (Array.isArray(obj)) return obj.map((i) => cloneDeep(i)) as unknown as T;
+  // slice of nodejs Buffer doesn't copy
+  else if (obj instanceof Uint8Array) return Uint8Array.from(obj) as unknown as T;
+  // immutable
+  else if (['number', 'bigint', 'boolean', 'string', 'undefined'].includes(typeof obj)) return obj;
+  // null is object
+  else if (obj === null) return obj;
+  // should be last, so it won't catch other types
+  else if (typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj).map(([k, v]) => [k, cloneDeep(v)])
+    ) as unknown as T;
+  }
+  throw new Error(`cloneDeep: unknown type=${obj} (${typeof obj})`);
+}
+
 enum PubT {
   ecdsa,
   schnorr,
@@ -1538,10 +1555,7 @@ function cleanFinalInput(i: TransactionInput) {
 }
 
 export type TransactionOutput = P.UnwrapCoder<typeof PSBTOutputCoder>;
-export type TransactionOutputUpdate = ExtendType<
-  TransactionOutput,
-  { amount?: string | number; script?: string }
->;
+export type TransactionOutputUpdate = ExtendType<TransactionOutput, { script?: string }>;
 export type TransactionOutputRequired = {
   script: Bytes;
   amount: bigint;
@@ -1642,6 +1656,17 @@ function validateOpts(opts: TxOpts) {
 }
 
 export class Transaction {
+  private global: PSBTKeyMapKeys<typeof PSBTGlobal> = {};
+  private inputs: TransactionInput[] = []; // use getInput()
+  private outputs: TransactionOutput[] = []; // use getOutput()
+  readonly opts: ReturnType<typeof validateOpts>;
+  constructor(opts: TxOpts = {}) {
+    const _opts = (this.opts = validateOpts(opts));
+    // Merge with global structure of PSBTv2
+    if (_opts.lockTime !== DEFAULT_LOCKTIME) this.global.fallbackLocktime = _opts.lockTime;
+    this.global.txVersion = _opts.version;
+  }
+
   // Import
   static fromRaw(raw: Bytes, opts: TxOpts = {}) {
     const parsed = RawTx.decode(raw);
@@ -1724,16 +1749,6 @@ export class Transaction {
       inputs,
       outputs,
     });
-  }
-  private global: PSBTKeyMapKeys<typeof PSBTGlobal> = {};
-  private inputs: TransactionInput[] = [];
-  private outputs: TransactionOutput[] = [];
-  readonly opts: ReturnType<typeof validateOpts>;
-  constructor(opts: TxOpts = {}) {
-    const _opts = (this.opts = validateOpts(opts));
-    // Merge with global structure of PSBTv2
-    if (_opts.lockTime !== DEFAULT_LOCKTIME) this.global.fallbackLocktime = _opts.lockTime;
-    this.global.txVersion = _opts.version;
   }
 
   // BIP370 lockTime (https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time)
@@ -1884,6 +1899,13 @@ export class Transaction {
     if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.inputs.length)
       throw new Error(`Wrong input index=${idx}`);
   }
+  getInput(idx: number) {
+    this.checkInputIdx(idx);
+    return cloneDeep(this.inputs[idx]);
+  }
+  get inputsLength() {
+    return this.inputs.length;
+  }
   // Modification
   private normalizeInput(
     i: TransactionInputUpdate,
@@ -1933,6 +1955,13 @@ export class Transaction {
   private checkOutputIdx(idx: number) {
     if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.outputs.length)
       throw new Error(`Wrong output index=${idx}`);
+  }
+  getOutput(idx: number) {
+    this.checkInputIdx(idx);
+    return cloneDeep(this.outputs[idx]);
+  }
+  get outputsLength() {
+    return this.outputs.length;
   }
   private normalizeOutput(
     o: TransactionOutputUpdate,

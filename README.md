@@ -87,7 +87,7 @@ import { deepStrictEqual, throws } from 'assert';
 
 ### P2PK (Pay To Public Key)
 
-Old script, doesn't have address at all. Should be wrapped in P2SH/P2WSH/P2SH-P2WSH.
+Legacy script, doesn't have an address. Must be wrapped in P2SH / P2WSH / P2SH-P2WSH. Not recommended.
 
 ```ts
 const uncompressed = hex.decode(
@@ -104,7 +104,7 @@ deepStrictEqual(btc.p2pk(uncompressed), {
 
 ### P2PKH (Public Key Hash)
 
-Classic address (pre-SegWit)
+Classic (pre-SegWit) address.
 
 ```ts
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
@@ -139,8 +139,7 @@ deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
 
 ### P2WPKH (Witness Public Key Hash)
 
-Same as P2PKH, but for SegWit V0. Basic bech32 address.
-Cannot be wrapped in P2WSH.
+SegWit V0 version of [P2PKH](#p2pkh-public-key-hash). Basic bech32 address. Can't be wrapped in [P2WSH](#p2wsh-witness-script-hash).
 
 ```ts
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
@@ -160,10 +159,9 @@ deepStrictEqual(btc.p2sh(btc.p2wpkh(PubKey)), {
 
 ### P2SH (Script Hash)
 
-Classic (pre-SegWit) script address. Useful for multisig and other smart-contracts.
-Takes full output of other payments, not just script.
+Classic (pre-SegWit) script address. Useful for multisig and other advanced use-cases. Consumes full output of other payments — NOT only script.
 
-**_NOTE_**: redeemScript should be added to transaction input in order to spend.
+Required tx input fields to make it spendable: `redeemScript`
 
 ```ts
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
@@ -178,9 +176,9 @@ deepStrictEqual(btc.p2sh(btc.p2pkh(PubKey)), {
 
 ### P2WSH (Witness Script Hash)
 
-Same as P2SH but for SegWit V0.
+SegWit V0 version of [P2SH](#p2sh-script-hash).
 
-**_NOTE_**: witnessScript should be added to transaction input in order to spend.
+Required tx input fields to make it spendable: `witnessScript`
 
 ```ts
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
@@ -196,7 +194,7 @@ deepStrictEqual(btc.p2wsh(btc.p2pkh(PubKey)), {
 
 Not really script type, but construction of P2WSH inside P2SH.
 
-**_NOTE_**: both reedemScript and witnessScript should be added to transaction in order to spend.
+Required tx input fields to make it spendable: `redeemScript`, `witnessScript`
 
 ```ts
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
@@ -211,10 +209,9 @@ deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
 
 ### P2MS (classic multisig)
 
-Classic (pre-taproot) M-of-N Multisig, doesn't have an address, should be wrapped in P2SH/P2WSH/P2SH-P2WSH.
+Classic / segwit (pre-taproot) M-of-N Multisig. Doesn't have an address, must be wrapped in P2SH / P2WSH / P2SH-P2WSH.
 
-**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating wrong multisig by mistake. However there is a flag: allowSamePubkeys, in case you really need that.
-Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
+Duplicate public keys are not accepted to reduce mistakes. Use flag `allowSamePubkeys` to override the behavior, for cases like `2-of-[A,A,B,C]`, which can be signed by `A or (B and C)`.
 
 ```ts
 const PubKeys = [
@@ -262,12 +259,12 @@ deepStrictEqual(btc.p2wsh(btc.p2ms(2, PubKeys)), btc.sortedMultisig(2, PubKeys, 
 
 TapRoot (SegWit V1) script which replaces both public key and script types from previous versions.
 
-**_NOTE_**: it takes `p2tr(PubKey?, ScriptTree?)` and works as PubKey OR ScriptTree, which means
+Consumes `p2tr(PubKey?, ScriptTree?)` and works as `PubKey` OR `ScriptTree`, which means
 if you use any spendable PubKey and ScriptTree of multi-sig, owner of private key for PubKey will
 be able to spend output. If PubKey is undefined we use static unspendable PubKey by default, which leaks information about script type. However, any dynamic unspendable keys will require complex interaction
 to sign multi-sig wallets, and there is no BIP/PSBT fields for that yet.
 
-**_NOTE_**: tapInternalKey, tapMerkleRoot, tapLeafScript should be added to transaction input in order to spend.
+Required tx input fields to make it spendable: `tapInternalKey`, `tapMerkleRoot`, `tapLeafScript`
 
 ```ts
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -285,7 +282,7 @@ const clean = (x) => ({ type: x.type, address: x.address, script: hex.encode(x.s
 const PubKey2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
 const PubKey3 = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
 // Nested P2TR, owner of private key for any of PubKeys can spend whole
-// NOTE: by default P2TR expects binary tree, but btc.p2tr can build it if list of scripts passed.
+// By default P2TR expects binary tree, but btc.p2tr can build it if list of scripts passed.
 // Also, you can include {weight: N} to scripts to create differently balanced tree.
 deepStrictEqual(
   clean(btc.p2tr(undefined, [btc.p2tr_pk(PubKey), btc.p2tr_pk(PubKey2), btc.p2tr_pk(PubKey3)])),
@@ -312,12 +309,11 @@ deepStrictEqual(
 
 Taproot N-of-N multisig (`[<PubKeys[0:n-1]> CHECKSIGVERIFY] <PubKeys[n-1]> CHECKSIG`).
 
-**_NOTE_**: First arg is M, if M!=PubKeys.length, it will create a multi-leaf M-of-N taproot script tree.
+First arg is M, if M!=PubKeys.length, it will create a multi-leaf M-of-N taproot script tree.
 This allows one to reveal only `M` PubKeys on spend, without any information about the others.
 This is fast for cases like 15-of-20, but extremely slow for cases like 5-of-20.
 
-**_NOTE_**: By default we don't accept duplicate public keys, to avoid creating the wrong multisig by mistake. However there is a flag called allowSamePubkeys, in case you really need that.
-Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
+Duplicate public keys are not accepted to reduce mistakes. Use flag `allowSamePubkeys` to override the behavior, for cases like `2-of-[A,A,B,C]`, which can be signed by `A or (B and C)`.
 
 ```ts
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -348,10 +344,9 @@ deepStrictEqual(clean(btc.p2tr(undefined, btc.p2tr_ns(2, [PubKey, PubKey2, PubKe
 
 M-of-N single leaf TapRoot multisig (`<PubKeys[0]> CHECKSIG [<PubKeys[1:n]> CHECKSIGADD] <M> NUMEQUAL`)
 
-**_NOTE_**: By default, we don't accept duplicate public keys in order to avoid creating the wrong multisig by mistake. However, there is a flag called allowSamePubkeys, in case you really need that.
-Valid use-case: `2-of-[A,A,B,C]`, can be signed by `A or (B and C)`.
+Duplicate public keys are not accepted to reduce mistakes. Use flag `allowSamePubkeys` to override the behavior, for cases like `2-of-[A,A,B,C]`, which can be signed by `A or (B and C)`.
 
-**_NOTE_**: experimental, use at your own risk.
+**Experimental**, use at your own risk.
 
 ```ts
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -375,7 +370,7 @@ deepStrictEqual(clean(btc.p2tr(undefined, btc.p2tr_ms(2, [PubKey, PubKey2, PubKe
 
 ### P2TR-PK (Taproot single P2PK script)
 
-This is a specific case of `p2tr_ns(1, [pubkey])`, which is the same as the BTC descriptor: `tr($H,pk(PUBKEY))`
+Specific case of `p2tr_ns(1, [pubkey])`, which is the same as the BTC descriptor: `tr($H,pk(PUBKEY))`
 
 ```ts
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -392,10 +387,13 @@ deepStrictEqual(clean(btc.p2tr(undefined, [btc.p2tr_pk(PubKey)])), {
 
 ### Encode/decode
 
-**_NOTE_**: we support both PSBTv0 and draft PSBTv2 (there is no PSBTv1). If PSBTv2 transaction encoded into PSBTv1, all PSBTv2 fields will be stripped.
-**_NOTE_**: we strip 'unknown' keys inside PSBT, they needed for new version/features support, however any unsupported feature/new version can significantly break assumptions about code.
-If you have use-case where they needed, please open issue.
-For PSBTv2: tx_modifiable, taproot+bip32 is not supported yet.
+We support both PSBTv0 and draft PSBTv2 (there is no PSBTv1). If PSBTv2 transaction is encoded into PSBTv1, all PSBTv2 fields will be stripped.
+
+We strip 'unknown' keys inside PSBT, they needed for new version/features support,
+however any unsupported feature/new version can significantly break assumptions about code.
+If you have use-case where they are needed, create a github issue.
+
+PSBTv2 features tx_modifiable and taproot+bip32 are not supported yet.
 
 ```ts
 // Decode
@@ -412,6 +410,9 @@ tx.toPSBT(ver = this.PSBTVersion); // PSBT
 We have txid (BE) instead of hash (LE) in transactions. We can support both,
 but txid is consistent across block explorers, while some explorers treat hash
 as txid - so hash is not consistent.
+
+Use `getInput` and `inputsLength` to read information about inputs: they return a copy.
+This is neccessary to avoid accidential modification of internal structures without calling methods (addInput/updateInput) that will verify correctness.
 
 ```ts
 type TransactionInput = {
@@ -499,13 +500,23 @@ deepStrictEqual(tx.inputs[0], {
   index: 10,
   sequence: btc.DEFAULT_SEQUENCE,
 });
+
+// Read inputs
+for (let i = 0; i < tx.inputsLength; i++) {
+  console.log('I', tx.getInput(i));
+}
 ```
 
 ### Outputs
 
-**_NOTE_**: amount in addOutputAddress handled as 'bitcoins' if string, and as satoshi if bigint.
-Why? BigInt usually comes from calculations/API, which is usually in satoshi. String is probably user input, so it is worth
-to handle conversion to satoshi's in that case.
+`addOutputAddress` uses bigint amounts, which mean satoshis - NOT btc. If you need btc representation, use Decimal:
+
+```ts
+const amountSatoshi = btc.Decimal.decode('1.5'); // 1.5 btc in satoshi
+```
+
+Use `getOutput` and `outputsLength` to read outputs information. This methods returns copy of output, instead of internal representation.
+This is neccessary to avoid accidential modification of internal structures without calling methods (addOutput/updateOutput) that will verify correctness.
 
 ```ts
 type TransactionOutput = {
@@ -562,6 +573,11 @@ deepStrictEqual(tx.outputs[0], {
   script,
   amount: 200n,
 });
+
+// Read outputs
+for (let i = 0; i < tx.outputsLength; i++) {
+  console.log('O', tx.getOutput(i));
+}
 ```
 
 ### Basic transaction sign
@@ -687,7 +703,7 @@ const psbt3 = tx3.toPSBT();
   - cP53pDbR5WtAD8dYAW9hhTjuvvTVaEiQBdrz9XPrgLBeRFiyCbQr (m/0'/0'/0')
   - cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4iSgw6d (m/0'/0'/2')
 */
-// NOTE: we don't use HDKey, because it will everything because of bip32 derivation
+// We don't use HDKey, because it will everything because of bip32 derivation
 const tx4 = btc.Transaction.fromPSBT(psbt3);
 tx4.sign(btc.WIF(testnet).decode('cP53pDbR5WtAD8dYAW9hhTjuvvTVaEiQBdrz9XPrgLBeRFiyCbQr'));
 tx4.sign(btc.WIF(testnet).decode('cR6SXDoyfQrcp4piaiHE97Rsgta9mNhGTen9XeonVgwsh4iSgw6d'));
@@ -783,7 +799,7 @@ deepStrictEqual(
 
 ### OutScript
 
-Encoding/decoding of output scripts
+Encoding / decoding of output scripts
 
 ```ts
 deepStrictEqual(
