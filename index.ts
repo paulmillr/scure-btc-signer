@@ -1957,7 +1957,7 @@ export class Transaction {
       throw new Error(`Wrong output index=${idx}`);
   }
   getOutput(idx: number) {
-    this.checkInputIdx(idx);
+    this.checkOutputIdx(idx);
     return cloneDeep(this.outputs[idx]);
   }
   get outputsLength() {
