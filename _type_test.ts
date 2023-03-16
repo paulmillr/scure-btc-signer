@@ -1,6 +1,6 @@
 import * as btc from './index.js';
 import { hex } from '@scure/base';
-import * as secp from '@noble/secp256k1';
+import { secp256k1 as secp } from '@noble/curves/secp256k1';
 
 const privKey1 = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 const P1 = secp.getPublicKey(privKey1, true);

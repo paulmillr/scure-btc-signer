@@ -581,10 +581,11 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
         const val = value[name];
         if (val === undefined) continue;
         const [type, kc, vc] = psbtEnum[name];
-        if (!kc) out.push({ key: { type, key: P.EMPTY }, value: vc.encode(val) });
-        else {
+        if (!kc) {
+          out.push({ key: { type, key: P.EMPTY }, value: vc.encode(val) });
+        } else {
           // Low level interface, returns keys as is (with duplicates). Useful for debug
-          const kv: [Bytes, Bytes][] = val.map(
+          const kv: [Bytes, Bytes][] = val!.map(
             ([k, v]: [P.UnwrapCoder<typeof kc>, P.UnwrapCoder<typeof vc>]) => [
               kc.encode(k),
               vc.encode(v),
