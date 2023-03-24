@@ -1,6 +1,6 @@
 # scure-btc-signer
 
-Audited minimal library for creating, signing & decoding Bitcoin transactions.
+Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 
 - ✍️ Create transactions, inputs, outputs, sign them
 - 📡 No network code: simplified audits and offline usage
