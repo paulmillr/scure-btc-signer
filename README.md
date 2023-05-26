@@ -24,15 +24,15 @@ Initial development has been funded by [Ryan Shea](https://shea.io). Check out [
   [bip39](https://github.com/paulmillr/scure-bip39),
   [btc-signer](https://github.com/paulmillr/scure-btc-signer)
 
-Also, check out all _web3 utility libraries:_ [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [scure-btc-signer](https://github.com/paulmillr/scure-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+*Check out all web3 utility libraries:* [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
-Use NPM for browser / node.js:
-
 > npm install @scure/btc-signer
 
-For [Deno](https://deno.land), use it with [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
+We support all major platforms and runtimes.
+For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
+For React Native, you may need a [polyfill for crypto.getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 
 ```ts
 import * as btc from '@scure/btc-signer';
