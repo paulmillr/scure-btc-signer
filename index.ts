@@ -1856,7 +1856,7 @@ export class Transaction {
     out += 4 * CompactSizeLen.encode(this.inputs.length).length;
     out += 4 * CompactSizeLen.encode(this.outputs.length).length;
     for (const i of this.inputs)
-      if (i.finalScriptSig) out += 160 + 4 * VarBytes.encode(i.finalScriptSig).length;
+      out += 160 + 4 * VarBytes.encode(i.finalScriptSig || P.EMPTY).length;
     for (const o of outputs) out += 32 + 4 * VarBytes.encode(o.script).length;
     if (this.hasWitnesses) {
       for (const i of this.inputs)
