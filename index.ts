@@ -1483,17 +1483,15 @@ export function Address(network = NETWORK) {
         else if (version === 1 && data.length === 32) return { type: 'tr', pubkey: data };
         else throw new Error('Unkown witness program');
       }
-      const data = base58.decode(address);
-      if (data.length !== 25) throw new Error('Invalid base58 address');
+      const data = base58check.decode(address);
+      if (data.length !== 21) throw new Error('Invalid base58 address');
       // Pay To Public Key Hash
       if (data[0] === network.pubKeyHash) {
-        const bytes = base58.decode(address);
-        return { type: 'pkh', hash: bytes.slice(1, bytes.length - 4) };
+        return { type: 'pkh', hash: data.slice(1) };
       } else if (data[0] === network.scriptHash) {
-        const bytes = base58.decode(address);
         return {
           type: 'sh',
-          hash: base58.decode(address).slice(1, bytes.length - 4),
+          hash: data.slice(1),
         };
       }
       throw new Error(`Invalid address prefix=${data[0]}`);
