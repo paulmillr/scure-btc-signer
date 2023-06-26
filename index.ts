@@ -1481,7 +1481,7 @@ export function Address(network = NETWORK) {
         if (version === 0 && data.length === 32) return { type: 'wsh', hash: data };
         else if (version === 0 && data.length === 20) return { type: 'wpkh', hash: data };
         else if (version === 1 && data.length === 32) return { type: 'tr', pubkey: data };
-        else throw new Error('Unkown witness program');
+        else throw new Error('Unknown witness program');
       }
       const data = base58check.decode(address);
       if (data.length !== 21) throw new Error('Invalid base58 address');
@@ -1982,7 +1982,7 @@ export class Transaction {
       OutScript.decode(res.script).type === 'unknown'
     ) {
       throw new Error(
-        'Transaction/output: unknown output script type, there is a chance that input is unspendable. Pass allowUnkownScript=true, if you sure'
+        'Transaction/output: unknown output script type, there is a chance that input is unspendable. Pass allowUnknownScript=true, if you sure'
       );
     }
     if (!this.opts.disableScriptCheck) checkScript(res.script, res.redeemScript, res.witnessScript);
