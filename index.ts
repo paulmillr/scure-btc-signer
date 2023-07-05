@@ -1603,8 +1603,12 @@ export type TxOpts = {
   PSBTVersion?: number;
   // Flags
   // Allow output scripts to be unknown scripts (probably unspendable)
+  /** @deprecated Use `allowUnknownOutput` */
+  allowUnknowOutput?: boolean;
   allowUnknownOutput?: boolean;
   // Try to sign/finalize unknown input. All bets are off, but there is chance that it will work
+  /** @deprecated Use `allowUnknownInput` */
+  allowUnknowInput?: boolean;
   allowUnknownInput?: boolean;
   // Check input/output scripts for sanity
   disableScriptCheck?: boolean;
@@ -1623,12 +1627,18 @@ const isPlainObject = (obj: any) =>
 
 function validateOpts(opts: TxOpts) {
   if (!isPlainObject(opts)) throw new Error(`Wrong object type for transaction options: ${opts}`);
+
   const _opts = {
     ...opts,
+    // Defaults
     version: def(opts.version, DEFAULT_VERSION),
     lockTime: def(opts.lockTime, 0),
     PSBTVersion: def(opts.PSBTVersion, 0),
-  }; // Defaults
+  };
+  if (typeof _opts.allowUnknowInput !== 'undefined')
+    opts.allowUnknownInput = _opts.allowUnknowInput;
+  if (typeof _opts.allowUnknowOutput !== 'undefined')
+    opts.allowUnknownOutput = _opts.allowUnknowOutput;
   // 0 and -1 happens in tests
   if (![-1, 0, 1, 2].includes(_opts.version)) throw new Error(`Unknown version: ${_opts.version}`);
   if (typeof _opts.lockTime !== 'number') throw new Error('Transaction lock time should be number');
