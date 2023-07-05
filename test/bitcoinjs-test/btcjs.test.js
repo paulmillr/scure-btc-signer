@@ -21,7 +21,7 @@ for (let i = 0; i < f_transaction.valid.length; i++) {
   const v = f_transaction.valid[i];
   should(`Transaction/valid(${i}): ${v.description}`, () => {
     const opts = {
-      allowUnknownOutput: i === 4 || i === 19,
+      allowUnknownOutputs: i === 4 || i === 19,
       disableScriptCheck: i === 4 || i === 19,
     };
     const vhex = v.whex ? v.whex : v.hex;
@@ -76,7 +76,7 @@ for (let i = 0; i < f_transaction.hashForSignature.length; i++) {
   const v = f_transaction.hashForSignature[i];
   should(`Transaction/hashForSignature(${i}): ${v.description}`, () => {
     const opts = {
-      allowUnknownOutput: [0, 1, 2, 3, 4].includes(i),
+      allowUnknownOutputs: [0, 1, 2, 3, 4].includes(i),
     };
     const tx = btc.Transaction.fromRaw(hex.decode(v.txHex), opts);
     const script = btc.Script.encode(utils.fromASM(v.script));
@@ -99,7 +99,7 @@ for (let i = 0; i < f_transaction.taprootSigning.length; i++) {
   const v = f_transaction.taprootSigning[i];
   should(`Transaction/hashForWitnessV1(${i}): ${v.description}`, () => {
     const opts = {
-      allowUnknownOutput: i === 0,
+      allowUnknownOutputs: i === 0,
       disableScriptCheck: i === 0,
     };
     const tx = btc.Transaction.fromRaw(hex.decode(v.txHex), opts);
