@@ -906,7 +906,7 @@ const TxHashIdx = P.struct({ txid: P.bytes(32, true), index: P.U32LE });
 // - generate input script
 // - generate address/output/redeem from user input
 // P2ret represents generic interface for all p2* methods
-type P2Ret = {
+export type P2Ret = {
   type: string;
   script: Bytes;
   address?: string;
@@ -937,7 +937,7 @@ export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
   };
 };
 
-// Publick Key Hash (P2PKH)
+// Public Key Hash (P2PKH)
 type OutPKHType = { type: 'pkh'; hash: Bytes };
 const OutPKH: Coder<OptScript, OutPKHType | undefined> = {
   encode(from: ScriptType): OutPKHType | undefined {
@@ -1096,13 +1096,13 @@ export function taprootListToTree(taprootList: TaprootScriptList): TaprootScript
 type HashedTree =
   | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes; tapInternalKey?: Bytes }
   | { type: 'branch'; left: HashedTree; right: HashedTree; hash: Bytes };
-function checkTaprootScript(script: Bytes, allowUnknowOutput = false) {
+function checkTaprootScript(script: Bytes, allowUnknownOutputs = false) {
   const out = OutScript.decode(script);
-  if (out.type === 'unknown' && allowUnknowOutput) return;
+  if (out.type === 'unknown' && allowUnknownOutputs) return;
   if (!['tr_ns', 'tr_ms'].includes(out.type))
     throw new Error(`P2TR: invalid leaf script=${out.type}`);
 }
-function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): HashedTree {
+function taprootHashTree(tree: TaprootScriptTree, allowUnknownOutputs = false): HashedTree {
   if (!tree) throw new Error('taprootHashTree: empty tree');
   if (Array.isArray(tree) && tree.length === 1) tree = tree[0];
   // Terminal node (leaf)
@@ -1116,7 +1116,7 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
       throw new Error('P2TR: tapRoot leafScript cannot have unspendble key');
     const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
     if (!isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
-    checkTaprootScript(script, allowUnknowOutput);
+    checkTaprootScript(script, allowUnknownOutputs);
     return {
       type: 'leaf',
       tapInternalKey,
@@ -1130,8 +1130,8 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknowOutput = false): Ha
   if (tree.length !== 2) throw new Error('hashTree: non binary tree!');
   // branch
   // Both nodes should exist
-  const left = taprootHashTree(tree[0], allowUnknowOutput);
-  const right = taprootHashTree(tree[1], allowUnknowOutput);
+  const left = taprootHashTree(tree[0], allowUnknownOutputs);
+  const right = taprootHashTree(tree[1], allowUnknownOutputs);
   // We cannot swap left/right here, since it will change structure of tree
   let [lH, rH] = [left.hash, right.hash];
   if (_cmpBytes(rH, lH) === -1) [lH, rH] = [rH, lH];
@@ -1197,7 +1197,7 @@ export function p2tr(
   internalPubKey?: Bytes | string,
   tree?: TaprootScriptTree,
   network = NETWORK,
-  allowUnknowOutput = false
+  allowUnknownOutputs = false
 ): P2TROut {
   // Unspendable
   if (!internalPubKey && !tree) throw new Error('p2tr: should have pubKey or scriptTree (or both)');
@@ -1206,7 +1206,7 @@ export function p2tr(
       ? hex.decode(internalPubKey)
       : internalPubKey || TAPROOT_UNSPENDABLE_KEY;
   if (!isValidPubkey(pubKey, PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
-  let hashedTree = tree ? taprootAddPath(taprootHashTree(tree, allowUnknowOutput)) : undefined;
+  let hashedTree = tree ? taprootAddPath(taprootHashTree(tree, allowUnknownOutputs)) : undefined;
   const tapMerkleRoot = hashedTree ? hashedTree.hash : undefined;
   const [tweakedPubkey, parity] = taprootTweakPubkey(pubKey, tapMerkleRoot || P.EMPTY);
   let leaves;
@@ -1603,9 +1603,13 @@ export type TxOpts = {
   PSBTVersion?: number;
   // Flags
   // Allow output scripts to be unknown scripts (probably unspendable)
+  /** @deprecated Use `allowUnknownOutputs` */
   allowUnknowOutput?: boolean;
+  allowUnknownOutputs?: boolean;
   // Try to sign/finalize unknown input. All bets are off, but there is chance that it will work
+  /** @deprecated Use `allowUnknownInputs` */
   allowUnknowInput?: boolean;
+  allowUnknownInputs?: boolean;
   // Check input/output scripts for sanity
   disableScriptCheck?: boolean;
   // There is strange behaviour where tx without outputs encoded with empty output in the end,
@@ -1623,12 +1627,18 @@ const isPlainObject = (obj: any) =>
 
 function validateOpts(opts: TxOpts) {
   if (!isPlainObject(opts)) throw new Error(`Wrong object type for transaction options: ${opts}`);
+
   const _opts = {
     ...opts,
+    // Defaults
     version: def(opts.version, DEFAULT_VERSION),
     lockTime: def(opts.lockTime, 0),
     PSBTVersion: def(opts.PSBTVersion, 0),
-  }; // Defaults
+  };
+  if (typeof _opts.allowUnknowInput !== 'undefined')
+    opts.allowUnknownInputs = _opts.allowUnknowInput;
+  if (typeof _opts.allowUnknowOutput !== 'undefined')
+    opts.allowUnknownOutputs = _opts.allowUnknowOutput;
   // 0 and -1 happens in tests
   if (![-1, 0, 1, 2].includes(_opts.version)) throw new Error(`Unknown version: ${_opts.version}`);
   if (typeof _opts.lockTime !== 'number') throw new Error('Transaction lock time should be number');
@@ -1639,8 +1649,8 @@ function validateOpts(opts: TxOpts) {
     throw new Error(`Unknown PSBT version ${_opts.PSBTVersion}`);
   // Flags
   for (const k of [
-    'allowUnknowOutput',
-    'allowUnknowInput',
+    'allowUnknownOutputs',
+    'allowUnknownInputs',
     'disableScriptCheck',
     'bip174jsCompat',
     'allowLegacyWitnessUtxo',
@@ -1978,7 +1988,7 @@ export class Transaction {
     PSBTOutputCoder.encode(res);
     if (
       res.script &&
-      !this.opts.allowUnknowOutput &&
+      !this.opts.allowUnknownOutputs &&
       OutScript.decode(res.script).type === 'unknown'
     ) {
       throw new Error(
@@ -2426,7 +2436,7 @@ export class Transaction {
               signatures.push(scriptSig[sigIdx][1]);
             }
             if (signatures.length !== outScript.pubkeys.length) continue;
-          } else if (outScript.type === 'unknown' && this.opts.allowUnknowInput) {
+          } else if (outScript.type === 'unknown' && this.opts.allowUnknownInputs) {
             // Trying our best to sign what we can
             const scriptDecoded = Script.decode(script);
             signatures = scriptSig
@@ -2483,7 +2493,7 @@ export class Transaction {
     } else if (inputType.last.type === 'wpkh') {
       inputScript = P.EMPTY;
       witness = [input.partialSig[0][1], input.partialSig[0][0]];
-    } else if (inputType.last.type === 'unknown' && !this.opts.allowUnknowInput)
+    } else if (inputType.last.type === 'unknown' && !this.opts.allowUnknownInputs)
       throw new Error('Unknown inputs not allowed');
 
     // Create final scripts (generic part)

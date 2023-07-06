@@ -14,7 +14,7 @@ for (let i = 0; i < v341.keyPathSpending.length; i++) {
     // OP_CHECKSIG OP_BOOLAND OP_EQUAL 0xf5 OP_9 75 0xac9a87f5594be208f8532db38cff670c450ed2fea8fcdefcc9a663f78bab962b
     // looks kinda broken
     const opts = {
-      allowUnknowOutput: i === 0,
+      allowUnknownOutputs: i === 0,
       disableScriptCheck: i === 0,
     };
     const tx = btc.Transaction.fromRaw(hex.decode(t.given.rawUnsignedTx), opts);

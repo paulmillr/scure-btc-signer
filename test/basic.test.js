@@ -1461,7 +1461,7 @@ should('big multisig (real)', () => {
   script2.push('NUMEQUAL');
   btc.OutScript.decode(btc.Script.encode(script2));
 
-  const tx = new btc.Transaction({ allowUnknowInput: true });
+  const tx = new btc.Transaction({ allowUnknownInputs: true });
   tx.addOutputAddress('bc1q34yl3qzqv4qlxf0gj9tguv23tzh99syawhmekm', 750n);
 
   const controlBlock = hex.decode(
