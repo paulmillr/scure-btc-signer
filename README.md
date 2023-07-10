@@ -17,14 +17,15 @@ Initial development has been funded by [Ryan Shea](https://shea.io). Check out [
 
 > **scure** — secure, independently audited packages for every use case.
 
-- All releases are signed with PGP keys
+- Audited by a third-party
+- Releases are signed with PGP keys and built transparently with NPM provenance
 - Check out all libraries:
   [base](https://github.com/paulmillr/scure-base),
   [bip32](https://github.com/paulmillr/scure-bip32),
   [bip39](https://github.com/paulmillr/scure-bip39),
   [btc-signer](https://github.com/paulmillr/scure-btc-signer)
 
-*Check out all web3 utility libraries:* [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+*Check out all web3 utility libraries:* [eth](https://github.com/paulmillr/micro-eth-signer), [btc](https://github.com/paulmillr/scure-btc-signer), [sol](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
