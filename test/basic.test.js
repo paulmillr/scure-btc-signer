@@ -1680,6 +1680,18 @@ should('return immutable outputs/inputs', () => {
   console.log('O', tx.outputs[1], o1);
 });
 
+should('error on internalKey inside leaf script (gh-51)', () => {
+  const A = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  const B = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
+  // Disabled by default
+  throws(() => btc.p2tr(A, btc.p2tr_pk(A)));
+  throws(() => btc.p2tr(A, btc.p2tr_ns(2, [A, B])));
+  throws(() => btc.p2tr(A, btc.p2tr_pk(btc.TAPROOT_UNSPENDABLE_KEY)));
+  // Can be done with allowUnknownOutputs flag (disables checks)
+  btc.p2tr(A, btc.p2tr_pk(A), undefined, true);
+  btc.p2tr(A, btc.p2tr_ns(2, [A, B]), undefined, true);
+});
+
 // ESM is broken.
 import url from 'url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {

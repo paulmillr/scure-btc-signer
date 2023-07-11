@@ -1094,32 +1094,51 @@ export function taprootListToTree(taprootList: TaprootScriptList): TaprootScript
   return (last?.childs || last) as TaprootScriptTree;
 }
 type HashedTree =
-  | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes; tapInternalKey?: Bytes }
+  | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes }
   | { type: 'branch'; left: HashedTree; right: HashedTree; hash: Bytes };
-function checkTaprootScript(script: Bytes, allowUnknownOutputs = false) {
+function checkTaprootScript(script: Bytes, internalPubKey: Bytes, allowUnknownOutputs = false) {
   const out = OutScript.decode(script);
   if (out.type === 'unknown' && allowUnknownOutputs) return;
   if (!['tr_ns', 'tr_ms'].includes(out.type))
     throw new Error(`P2TR: invalid leaf script=${out.type}`);
+  const outms = out as OutTRNSType | OutTRMSType;
+  if (!allowUnknownOutputs && outms.pubkeys) {
+    for (const p of outms.pubkeys) {
+      if (P.equalBytes(p, TAPROOT_UNSPENDABLE_KEY))
+        throw new Error('Unspendable taproot key in leaf script');
+      // It's likely a mistake at this point:
+      // 1. p2tr(A, p2tr_ns(2, [A, B])) == p2tr(A, p2tr_pk(B)) (A or B key)
+      // but will take more space and fees.
+      // 2. For multi-sig p2tr(A, p2tr_ns(2, [A, B, C])) it's probably a security issue:
+      // User creates 2 of 3 multisig of keys [A, B, C],
+      // but key A always can spend whole output without signatures from other keys.
+      // p2tr(A, p2tr_ns(2, [B, C, D])) is ok: A or (B and C) or (B and D) or (C and D)
+      if (P.equalBytes(p, internalPubKey)) {
+        throw new Error(
+          'Using P2TR with leaf script with same key as internal key is not supported'
+        );
+      }
+    }
+  }
 }
-function taprootHashTree(tree: TaprootScriptTree, allowUnknownOutputs = false): HashedTree {
+function taprootHashTree(
+  tree: TaprootScriptTree,
+  internalPubKey: Bytes,
+  allowUnknownOutputs = false
+): HashedTree {
   if (!tree) throw new Error('taprootHashTree: empty tree');
   if (Array.isArray(tree) && tree.length === 1) tree = tree[0];
   // Terminal node (leaf)
   if (!Array.isArray(tree)) {
-    const { leafVersion: version, script: leafScript, tapInternalKey } = tree;
+    const { leafVersion: version, script: leafScript } = tree;
     // Earliest tree walk where we can validate tapScripts
     if (tree.tapLeafScript || (tree.tapMerkleRoot && !P.equalBytes(tree.tapMerkleRoot, P.EMPTY)))
       throw new Error('P2TR: tapRoot leafScript cannot have tree');
-    // Just to be sure that it is spendable
-    if (tapInternalKey && P.equalBytes(tapInternalKey, TAPROOT_UNSPENDABLE_KEY))
-      throw new Error('P2TR: tapRoot leafScript cannot have unspendble key');
     const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
     if (!isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
-    checkTaprootScript(script, allowUnknownOutputs);
+    checkTaprootScript(script, internalPubKey, allowUnknownOutputs);
     return {
       type: 'leaf',
-      tapInternalKey,
       version,
       script,
       hash: tapLeafHash(script, version),
@@ -1130,8 +1149,8 @@ function taprootHashTree(tree: TaprootScriptTree, allowUnknownOutputs = false): 
   if (tree.length !== 2) throw new Error('hashTree: non binary tree!');
   // branch
   // Both nodes should exist
-  const left = taprootHashTree(tree[0], allowUnknownOutputs);
-  const right = taprootHashTree(tree[1], allowUnknownOutputs);
+  const left = taprootHashTree(tree[0], internalPubKey, allowUnknownOutputs);
+  const right = taprootHashTree(tree[1], internalPubKey, allowUnknownOutputs);
   // We cannot swap left/right here, since it will change structure of tree
   let [lH, rH] = [left.hash, right.hash];
   if (_cmpBytes(rH, lH) === -1) [lH, rH] = [rH, lH];
@@ -1143,7 +1162,6 @@ type TaprootLeaf = {
   script: Bytes;
   hash: Bytes;
   path: Bytes[];
-  tapInternalKey?: Bytes;
 };
 
 type HashedTreeWithPath =
@@ -1206,7 +1224,9 @@ export function p2tr(
       ? hex.decode(internalPubKey)
       : internalPubKey || TAPROOT_UNSPENDABLE_KEY;
   if (!isValidPubkey(pubKey, PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
-  let hashedTree = tree ? taprootAddPath(taprootHashTree(tree, allowUnknownOutputs)) : undefined;
+  let hashedTree = tree
+    ? taprootAddPath(taprootHashTree(tree, pubKey, allowUnknownOutputs))
+    : undefined;
   const tapMerkleRoot = hashedTree ? hashedTree.hash : undefined;
   const [tweakedPubkey, parity] = taprootTweakPubkey(pubKey, tapMerkleRoot || P.EMPTY);
   let leaves;
@@ -1215,7 +1235,7 @@ export function p2tr(
       ...l,
       controlBlock: TaprootControlBlock.encode({
         version: (l.version || TAP_LEAF_VERSION) + parity,
-        internalKey: l.tapInternalKey || pubKey,
+        internalKey: pubKey,
         merklePath: l.path,
       }),
     }));
@@ -1351,7 +1371,7 @@ export function p2tr_ms(m: number, pubkeys: Bytes[], allowSamePubkeys = false) {
     script: OutScript.encode({ type: 'tr_ms', pubkeys, m }),
   };
 }
-// Uknown output type
+// Unknown output type
 type OutUnknownType = { type: 'unknown'; script: Bytes };
 const OutUnknown: Coder<OptScript, OutUnknownType | undefined> = {
   encode(from: ScriptType): OutUnknownType | undefined {
@@ -2156,10 +2176,10 @@ export class Transaction {
   // Used pretty often, should be fast
   private prevOut(input: TransactionInput): P.UnwrapCoder<typeof RawOutput> {
     if (input.nonWitnessUtxo) {
-      if (input.index === undefined) throw new Error('Uknown input index');
+      if (input.index === undefined) throw new Error('Unknown input index');
       return input.nonWitnessUtxo.outputs[input.index];
     } else if (input.witnessUtxo) return input.witnessUtxo;
-    else throw new Error('Cannot find previous output info.');
+    else throw new Error('Cannot find previous output info');
   }
   private inputType(input: TransactionInput) {
     let txType = 'legacy';
@@ -2308,13 +2328,8 @@ export class Transaction {
           const scriptDecoded = Script.decode(script);
           const ver = _script[_script.length - 1];
           const hash = tapLeafHash(script, ver);
-          const { pubKey, privKey } = getTaprootKeys(
-            privateKey,
-            schnorrPub,
-            cb.internalKey,
-            P.EMPTY // Because we cannot have nested taproot tree
-          );
-          const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, pubKey));
+          // NOTE: no need to tweak internal key here, since we don't support nested p2tr
+          const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, schnorrPub));
           // Skip if there is no public key in tapLeafScript
           if (pos === -1) continue;
           const msg = this.preimageWitnessV1(
@@ -2327,12 +2342,12 @@ export class Transaction {
             ver
           );
           const sig = concat(
-            schnorr.sign(msg, privKey, _auxRand),
+            schnorr.sign(msg, privateKey, _auxRand),
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
           this.updateInput(
             idx,
-            { tapScriptSig: [[{ pubKey: pubKey, leafHash: hash }, sig]] },
+            { tapScriptSig: [[{ pubKey: schnorrPub, leafHash: hash }, sig]] },
             true
           );
           signed = true;
