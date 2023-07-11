@@ -2,13 +2,13 @@
 
 Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 
+- 🔒 [**Audited**](#security) by an independent security firm
 - ✍️ Create transactions, inputs, outputs, sign them
 - 📡 No network code: simplified audits and offline usage
 - 🎻 Classic & SegWit: P2PK, P2PKH, P2WPKH, P2SH, P2WSH, P2MS
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
 - 📨 BIP174 PSBT
 - 👥 Multisig support
-- 🔒 [**Audited**](#security) by an independent security firm
 - 🪶 ~2600 lines
 
 Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
