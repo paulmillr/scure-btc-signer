@@ -2,7 +2,7 @@
 import { secp256k1 as _secp, schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { ripemd160 } from '@noble/hashes/ripemd160';
-import { hex, base58, base58check as _b58, bech32, bech32m } from '@scure/base';
+import { hex, base58check as _b58, bech32, bech32m } from '@scure/base';
 import type { Coder } from '@scure/base';
 import * as P from 'micro-packed';
 
@@ -327,6 +327,7 @@ export function OpToNum(op: ScriptOP, bytesLimit = 4, forceMinimal = true) {
       return;
     }
   }
+  return;
 }
 
 // BTC specific variable length integer encoding
@@ -680,8 +681,8 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     throw new Error('validateInput: wmpty finalScriptWitness');
   //if (i.finalScriptSig && !i.finalScriptSig.length) throw new Error('validateInput: empty finalScriptSig');
   if (i.partialSig && !i.partialSig.length) throw new Error('Empty partialSig');
-  if (i.partialSig) for (const [k, v] of i.partialSig) validatePubkey(k, PubT.ecdsa);
-  if (i.bip32Derivation) for (const [k, v] of i.bip32Derivation) validatePubkey(k, PubT.ecdsa);
+  if (i.partialSig) for (const [k] of i.partialSig) validatePubkey(k, PubT.ecdsa);
+  if (i.bip32Derivation) for (const [k] of i.bip32Derivation) validatePubkey(k, PubT.ecdsa);
   // Locktime = unsigned little endian integer greater than or equal to 500000000 representing
   if (i.requiredTimeLocktime !== undefined && i.requiredTimeLocktime < 500000000)
     throw new Error(`validateInput: wrong timeLocktime=${i.requiredTimeLocktime}`);
@@ -724,7 +725,7 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
 });
 
 const PSBTOutputCoder = P.validate(PSBTKeyMap(PSBTOutput), (o) => {
-  if (o.bip32Derivation) for (const [k, v] of o.bip32Derivation) validatePubkey(k, PubT.ecdsa);
+  if (o.bip32Derivation) for (const [k] of o.bip32Derivation) validatePubkey(k, PubT.ecdsa);
   return o;
 });
 
@@ -929,7 +930,9 @@ const OutPK: Coder<OptScript, OutPKType | undefined> = {
   },
   decode: (to: OutPKType): OptScript => (to.type === 'pk' ? [to.pubkey, 'CHECKSIG'] : undefined),
 };
+// @ts-ignore
 export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
+  // network is unused
   if (!isValidPubkey(pubkey, PubT.ecdsa)) throw new Error('P2PK: invalid publicKey');
   return {
     type: 'pk',
@@ -2281,7 +2284,7 @@ export class Transaction {
     // however this was because of bug in bitcoin-core, which remains here because of consensus.
     // If this is absolutely neccessary for your case, please open issue.
     // We disable it to avoid complicated workflow where SINGLE will block adding new outputs
-    const { sigInputs, sigOutputs } = this.inputSighash(idx);
+    const { sigOutputs } = this.inputSighash(idx);
     if (sigOutputs === SignatureHash.SINGLE && idx >= this.outputs.length) {
       throw new Error(
         `Input with sighash SINGLE, but there is no output with corresponding index=${idx}`
@@ -2310,7 +2313,7 @@ export class Transaction {
           input.tapInternalKey,
           merkleRoot
         );
-        const [taprootPubKey, parity] = taprootTweakPubkey(input.tapInternalKey, merkleRoot);
+        const [taprootPubKey, _] = taprootTweakPubkey(input.tapInternalKey, merkleRoot);
         if (P.equalBytes(taprootPubKey, pubKey)) {
           const hash = this.preimageWitnessV1(idx, prevOutScript, sighash, amount);
           const sig = concat(
@@ -2323,7 +2326,7 @@ export class Transaction {
       }
       if (input.tapLeafScript) {
         input.tapScriptSig = input.tapScriptSig || [];
-        for (const [cb, _script] of input.tapLeafScript) {
+        for (const [_, _script] of input.tapLeafScript) {
           const script = _script.subarray(0, -1);
           const scriptDecoded = Script.decode(script);
           const ver = _script[_script.length - 1];
