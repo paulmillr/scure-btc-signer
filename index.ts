@@ -2210,12 +2210,7 @@ export class Transaction {
   }
 
   // Signer can be privateKey OR instance of bip32 HD stuff
-  signIdx(
-    privateKey: Signer,
-    idx: number,
-    allowedSighash?: SignatureHash[],
-    _auxRand?: Bytes
-  ): boolean {
+  signIdx(privateKey: Signer, idx: number, allowedSighash?: number[], _auxRand?: Bytes): boolean {
     this.checkInputIdx(idx);
     const input = this.inputs[idx];
     const inputType = this.inputType(input);
