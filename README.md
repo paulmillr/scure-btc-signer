@@ -23,9 +23,8 @@ Initial development has been funded by [Ryan Shea](https://shea.io). Check out [
   [base](https://github.com/paulmillr/scure-base),
   [bip32](https://github.com/paulmillr/scure-bip32),
   [bip39](https://github.com/paulmillr/scure-bip39),
-  [btc-signer](https://github.com/paulmillr/scure-btc-signer)
-
-*Check out all web3 utility libraries:* [eth](https://github.com/paulmillr/micro-eth-signer), [btc](https://github.com/paulmillr/scure-btc-signer), [sol](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+  [btc-signer](https://github.com/paulmillr/scure-btc-signer),
+  [starknet](https://github.com/paulmillr/scure-starknet)
 
 ## Usage
 
