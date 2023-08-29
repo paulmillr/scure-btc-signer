@@ -17,7 +17,7 @@ Initial development has been funded by [Ryan Shea](https://shea.io). Check out [
 
 > **scure** — secure, independently audited packages for every use case.
 
-- Audited by a third-party
+- Minimal or zero dependencies
 - Releases are signed with PGP keys and built transparently with NPM provenance
 - Check out all libraries:
   [base](https://github.com/paulmillr/scure-base),
@@ -836,16 +836,36 @@ deepStrictEqual(
 
 ## Security
 
-The library has been audited on Feb 21, 2023 by an independent security firm cure53: [PDF](./audit/2023-02-21-cure53-audit-report.pdf). The audit has been funded by Ryan Shea.
+The library has been independently audited:
 
-Target was v0.3.0 (commit 397ed56), see [changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/0.3.0..main).
+- at version 0.3.0, in Feb 2023, by [cure53](https://cure53.de)
+  - PDFs: [online](https://cure53.de/audit-report_micro-btc-signer.pdf), [offline](./audit/2023-02-21-cure53-audit-report.pdf)
+  - [Changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/0.3.0..main).
+  - The audit has been funded by [Ryan Shea](https://shea.io)
 
-We consider infrastructure attacks like rogue NPM modules very important; that's why it's crucial to minimize the amount of 3rd-party dependencies & native bindings. If your app uses 500 dependencies, any dep could get hacked and you'll be downloading malware with every `npm install`. Our goal is to minimize this attack vector. As for dependencies used by the library:
+### Supply chain security
 
-- noble-curves, noble-hashes are audited cryptography libraries also developed by us and follow the same practices
-- scure-base is used for bech32 / base64 and was also audited
-- micro-packed is used for binary encoding, has not been audited
-- devDependencies contain scure-bip32, micro-packed-debugger, micro-should (our packages). Locked versions of prettier (linter) and typescript which are rarely updated. Every update is checked with `npm-diff`. They are only used if you clone the git repo and want to add some feature to it. End-users won't use them
+1. **Commits** are signed with PGP keys, to prevent forgery. Make sure to verify commit signatures.
+2. **Releases** are transparent and built on GitHub CI. Make sure to verify [provenance](https://docs.npmjs.com/generating-provenance-statements) logs
+3. **Rare releasing** is followed.
+   The less often it is done, the less code dependents would need to audit
+4. **Dependencies** are minimal:
+   - All deps are prevented from automatic updates and have locked-down version ranges. Every update is checked with `npm-diff`
+   - Updates themselves are rare, to ensure rogue updates are not catched accidentally
+   - [noble-hashes](https://github.com/paulmillr/noble-hashes) provides hashing functionality
+   - [noble-curves](https://github.com/paulmillr/noble-curves) provides elliptic curve cryptography
+   - [scure-base](https://github.com/paulmillr/scure-base) provides bech32 / base64
+   - [micro-packed](https://github.com/paulmillr/micro-packed) provides binary encoding - it has not been audited
+5. devDependencies are only used if you want to contribute to the repo. They are disabled for end-users:
+   - scure-bip32, micro-packed-debugger and micro-should are developed by the same author and follow identical security practices
+   - prettier (linter), fast-check (property-based testing) and typescript are used for code quality, vector generation and ts compilation. The packages are big, which makes it hard to audit their source code thoroughly and fully
+
+We consider infrastructure attacks like rogue NPM modules very important;
+that's why it's crucial to minimize the amount of 3rd-party dependencies & native bindings.
+If your app uses 500 dependencies, any dep could get hacked and you'll be
+downloading malware with every install. Our goal is to minimize this attack vector.
+
+If you see anything unusual: investigate and report.
 
 ## License
 
