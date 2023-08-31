@@ -1644,12 +1644,10 @@ export type TxOpts = {
   lowR?: boolean; // Use lowR signatures
 };
 
-// Check if object doens't have custom constructor (like Uint8Array/Array)
-const isPlainObject = (obj: any) =>
-  Object.prototype.toString.call(obj) === '[object Object]' && obj.constructor === Object;
-
+const toStr = {}.toString;
 function validateOpts(opts: TxOpts) {
-  if (!isPlainObject(opts)) throw new Error(`Wrong object type for transaction options: ${opts}`);
+  if (opts !== undefined && toStr.call(opts) !== '[object Object]')
+    throw new Error(`Wrong object type for transaction options: ${opts}`);
 
   const _opts = {
     ...opts,
