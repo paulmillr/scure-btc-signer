@@ -1523,6 +1523,9 @@ export function Address(network = NETWORK) {
 }
 // /Address
 
+/**
+ * Internal, exported only for backwards-compat. Use `SigHash` instead.
+ */
 export enum SignatureHash {
   DEFAULT,
   ALL,
@@ -1530,7 +1533,23 @@ export enum SignatureHash {
   SINGLE,
   ANYONECANPAY = 0x80,
 }
-export const SigHashCoder = P.apply(P.U32LE, P.coders.tsEnum(SignatureHash));
+
+export enum SigHash {
+  DEFAULT = SignatureHash.DEFAULT,
+  ALL = SignatureHash.ALL,
+  NONE = SignatureHash.NONE,
+  SINGLE = SignatureHash.SINGLE,
+  DEFAULT_ANYONECANPAY = SignatureHash.DEFAULT | SignatureHash.ANYONECANPAY,
+  ALL_ANYONECANPAY = SignatureHash.ALL | SignatureHash.ANYONECANPAY,
+  NONE_ANYONECANPAY = SignatureHash.NONE | SignatureHash.ANYONECANPAY,
+  SINGLE_ANYONECANPAY = SignatureHash.SINGLE | SignatureHash.ANYONECANPAY,
+}
+
+function validateSigHash(s: SigHash) {
+  if (typeof s !== 'number' || typeof SigHash[s] !== 'string')
+    throw new Error(`Invalid SigHash=${s}`);
+  return s;
+}
 
 function unpackSighash(hashType: number) {
   const masked = hashType & 0b0011111;
@@ -2241,12 +2260,7 @@ export class Transaction {
   }
 
   // Signer can be privateKey OR instance of bip32 HD stuff
-  signIdx(
-    privateKey: Signer,
-    idx: number,
-    allowedSighash?: SignatureHash[],
-    _auxRand?: Bytes
-  ): boolean {
+  signIdx(privateKey: Signer, idx: number, allowedSighash?: SigHash[], _auxRand?: Bytes): boolean {
     this.checkInputIdx(idx);
     const input = this.inputs[idx];
     const inputType = this.inputType(input);
@@ -2271,7 +2285,8 @@ export class Transaction {
     }
     // Sighash checks
     // Just for compat with bitcoinjs-lib, so users won't face unexpected behaviour.
-    if (!allowedSighash) allowedSighash = [inputType.defaultSighash];
+    if (!allowedSighash) allowedSighash = [inputType.defaultSighash as unknown as SigHash];
+    else allowedSighash.forEach(validateSigHash);
     const sighash = inputType.sighash;
     if (!allowedSighash.includes(sighash)) {
       throw new Error(

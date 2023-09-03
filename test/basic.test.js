@@ -1,6 +1,6 @@
 import { deepStrictEqual, throws } from 'assert';
 import { should } from 'micro-should';
-import { hex } from '@scure/base';
+import { hex, base64 } from '@scure/base';
 import * as btc from '../index.js';
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
@@ -1154,7 +1154,7 @@ should('SignatureHash tests', () => {
   // Inputs
   // NONE + ANYONE  -- specific input + no outputs
   for (const s of spends) {
-    addInput(s, btc.SignatureHash.NONE | btc.SignatureHash.ANYONECANPAY);
+    addInput(s, btc.SigHash.NONE_ANYONECANPAY);
     // Should sign, since we don't care about outputs
     signIdx(index - 1);
   }
@@ -1164,7 +1164,7 @@ should('SignatureHash tests', () => {
   // Change last output 1 -> 1.5. This is fine, since output is unsigned
   tx.updateOutput(2, { amount: btc.Decimal.decode('1.5') });
   let curIndex = index;
-  for (const s of spends) addInput(s, btc.SignatureHash.SINGLE | btc.SignatureHash.ANYONECANPAY);
+  for (const s of spends) addInput(s, btc.SigHash.SINGLE_ANYONECANPAY);
   // Throw because not corresponding outputs
   for (let i = curIndex; i < curIndex + 3; i++) throws(() => signIdx(i));
   // Let's add corresponding outputs
@@ -1183,7 +1183,7 @@ should('SignatureHash tests', () => {
   // Add outputs since we cannot add them after sign
   for (const s of spends) tx.addOutputAddress(out.address, 1n * BTCamount, regtest);
   for (const s of spends) {
-    addInput(s, btc.SignatureHash.ALL | btc.SignatureHash.ANYONECANPAY);
+    addInput(s, btc.SigHash.ALL_ANYONECANPAY);
     // Still can add inputs after sign, because of ANYONE
     signIdx(index - 1);
   }
@@ -1191,11 +1191,11 @@ should('SignatureHash tests', () => {
   throws(() => tx.addOutputAddress(out.address, 1n * BTCamount, regtest));
   curIndex = index;
   // Default sighash all
-  for (const s of spends) addInput(s, btc.SignatureHash.ALL);
+  for (const s of spends) addInput(s, btc.SigHash.ALL);
   for (let i = curIndex; i < curIndex + 3; i++) signIdx(i);
   throws(() => tx.addOutputAddress(out.address, 1n * BTCamount, regtest));
   // Throws too, because no ANYONE in previous output
-  throws(() => addInput(S1, btc.SignatureHash.ALL));
+  throws(() => addInput(S1, btc.SigHash.ALL));
   tx.finalize();
   const txHex = hex.encode(tx.extract());
   // Verified against bitcoin core regnet (see test_noble3.py).
@@ -1690,6 +1690,82 @@ should('error on internalKey inside leaf script (gh-51)', () => {
   // Can be done with allowUnknownOutputs flag (disables checks)
   btc.p2tr(A, btc.p2tr_pk(A), undefined, true);
   btc.p2tr(A, btc.p2tr_ns(2, [A, B]), undefined, true);
+});
+
+should('combine PSBT (gh-56)', () => {
+  // Alice keys
+  const privAlice = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  const pubAlice = secp256k1.getPublicKey(privAlice, true);
+  const wpkhAlice = btc.p2wpkh(pubAlice);
+
+  console.log('ALICE', btc.WIF().encode(privAlice));
+  // Bob keys
+  const privBob = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
+  const pubBob = secp256k1.getPublicKey(privBob, true);
+  const wpkhBob = btc.p2wpkh(pubBob);
+  console.log('BOB', btc.WIF().encode(privBob));
+
+  const txBase = new btc.Transaction();
+  // Basic input test
+  txBase.addInput({
+    txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+    index: 0,
+    ...wpkhAlice,
+    witnessUtxo: {
+      script: wpkhAlice.script,
+      amount: 123n,
+    },
+  });
+  txBase.addInput({
+    txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+    index: 1,
+    ...wpkhBob,
+    witnessUtxo: {
+      script: wpkhBob.script,
+      amount: 340n, // 333 + 7 fee
+    },
+  });
+  // alice + bob inputs -> alice
+  txBase.addOutput({ amount: 456n, script: wpkhAlice.script });
+  const psbtBase = txBase.toPSBT();
+  console.log('PSBT Base', base64.encode(psbtBase));
+
+  // Sign tx by alice key
+  const txBaseA = btc.Transaction.fromPSBT(psbtBase);
+  txBaseA.sign(privAlice);
+  const psbtAlice = txBaseA.toPSBT();
+  // Sign tx by bob key
+  const txBaseB = btc.Transaction.fromPSBT(psbtBase);
+  txBaseB.sign(privBob);
+  const psbtBob = txBaseB.toPSBT();
+
+  // From github issue
+  const txA = btc.Transaction.fromPSBT(psbtAlice);
+  const txB = btc.Transaction.fromPSBT(psbtBob);
+  const psbt = btc.PSBTCombine([txA.toPSBT(), txB.toPSBT()]);
+  const txC = btc.Transaction.fromPSBT(psbt);
+  txC.finalize();
+  const final = txC.extract();
+  // Works
+  deepStrictEqual(
+    hex.encode(final),
+    '02000000000102a23a2a1789057082409fa62481d4353a0d297c66cd124ce2ec742fa2000af50a0000000000ffffffffa23a2a1789057082409fa62481d4353a0d297c66cd124ce2ec742fa2000af50a0100000000ffffffff01c80100000000000016001479b000887626b294a914501a4cd226b58b23598302483045022100979eb84cf1fe2de0688e0871e6ab7b509533515b5d0eb022443875e88c0261830220544eb879df56e66818008de5e131da7c0d82da131578e469e3666d347128e0ff0121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0247304402201fbd18c12d869fc4d6d443d4bac11e490375e4ccee6d86d3112134979b5d37440220298685e3020ca8f8f70c1eab5adfed9a40a81a8ddf1c7dc6976f743f6db2b5450121024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000'
+  );
+  // Add pkey to electrum via p2wpkh:<key> & sign base psbt
+  const aliceSignedElectrum =
+    'cHNidP8BAHsCAAAAAqI6KheJBXCCQJ+mJIHUNToNKXxmzRJM4ux0L6IACvUKAAAAAAD/////ojoqF4kFcIJAn6YkgdQ1Og0pfGbNEkzi7HQvogAK9QoBAAAAAP////8ByAEAAAAAAAAWABR5sACIdiaylKkUUBpM0ia1iyNZgwAAAAAAAQEfewAAAAAAAAAWABR5sACIdiaylKkUUBpM0ia1iyNZgwEHAAEIawJHMEQCIG68cjs+H2zt+NCF9zyDsqqhhqwQi5uudbYGt/pTlKEDAiA0xQpGZzsX9yvo+qpHhZr1rv79De4FKtV/ccO+3AbKywEhAxuExVZ7EmRAmV0+1aq6BWXXHhg0YEgZ/5wX9enV3QePAAEBH1QBAAAAAAAAFgAU68DuCyq56Cd6YAwlFHXiKjJBocEAAA==';
+  const bobSignedElectrum =
+    'cHNidP8BAHsCAAAAAqI6KheJBXCCQJ+mJIHUNToNKXxmzRJM4ux0L6IACvUKAAAAAAD/////ojoqF4kFcIJAn6YkgdQ1Og0pfGbNEkzi7HQvogAK9QoBAAAAAP////8ByAEAAAAAAAAWABR5sACIdiaylKkUUBpM0ia1iyNZgwAAAAAAAQEfewAAAAAAAAAWABR5sACIdiaylKkUUBpM0ia1iyNZgwABAR9UAQAAAAAAABYAFOvA7gsquegnemAMJRR14ioyQaHBAQcAAQhrAkcwRAIgH70YwS2Gn8TW1EPUusEeSQN15MzubYbTESE0l5tdN0QCICmGheMCDKj49wweq1rf7ZpAqBqN3xx9xpdvdD9tsrVFASECTUts0TYQMsqb0q652QCqTUXZ6tgKyUIzdMRRpyVNB2YAAA==';
+  const psbtElectrum = btc.PSBTCombine([
+    base64.decode(aliceSignedElectrum),
+    base64.decode(bobSignedElectrum),
+  ]);
+  const txElectrum = btc.Transaction.fromPSBT(psbtElectrum);
+  const finalElectrum = txElectrum.extract();
+  deepStrictEqual(
+    hex.encode(finalElectrum),
+    '02000000000102a23a2a1789057082409fa62481d4353a0d297c66cd124ce2ec742fa2000af50a0000000000ffffffffa23a2a1789057082409fa62481d4353a0d297c66cd124ce2ec742fa2000af50a0100000000ffffffff01c80100000000000016001479b000887626b294a914501a4cd226b58b2359830247304402206ebc723b3e1f6cedf8d085f73c83b2aaa186ac108b9bae75b606b7fa5394a103022034c50a46673b17f72be8faaa47859af5aefefd0dee052ad57f71c3bedc06cacb0121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0247304402201fbd18c12d869fc4d6d443d4bac11e490375e4ccee6d86d3112134979b5d37440220298685e3020ca8f8f70c1eab5adfed9a40a81a8ddf1c7dc6976f743f6db2b5450121024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000'
+  );
 });
 
 // ESM is broken.

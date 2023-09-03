@@ -70,8 +70,14 @@ should('BIP174: PSBT multi-sign example', () => {
   // const seed = 'cUkG8i1RFfWGWy5ziR11zJ5V4U4W3viSFCfyJmZnvQaUsd1xuF3T';
   const tx = new btc.Transaction();
   // A creator creating a PSBT for a transaction which creates the following outputs:
-  tx.addOutput({ script: '0014d85c2b71d0060b09c9886aeb815e50991dda124d', amount: btc.Decimal.decode('1.49990000') });
-  tx.addOutput({ script: '001400aea9a2e5f0f876a588df5546e8742d1d87008f', amount: btc.Decimal.decode('1.00000000') });
+  tx.addOutput({
+    script: '0014d85c2b71d0060b09c9886aeb815e50991dda124d',
+    amount: btc.Decimal.decode('1.49990000'),
+  });
+  tx.addOutput({
+    script: '001400aea9a2e5f0f876a588df5546e8742d1d87008f',
+    amount: btc.Decimal.decode('1.00000000'),
+  });
   // and spends the following inputs:
   // NOTE: spec uses txId instead of txHash
   tx.addInput({
@@ -154,8 +160,7 @@ should('BIP174: PSBT multi-sign example', () => {
     )
   );
   const tx3 = btc.Transaction.fromPSBT(psbt2);
-  for (let i = 0; i < tx3.inputs.length; i++)
-    tx3.updateInput(i, { sighashType: btc.SignatureHash.ALL });
+  for (let i = 0; i < tx3.inputs.length; i++) tx3.updateInput(i, { sighashType: btc.SigHash.ALL });
   // An updater which adds SIGHASH_ALL to the above PSBT must create this PSBT:
   const psbt3 = tx3.toPSBT();
   deepStrictEqual(

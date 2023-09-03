@@ -25,7 +25,7 @@ should('big multisig (ours)', () => {
     ...spend,
     witnessUtxo: { script: spend.script, amount: btc.Decimal.decode('1.5') },
   });
-  tx.addOutputAddress(outAddr.address, '1', regtest);
+  tx.addOutputAddress(outAddr.address, btc.Decimal.decode('1'), regtest);
   let ts = Date.now();
   for (const p of pkeys) tx.sign(p);
   // console.log('SIGN', Date.now() - ts);
@@ -37,7 +37,6 @@ should('big multisig (ours)', () => {
   //console.log(hex.encode(tx.extract()))
   deepStrictEqual(tx.id, '2687c4795c995431d934432def1cda8264c95920ce404229ca5c21328d7c9bcc');
 });
-
 
 // ESM is broken.
 import url from 'url';
