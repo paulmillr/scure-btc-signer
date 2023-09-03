@@ -36,7 +36,7 @@ For React Native, you may need a [polyfill for crypto.getRandomValues](https://g
 
 ```ts
 import * as btc from '@scure/btc-signer';
-// import * as btc from "npm:@scure/btc-signer@0.5.0"; // Deno
+// import * as btc from "npm:@scure/btc-signer@1.0.0"; // Deno
 ```
 
 ### Table of Contents
