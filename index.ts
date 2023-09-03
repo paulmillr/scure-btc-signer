@@ -1525,6 +1525,7 @@ export function Address(network = NETWORK) {
 
 /**
  * Internal, exported only for backwards-compat. Use `SigHash` instead.
+ * @deprecated
  */
 export enum SignatureHash {
   DEFAULT,
