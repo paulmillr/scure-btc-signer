@@ -17,9 +17,10 @@ Initial development has been funded by [Ryan Shea](https://shea.io). Check out [
 
 > **scure** — secure, independently audited packages for every use case.
 
-- Minimal or zero dependencies
-- Releases are signed with PGP keys and built transparently with NPM provenance
-- Check out all libraries:
+- Zero or minimal dependencies
+- Highly readable TypeScript / JS code
+- PGP-signed releases and transparent NPM builds with provenance
+- Check out [homepage](https://paulmillr.com/noble/#scure) & all libraries:
   [base](https://github.com/paulmillr/scure-base),
   [bip32](https://github.com/paulmillr/scure-bip32),
   [bip39](https://github.com/paulmillr/scure-bip39),
