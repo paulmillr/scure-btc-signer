@@ -531,7 +531,7 @@ type TransactionOutput = {
 
 tx.addOutput(o: TransactionOutput): number;
 tx.updateOutput(idx: number, output: TransactionOutput);
-tx.addOutputAddress(address: string, amount: string | bigint, network = NETWORK): number;
+tx.addOutputAddress(address: string, amount: bigint, network = NETWORK): number;
 
 const compressed = hex.decode(
   '030000000000000000000000000000000000000000000000000000000000000001'
