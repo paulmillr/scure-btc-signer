@@ -2589,7 +2589,7 @@ export class Transaction {
   }
   clone() {
     // deepClone probably faster, but this enforces that encoding is valid
-    return Transaction.fromPSBT(this.toPSBT(2), this.opts);
+    return Transaction.fromPSBT(this.toPSBT(this.opts.PSBTVersion), this.opts);
   }
 }
 // User facing API?
