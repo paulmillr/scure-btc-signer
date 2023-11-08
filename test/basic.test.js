@@ -565,6 +565,27 @@ should('Transaction input/output', () => {
     bip32Derivation: [bip2, bip1, bip3],
     sequence: btc.DEFAULT_SEQUENCE,
   });
+  // Remove nonWitnessUtxo
+  const nonWitnessUtxoHex =
+    '0200000001aad73931018bd25f84ae400b68848be09db706eac2ac18298babee71ab656f8b0000000048473044022058f6fc7c6a33e1b31548d481c826c015bd30135aad42cd67790dab66d2ad243b02204a1ced2604c6735b6393e5b41691dd78b00f0c5942fb9f751856faa938157dba01feffffff0280f0fa020000000017a9140fb9463421696b82c833af241c78c17ddbde493487d0f20a270100000017a91429ca74f8a08f81999428185c97b5d852e4063f618765000000';
+  const nonWitnessUtxoBinary = hex.decode(nonWitnessUtxoHex);
+  const nonWitnessUtxo = btc.RawTx.decode(nonWitnessUtxoBinary);
+  tx.updateInput(0, { index: 0, nonWitnessUtxo: nonWitnessUtxoHex });
+  deepStrictEqual(tx.inputs[0], {
+    txid: new Uint8Array(32),
+    index: 0,
+    bip32Derivation: [bip2, bip1, bip3],
+    sequence: btc.DEFAULT_SEQUENCE,
+    nonWitnessUtxo,
+  });
+  tx.updateInput(0, { nonWitnessUtxo: undefined });
+  deepStrictEqual(tx.inputs[0], {
+    txid: new Uint8Array(32),
+    index: 0,
+    bip32Derivation: [bip2, bip1, bip3],
+    sequence: btc.DEFAULT_SEQUENCE,
+  });
+  tx.updateInput(0, { index: 10 });
   // Delete KV
   tx.updateInput(0, { bip32Derivation: undefined });
   deepStrictEqual(tx.inputs[0], {
