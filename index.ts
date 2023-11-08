@@ -1967,11 +1967,12 @@ export class Transaction {
     // however in case of nonWitnessUtxo it is better to expect string, since constructing this complex object will be difficult for user
     if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = hex.decode(nonWitnessUtxo);
     if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
-    if (nonWitnessUtxo === undefined) nonWitnessUtxo = cur?.nonWitnessUtxo;
+    if (!('nonWitnessUtxo' in i) && nonWitnessUtxo === undefined)
+      nonWitnessUtxo = cur?.nonWitnessUtxo;
     if (typeof txid === 'string') txid = hex.decode(txid);
     if (txid === undefined) txid = cur?.txid;
     let res: PSBTKeyMapKeys<typeof PSBTInput> = { ...cur, ...i, nonWitnessUtxo, txid };
-    if (res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
+    if (!('nonWitnessUtxo' in i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
     if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
     if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
     res = mergeKeyMap(PSBTInput, res, cur, allowedFields);
