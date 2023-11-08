@@ -1621,6 +1621,63 @@ should('have proper vsize for cloned transactions (gh-18)', () => {
   deepStrictEqual(tx.vsize, 183);
 });
 
+should('clone transaction with identical opts', () => {
+  const opts = {
+    version: 0,
+    lockTime: 0,
+    PSBTVersion: 0,
+    allowUnknownOutputs: true,
+    allowUnknownInputs: true,
+    disableScriptCheck: true,
+    bip174jsCompat: true,
+    allowLegacyWitnessUtxo: true,
+    lowR: true,
+  };
+  const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  // setup taproot tx
+  const pubS = secp256k1_schnorr.getPublicKey(privKey);
+  const tr = btc.p2tr(pubS);
+
+  const tx = new btc.Transaction({ ...opts });
+  for (const inp of TX_TEST_INPUTS) {
+    tx.addInput({
+      ...inp,
+      ...tr,
+      witnessUtxo: {
+        script: tr.script,
+        amount: inp.amount,
+      },
+    });
+  }
+  const clone = tx.clone();
+  deepStrictEqual(clone.opts, opts);
+  // different options
+  const opts2 = {
+    version: 1,
+    lockTime: 1,
+    PSBTVersion: 2,
+    allowUnknownOutputs: false,
+    allowUnknownInputs: false,
+    disableScriptCheck: false,
+    bip174jsCompat: false,
+    allowLegacyWitnessUtxo: false,
+    lowR: false,
+  };
+  const tx2 = new btc.Transaction({ ...opts2 });
+  for (const inp of TX_TEST_INPUTS) {
+    tx2.addInput({
+      ...inp,
+      ...tr,
+      witnessUtxo: {
+        script: tr.script,
+        amount: inp.amount,
+      },
+    });
+  }
+  const clone2 = tx2.clone();
+  deepStrictEqual(clone2.opts, opts2);
+});
+
 should('return immutable outputs/inputs', () => {
   const privKey1 = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const P1 = secp256k1.getPublicKey(privKey1, true);
