@@ -2,7 +2,7 @@
 import { secp256k1 as _secp, schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import { ripemd160 } from '@noble/hashes/ripemd160';
-import { hex, base58check as _b58, bech32, bech32m } from '@scure/base';
+import { hex, createBase58check, bech32, bech32m } from '@scure/base';
 import type { Coder } from '@scure/base';
 import * as P from 'micro-packed';
 
@@ -24,7 +24,7 @@ const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concat(...msgs)));
 const concat = P.concatBytes;
 // Make base58check work
-export const base58check = _b58(sha256);
+export const base58check = createBase58check(sha256);
 
 export function cloneDeep<T>(obj: T): T {
   if (Array.isArray(obj)) return obj.map((i) => cloneDeep(i)) as unknown as T;
