@@ -2110,7 +2110,7 @@ export class Transaction {
     });
     return sha256x2(tmpTx, P.I32LE.encode(hashType));
   }
-  private preimageWitnessV0(idx: number, prevOutScript: Bytes, hashType: number, amount: bigint) {
+  preimageWitnessV0(idx: number, prevOutScript: Bytes, hashType: number, amount: bigint) {
     const { isAny, isNone, isSingle } = unpackSighash(hashType);
     let inputHash = EMPTY32;
     let sequenceHash = EMPTY32;
@@ -2139,7 +2139,7 @@ export class Transaction {
       P.U32LE.encode(hashType)
     );
   }
-  private preimageWitnessV1(
+  preimageWitnessV1(
     idx: number,
     prevOutScript: Bytes[],
     hashType: number,
