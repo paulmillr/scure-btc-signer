@@ -2,20 +2,21 @@
   "compilerOptions": {
     "target": "es2020",
     "lib": ["es2020"],
-    "module": "es6",
-    "moduleResolution": "bundler",
-    "outDir": "lib/esm",
-    "baseUrl": ".",
-    "sourceMap": true,
     "strict": true,
+    "sourceMap": false,
     "allowSyntheticDefaultImports": false,
     "allowUnreachableCode": false,
     "esModuleInterop": false,
     "noFallthroughCasesInSwitch": true,
     "noImplicitReturns": true,
     "noUncheckedIndexedAccess": false,
-    "noUnusedLocals": false,
-    "noUnusedParameters": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "baseUrl": ".",
+
+    "module": "es2020",
+    "outDir": "lib/esm",
+    "moduleResolution": "bundler"
   },
   "include": ["index.ts"],
   "exclude": ["node_modules", "lib"]
