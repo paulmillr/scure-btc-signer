@@ -416,7 +416,7 @@ type PSBTKeyMapInfo = Readonly<
     any,
     readonly number[], // versionsRequiringInclusion
     readonly number[], // versionsAllowsInclusion
-    boolean // silentIgnore
+    boolean, // silentIgnore
   ]
 >;
 
