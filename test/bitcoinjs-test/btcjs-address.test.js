@@ -1,7 +1,7 @@
 import { deepStrictEqual, throws } from 'assert';
 import { should } from 'micro-should';
 import { hex, base64 } from '@scure/base';
-import * as btc from '../../index.js';
+import * as btc from '../../lib/esm/index.js';
 import { default as p2ms } from './fixtures/bitcoinjs/p2ms.json' assert { type: 'json' };
 import { default as p2pk } from './fixtures/bitcoinjs/p2pk.json' assert { type: 'json' };
 import { default as p2pkh } from './fixtures/bitcoinjs/p2pkh.json' assert { type: 'json' };

@@ -1,5 +1,5 @@
 import { hex } from '@scure/base';
-import * as btc from '../../index.js';
+import * as btc from '../../lib/esm/index.js';
 // TODO: move to index.ts as compat layer for bitcoinjs-lib?
 export function fromASM(asm) {
   const ops = asm.split(' ');

@@ -1,7 +1,7 @@
 import { deepStrictEqual, throws } from 'assert';
 import { should } from 'micro-should';
 import { hex, base64 } from '@scure/base';
-import * as btc from '../../index.js';
+import * as btc from '../../lib/esm/index.js';
 import { default as rpcPSBT } from './fixtures/rpc_psbt.json' assert { type: 'json' };
 
 for (let i = 0; i < rpcPSBT.invalid.length; i++) {

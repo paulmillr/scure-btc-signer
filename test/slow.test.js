@@ -1,6 +1,6 @@
 import { deepStrictEqual } from 'assert';
 import { should } from 'micro-should';
-import * as btc from '../index.js';
+import * as btc from '../lib/esm/index.js';
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
 import * as P from 'micro-packed';
 

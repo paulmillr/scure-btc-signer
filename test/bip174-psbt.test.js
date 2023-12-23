@@ -1,7 +1,7 @@
 import { deepStrictEqual, throws } from 'assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
-import * as btc from '../index.js';
+import * as btc from '../lib/esm/index.js';
 import { default as psbtV } from './fixtures/psbt_vectors.js';
 import * as bip32 from '@scure/bip32';
 

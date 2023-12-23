@@ -1,4 +1,4 @@
-import * as btc from '../index.js';
+import * as btc from '../lib/esm/index.js';
 import { hex } from '@scure/base';
 
 const ADDRS = [
