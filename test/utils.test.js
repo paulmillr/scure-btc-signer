@@ -52,6 +52,16 @@ should('cmp', () => {
     );
 });
 
+should('cmpBig', () => {
+  const CASES = [
+    [0n, 0n, 0],
+    [0n, 1n, -1],
+    [1n, 0n, 1],
+  ];
+  for (let [l, r, ret] of CASES)
+    deepStrictEqual(btc._cmpBig(l, r), ret, `l=${l} r=${r} ret=${ret}`);
+});
+
 should('combinations', () => {
   // Looks ok, but still have a feeling like there is off by one bug lying around.
   // 2 elms

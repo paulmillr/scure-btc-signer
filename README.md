@@ -5,10 +5,10 @@ Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 - 🔒 [**Audited**](#security) by an independent security firm
 - ✍️ Create transactions, inputs, outputs, sign them
 - 📡 No network code: simplified audits and offline usage
+- 🔀 UTXO selection with different strategies
 - 🎻 Classic & SegWit: P2PK, P2PKH, P2WPKH, P2SH, P2WSH, P2MS
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
 - 📨 BIP174 PSBT
-- 👥 Multisig support
 - 🪶 ~2600 lines
 
 Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
@@ -40,8 +40,6 @@ import * as btc from '@scure/btc-signer';
 // import * as btc from "npm:@scure/btc-signer@1.0.0"; // Deno
 ```
 
-### Table of Contents
-
 - [Payments](#payments)
   - [P2PK Pay To Public Key](#p2pk-pay-to-public-key)
   - [P2PKH Public Key Hash](#p2pkh-public-key-hash)
@@ -53,17 +51,22 @@ import * as btc from '@scure/btc-signer';
   - [P2TR Taproot](#p2tr-taproot)
   - [P2TR-NS Taproot multisig](#p2tr-ns-taproot-multisig)
   - [P2TR-MS Taproot M-of-N multisig](#p2tr-ms-taproot-m-of-n-multisig)
+  - [P2TR-PK Taproot single P2PK script](#p2tr-pk-taproot-single-p2pk-script)
 - [Transaction](#transaction)
   - [Encode/decode](#encodedecode)
   - [Inputs](#inputs)
   - [Outputs](#outputs)
   - [Basic transaction sign](#basic-transaction-sign)
   - [BIP174 PSBT multi-sig example](#bip174-psbt-multi-sig-example)
+- [UTXO selection](#utxo-selection)
 - [Utils](#utils)
   - [getAddress](#getaddress)
     - [WIF](#wif)
   - [Script](#script)
   - [OutScript](#outscript)
+- [Security](#security)
+  - [Supply chain security](#supply-chain-security)
+- [License](#license)
 
 ## Payments
 
@@ -624,8 +627,14 @@ const hdkey = bip32.HDKey.fromExtendedKey(epriv, testnet.bip32);
 // const seed = 'cUkG8i1RFfWGWy5ziR11zJ5V4U4W3viSFCfyJmZnvQaUsd1xuF3T';
 const tx = new btc.Transaction();
 // A creator creating a PSBT for a transaction which creates the following outputs:
-tx.addOutput({ script: '0014d85c2b71d0060b09c9886aeb815e50991dda124d', amount: btc.Decimal.decode('1.49990000') });
-tx.addOutput({ script: '001400aea9a2e5f0f876a588df5546e8742d1d87008f', amount: btc.Decimal.decode('1.00000000') });
+tx.addOutput({
+  script: '0014d85c2b71d0060b09c9886aeb815e50991dda124d',
+  amount: btc.Decimal.decode('1.49990000'),
+});
+tx.addOutput({
+  script: '001400aea9a2e5f0f876a588df5546e8742d1d87008f',
+  amount: btc.Decimal.decode('1.00000000'),
+});
 // and spends the following inputs:
 tx.addInput({
   txid: '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858',
@@ -696,8 +705,7 @@ tx2.updateOutput(1, {
 const psbt2 = tx2.toPSBT();
 // An updater which adds SIGHASH_ALL to the above PSBT must create this PSBT:
 const tx3 = btc.Transaction.fromPSBT(psbt2);
-for (let i = 0; i < tx3.inputs.length; i++)
-  tx3.updateInput(i, { sighashType: btc.SigHash.ALL });
+for (let i = 0; i < tx3.inputs.length; i++) tx3.updateInput(i, { sighashType: btc.SigHash.ALL });
 const psbt3 = tx3.toPSBT();
 /*
   Given the above updated PSBT, a signer that supports SIGHASH_ALL for P2PKH and P2WPKH spends and uses RFC6979 for nonce generation and has the following keys:
@@ -732,6 +740,134 @@ deepStrictEqual(
     '0200000000010258e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd7500000000da00473044022074018ad4180097b873323c0015720b3684cc8123891048e7dbcd9b55ad679c99022073d369b740e3eb53dcefa33823c8070514ca55a7dd9544f157c167913261118c01483045022100f61038b308dc1da865a34852746f015772934208c6d24454393cd99bdf2217770220056e675a675a6d0a02b85b14e5e29074d8a25a9b5760bea2816f661910a006ea01475221029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f2102dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d752aeffffffff838d0427d0ec650a68aa46bb0b098aea4422c071b2ca78352a077959d07cea1d01000000232200208c2353173743b595dfb4a07b72ba8e42e3797da74e87fe7d9d7497e3b2028903ffffffff0270aaf00800000000160014d85c2b71d0060b09c9886aeb815e50991dda124d00e1f5050000000016001400aea9a2e5f0f876a588df5546e8742d1d87008f000400473044022062eb7a556107a7c73f45ac4ab5a1dddf6f7075fb1275969a7f383efff784bcb202200c05dbb7470dbf2f08557dd356c7325c1ed30913e996cd3840945db12228da5f01473044022065f45ba5998b59a27ffe1a7bed016af1f1f90d54b3aa8f7450aa5f56a25103bd02207f724703ad1edb96680b284b56d4ffcb88f7fb759eabbe08aa30f29b851383d20147522103089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc21023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7352ae00000000'
   )
 );
+```
+
+### UTXO selection
+
+UTXO selection is the process of choosing which UTXOs to use as inputs
+when making an on-chain bitcoin payment. The library:
+
+- can create tx, integrated with the signer
+- ensures change address is always specified
+- supports bip69
+- supports segwit + taproot
+- calculates weight with good precision
+- implements multiple strategies
+
+Taproot estimation is precise, but you have to pass sighash if you want to use non-default one,
+because it changes signature size. For complex taproot trees you need to filter tapLeafScript
+to include only leafs which you can sign we estimate size with smallest leaf (same as finalization),
+but in specific case keys for this leaf can be unavailable (complex multisig)
+
+`Oldest` / `Newest` expects UTXO provided in historical order (oldest first),
+otherwise we have no way to detect age of tx.
+
+#### Strategies
+
+Strategy selection is complicated. Best should be: `exactBiggest/accumSmallest`.
+
+`exactBiggest/accumBiggest` creates tx with smallest fees,
+but it breaks big outputs to small ones, which in the end will create
+a lot of outputs close to dust.
+
+- `all`: send all coins to change address (consolidation)
+- `coinselect`: good for privacy, same as `exactBiggest/accumBiggest`
+- `accum`: accumulates inputs until the target value (+fees) is reached, skipping detrimental inputs
+- `exact`: accumulates inputs until the target value (+fees) is matched, does not accumulate inputs
+  that go over the target value (within a threshold)
+- `accumNewest`
+- `accumOldest`
+- `accumSmallest`
+- `accumBiggest`
+- `exactNewest/accumNewest`
+- `exactNewest/accumOldest`
+- `exactNewest/accumSmallest`
+- `exactNewest/accumBiggest`
+- `exactOldest/accumNewest`
+- `exactOldest/accumOldest`
+- `exactOldest/accumSmallest`
+- `exactOldest/accumBiggest`
+- `exactSmallest/accumNewest`
+- `exactSmallest/accumOldest`
+- `exactSmallest/accumSmallest`
+- `exactSmallest/accumBiggest`
+- `exactBiggest/accumNewest`
+- `exactBiggest/accumOldest`
+- `exactBiggest/accumSmallest`
+- `exactBiggest/accumBiggest`
+
+#### Example
+
+```ts
+const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+const pubKey = secp256k1.getPublicKey(privKey, true);
+const spend = btc.p2wpkh(pubKey, regtest);
+const utxo = [
+  {
+    ...spend, // add witness/redeem scripts from spend
+    // Get txid, index from explorer/network
+    txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+    index: 0,
+    // utxo tx information
+    // script can be used from spend itself or from explorer
+    witnessUtxo: { script: spend.script, amount: 100_000n }, // value in satoshi
+  },
+  {
+    ...spend,
+    txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+    index: 1,
+    witnessUtxo: { script: spend.script, amount: btc.Decimal.decode('1.5') }, // value in btc
+  },
+  // {
+  //   ...spend,
+  //   txid: hex.decode('75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858'),
+  //   index: 0,
+  //   // tx hex from blockchain (required for non-SegWit UTXO)
+  //   nonWitnessUtxo: hex.decode(
+  //     '0200000001aad73931018bd25f84ae400b68848be09db706eac2ac18298babee71ab656f8b0000000048473044022058f6fc7c6a33e1b31548d481c826c015bd30135aad42cd67790dab66d2ad243b02204a1ced2604c6735b6393e5b41691dd78b00f0c5942fb9f751856faa938157dba01feffffff0280f0fa020000000017a9140fb9463421696b82c833af241c78c17ddbde493487d0f20a270100000017a91429ca74f8a08f81999428185c97b5d852e4063f618765000000'
+  //   ),
+  // },
+];
+const outputs = [
+  { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 50_000n }, // amount in satoshi
+  {
+    address: 'bcrt1pw53jtgez0wf69n06fchp0ctk48620zdscnrj8heh86wykp9mv20q7vd3gm',
+    amount: btc.Decimal.decode('0.5'), // amount in btc
+  },
+];
+// Send all utxo to specific address (consolidation):
+// const selected = btc.selectUTXO(utxo, [], 'all', {
+//   changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', ...
+const selected = btc.selectUTXO(utxo, outputs, 'coinselect', {
+  changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', // required, address to send change
+  feePerByte: 2n, // require, fee per vbyte in satoshi
+  bip69: true, // lexicographical Indexing of Transaction Inputs and Outputs
+  createTx: true, // create tx with selected inputs/outputs
+  network: regtest,
+});
+// NOTE: 'selected' will 'undefined' if there is not enough funds
+deepStrictEqual(selected.fee, 394n); // estimated fee
+deepStrictEqual(selected.change, true); // change address used
+deepStrictEqual(selected.outputs, [
+  { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 50000n },
+  {
+    address: 'bcrt1pw53jtgez0wf69n06fchp0ctk48620zdscnrj8heh86wykp9mv20q7vd3gm',
+    amount: 50_000_000n,
+  },
+  // Change address
+  // NOTE: with bip69 it is not neccesarily last item in outputs
+  {
+    address: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+    amount: 99_949_606n,
+  },
+]);
+// No need to create tx manually!
+const { tx } = selected;
+tx.sign(privKey);
+tx.finalize();
+deepStrictEqual(tx.id, 'b702078d65edd65a84b2a97a669df5631b06f42a67b0d7090e540b02cc65aed5');
+// real tx fee, can be bigger than estimated, since we expect signatures of maximal size
+deepStrictEqual(tx.fee, 394n);
 ```
 
 ## Utils
@@ -843,6 +979,8 @@ The library has been independently audited:
   - PDFs: [online](https://cure53.de/audit-report_micro-btc-signer.pdf), [offline](./audit/2023-02-21-cure53-audit-report.pdf)
   - [Changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/0.3.0..main).
   - The audit has been funded by [Ryan Shea](https://shea.io)
+
+UTXO selection functionality has not been audited yet.
 
 ### Supply chain security
 

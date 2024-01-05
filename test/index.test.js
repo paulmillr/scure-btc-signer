@@ -11,5 +11,6 @@ import './bip340-schnorr.test.js';
 // Taproot: SegWit version 1 spending rules
 import './bip341-taproot.test.js';
 import './taproot-multisig.test.js';
+import './utxo-select.test.js';
 
 should.run();
