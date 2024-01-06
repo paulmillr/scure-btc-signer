@@ -609,7 +609,7 @@ describe('UTXO Select', () => {
       fee: 191n,
     });
     deepStrictEqual(
-      est.coinSelect().indices.map((i) => 1n << BigInt(i)),
+      est.default().indices.map((i) => 1n << BigInt(i)),
       t(est, est.biggest).amounts
     );
     deepStrictEqual(t(est, est.smallest), {
@@ -630,7 +630,7 @@ describe('UTXO Select', () => {
       fee: 191n,
     });
     deepStrictEqual(
-      est.coinSelect().indices.map((i) => 1n << BigInt(i)),
+      est.default().indices.map((i) => 1n << BigInt(i)),
       t(est, est.biggest, true).amounts
     );
     deepStrictEqual(t(est, est.smallest, true, false), {
@@ -647,7 +647,7 @@ describe('UTXO Select', () => {
       fee: 341n,
     });
     deepStrictEqual(
-      est.coinSelect().indices.map((i) => 1n << BigInt(i)),
+      est.default().indices.map((i) => 1n << BigInt(i)),
       t(est, est.biggest, true).amounts
     );
     est.amount = 320n;
@@ -658,7 +658,7 @@ describe('UTXO Select', () => {
       fee: 191n,
     });
     deepStrictEqual(
-      est.coinSelect().indices.map((i) => 1n << BigInt(i)),
+      est.default().indices.map((i) => 1n << BigInt(i)),
       t(est, est.biggest, true).amounts
     );
 
@@ -700,7 +700,7 @@ describe('UTXO Select', () => {
         weight: 10364,
         total: 33554176n,
       },
-      coinselect: { indices: [24], fee: 191n, weight: 764, total: 16777216n },
+      default: { indices: [24], fee: 191n, weight: 764, total: 16777216n },
       accumNewest: { indices: [24], fee: 191n, weight: 764, total: 16777216n },
       accumOldest: { indices: [8, 9], fee: 341n, weight: 1364, total: 768n },
       accumSmallest: { indices: [8, 9], fee: 341n, weight: 1364, total: 768n },
