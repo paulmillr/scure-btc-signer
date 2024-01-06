@@ -770,8 +770,8 @@ Strategy selection is complicated. Best should be: `exactBiggest/accumSmallest`.
 but it breaks big outputs to small ones, which in the end will create
 a lot of outputs close to dust.
 
+- `default`: good for privacy, same as `exactBiggest/accumBiggest`
 - `all`: send all coins to change address (consolidation)
-- `coinselect`: good for privacy, same as `exactBiggest/accumBiggest`
 - `accum`: accumulates inputs until the target value (+fees) is reached, skipping detrimental inputs
 - `exact`: accumulates inputs until the target value (+fees) is matched, does not accumulate inputs
   that go over the target value (within a threshold)
@@ -838,7 +838,7 @@ const outputs = [
 // Send all utxo to specific address (consolidation):
 // const selected = btc.selectUTXO(utxo, [], 'all', {
 //   changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', ...
-const selected = btc.selectUTXO(utxo, outputs, 'coinselect', {
+const selected = btc.selectUTXO(utxo, outputs, 'default', {
   changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', // required, address to send change
   feePerByte: 2n, // require, fee per vbyte in satoshi
   bip69: true, // lexicographical Indexing of Transaction Inputs and Outputs

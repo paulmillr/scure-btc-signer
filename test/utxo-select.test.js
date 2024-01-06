@@ -665,7 +665,7 @@ describe('UTXO Select', () => {
     est.amount = 100n;
     const strategies = [
       'all',
-      'coinselect',
+      'default',
 
       'accumNewest',
       'accumOldest',
@@ -748,7 +748,7 @@ describe('UTXO Select', () => {
         change: acc.change,
       };
     };
-    deepStrictEqual(t2('coinselect', 100n), {
+    deepStrictEqual(t2('default', 100n), {
       i: [16777216n],
       o: [100n, 16776893n],
       txFee: 223n,
@@ -1068,7 +1068,7 @@ describe('UTXO Select', () => {
     // Send all utxo to specific address (consolidation):
     // const selected = btc.selectUTXO(utxo, [], 'all', {
     //   changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', ...
-    const selected = btc.selectUTXO(utxo, outputs, 'coinselect', {
+    const selected = btc.selectUTXO(utxo, outputs, 'default', {
       changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', // required, address to send change
       feePerByte: 2n, // require, fee per vbyte in satoshi
       bip69: true, // lexicographical Indexing of Transaction Inputs and Outputs

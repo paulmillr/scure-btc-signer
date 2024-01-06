@@ -2791,7 +2791,7 @@ type AccumStrategy = `accum${SortStrategy}`;
 
 export type SelectionStrategy =
   | 'all'
-  | 'coinselect'
+  | 'default'
   | AccumStrategy
   | `${ExactStrategy}/${AccumStrategy}`;
 
@@ -2958,7 +2958,7 @@ export class _Estimator {
   }
 
   // Works like coinselect default method
-  coinSelect() {
+  default() {
     const { biggest } = this;
     const exact = this.accumulate(biggest, true, false);
     if (exact) return exact;
@@ -2974,7 +2974,7 @@ export class _Estimator {
         true
       );
     }
-    if (strategy === 'coinselect') return this.coinSelect();
+    if (strategy === 'default') return this.default();
     const data: Record<SortStrategy, () => number[]> = {
       Oldest: () => this.oldest,
       Newest: () => this.newest,
