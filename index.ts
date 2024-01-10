@@ -714,12 +714,26 @@ const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     }
   }
   // Validate txid for nonWitnessUtxo is correct
-  if (i.nonWitnessUtxo && i.index && i.txid) {
+  if (i.nonWitnessUtxo && i.index !== undefined && i.txid) {
     const outputs = i.nonWitnessUtxo.outputs;
     if (outputs.length - 1 < i.index) throw new Error('nonWitnessUtxo: incorect output index');
-    const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo));
+    // At this point, we are using previous tx output to create new input.
+    // Script safety checks are unnecessary:
+    // - User has no control over previous tx. If somebody send money in same tx
+    //   as unspendable output, we still want user able to spend money
+    // - We still want some checks to notify user about possible errors early
+    //   in case user wants to use wrong input by mistake
+    // - Worst case: tx will be rejected by nodes. Still better than disallowing user
+    //   to spend real input, no matter how broken it looks
+    const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo), {
+      allowUnknownOutputs: true,
+      disableScriptCheck: true,
+      allowUnknownInputs: true,
+    });
     const txid = hex.encode(i.txid);
-    if (tx.id !== txid) throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
+    // PSBTv2 vectors have non-final tx in inputs
+    if (tx.isFinal && tx.id !== txid)
+      throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
   }
   return i;
 });
