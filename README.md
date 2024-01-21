@@ -11,7 +11,9 @@ Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 - 📨 BIP174 PSBT
 - 🪶 3000 lines
 
-Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [its github](https://github.com/shea256/micro-btc-web-demo).
+Initial development has been funded by [Ryan Shea](https://shea.io). Check out [the demo](https://signerdemo.micro-btc.dev/) & [repo](https://github.com/shea256/micro-btc-web-demo).
+
+_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ### This library belongs to _scure_
 
