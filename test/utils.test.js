@@ -1,6 +1,5 @@
 import { deepStrictEqual, throws } from 'assert';
 import { should } from 'micro-should';
-import { hex } from '@scure/base';
 import * as btc from '../lib/esm/index.js';
 
 should('Packed CompactSize', () => {
@@ -28,7 +27,7 @@ should('Packed CompactSize', () => {
     deepStrictEqual(unpacked, num);
     deepStrictEqual(unpacked, btc.CompactSize.decode(p));
   }
-  throws(() => packed.CompactSize.decode([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
+  throws(() => CompactSize.decode([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
 });
 
 should('cmp', () => {

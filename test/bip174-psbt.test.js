@@ -7,10 +7,11 @@ import * as bip32 from '@scure/bip32';
 
 for (let i = 0; i < psbtV.length; i++) {
   const v = psbtV[i];
-  should(`PSBTv${v.v2 ? '2' : '0'}(${i}), ${i.invalid ? 'invalid' : 'valid'}: ${v.name}`, () => {
+  should(`PSBTv${v.v2 ? '2' : '0'}(${i}), ${v.invalid ? 'invalid' : 'valid'}: ${v.name}`, () => {
     const tx = hex.decode(v.hex);
     if (v.invalid) {
-      throws(() => btc.btc.Transaction.fromPSBT(tx));
+      if (v.signer) return; // we don't test these, because we have no key for signer
+      throws(() => btc.Transaction.fromPSBT(tx))
     } else {
       const parsed = btc.Transaction.fromPSBT(tx);
       const encoded = parsed.toPSBT();
