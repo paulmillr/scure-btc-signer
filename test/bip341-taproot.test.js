@@ -1,4 +1,4 @@
-import { deepStrictEqual, throws } from 'assert';
+import { deepStrictEqual } from 'node:assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../lib/esm/index.js';

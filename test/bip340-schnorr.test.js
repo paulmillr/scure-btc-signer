@@ -1,9 +1,7 @@
-import { deepStrictEqual } from 'assert';
+import { deepStrictEqual } from 'node:assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
 import { schnorr } from '@noble/curves/secp256k1';
-// Required for sync sha
-import * as btc from '../lib/esm/index.js';
 import { default as v340 } from './fixtures/bip340.json' assert { type: 'json' };
 
 // BIP340 (same as in secp256k1, just to be sure)

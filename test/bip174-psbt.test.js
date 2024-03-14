@@ -1,4 +1,4 @@
-import { deepStrictEqual, throws } from 'assert';
+import { deepStrictEqual, throws } from 'node:assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../lib/esm/index.js';
@@ -11,7 +11,7 @@ for (let i = 0; i < psbtV.length; i++) {
     const tx = hex.decode(v.hex);
     if (v.invalid) {
       if (v.signer) return; // we don't test these, because we have no key for signer
-      throws(() => btc.Transaction.fromPSBT(tx))
+      throws(() => btc.Transaction.fromPSBT(tx));
     } else {
       const parsed = btc.Transaction.fromPSBT(tx);
       const encoded = parsed.toPSBT();
