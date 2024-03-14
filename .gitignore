@@ -1,5 +1,5 @@
 node_modules
-/build/
+/build/scure-btc-signer.js
 /lib
 /index.js
 /index.d.ts
