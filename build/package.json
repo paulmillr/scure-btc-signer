@@ -2,17 +2,13 @@
   "name": "build",
   "private": true,
   "version": "1.0.0",
-  "description": "Used to build a single file",
   "main": "input.js",
-  "keywords": [],
   "type": "module",
-  "author": "",
-  "license": "MIT",
   "devDependencies": {
-    "@scure/btc-signer": "file:..",
+    "lib": "file:..",
     "esbuild": "0.20.1"
   },
   "scripts": {
-    "build:release": "npx esbuild --bundle input.js --outfile=scure-btc-signer.js --global-name=btcSigner"
+    "build:release": "npx esbuild --bundle input.js --outfile=`npx jsbt outfile` --global-name=`npx jsbt global`"
   }
 }
