@@ -43,8 +43,8 @@
   },
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json",
-    "lint": "prettier --check index.ts",
-    "format": "prettier --write index.ts",
+    "lint": "prettier --check src",
+    "format": "prettier --write src",
     "test": "node test/index.test.js && node test/psbt-test/bip174-psbt-extended.test.js",
     "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js",
     "test:slow": "node test/index.test.js && node test/slow.test.js"

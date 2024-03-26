@@ -59,9 +59,11 @@ tx.addOutput({ amount: 123n });
 // tx.addOutput({ amount: 123 });
 
 for (let i = 0; i < tx.inputsLength; i++) {
+  // @ts-ignore
   console.log('I', tx.getInput(i));
 }
 
 for (let i = 0; i < tx.outputsLength; i++) {
+  // @ts-ignore
   console.log('O', tx.getOutput(i));
 }
