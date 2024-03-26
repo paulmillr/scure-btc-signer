@@ -986,7 +986,8 @@ The library has been independently audited:
   - [Changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/0.3.0..main).
   - The audit has been funded by [Ryan Shea](https://shea.io)
 
-UTXO selection functionality has not been audited yet.
+UTXO selection functionality has not been audited yet. Commit [58d4554](58d455480919e968aabff132503560effb2f8eaf)
+split the library from one into several files to ease future maintainability.
 
 ### Supply chain security
 
