@@ -937,9 +937,13 @@ export class Transaction {
     } else if (inputType.last.type === 'wpkh') {
       inputScript = P.EMPTY;
       witness = [input.partialSig[0][1], input.partialSig[0][0]];
-    } else if (inputType.last.type === 'unknown' && !this.opts.allowUnknownInputs)
-      throw new Error('Unknown inputs not allowed');
-
+    } else if (inputType.last.type === 'unknown') {
+      if (!this.opts.allowUnknownInputs) {
+        throw new Error('Unknown inputs not allowed');
+      }
+      // Trying our best to sign what we can
+      inputScript = Script.encode([input.partialSig[0][1], input.partialSig[0][0]]);
+    }
     // Create final scripts (generic part)
     let finalScriptSig: Bytes | undefined, finalScriptWitness: Bytes[] | undefined;
     if (inputType.type.includes('wsh-')) {
