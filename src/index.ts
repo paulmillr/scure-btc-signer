@@ -8,7 +8,7 @@ export {
 export { OP, RawTx, CompactSize, Script, ScriptNum } from './script.js';
 export { Transaction } from './transaction.js';
 export { selectUTXO } from './utxo.js';
-export { NETWORK, compareBytes as _cmpBytes, TAPROOT_UNSPENDABLE_KEY } from './utils.js';
+export { NETWORK, TEST_NETWORK, compareBytes as _cmpBytes, TAPROOT_UNSPENDABLE_KEY } from './utils.js';
 
 // Utils
 // prettier-ignore
