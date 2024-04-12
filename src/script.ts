@@ -1,5 +1,7 @@
 import * as P from 'micro-packed';
 
+export const MAX_SCRIPT_BYTE_LENGTH = 520;
+
 // prettier-ignore
 export enum OP {
   OP_0 = 0x00, PUSHDATA1 = 0x4c, PUSHDATA2, PUSHDATA4, '1NEGATE',

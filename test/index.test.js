@@ -12,5 +12,7 @@ import './bip340-schnorr.test.js';
 import './bip341-taproot.test.js';
 import './taproot-multisig.test.js';
 import './utxo-select.test.js';
+import './ordinals.test.js';
+import './cbor.test.js';
 
 should.run();

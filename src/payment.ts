@@ -20,7 +20,7 @@ export type P2Ret = {
 
 // Public Key (P2PK)
 type OutPKType = { type: 'pk'; pubkey: Bytes };
-type OptScript = ScriptType | undefined;
+export type OptScript = ScriptType | undefined;
 
 function isValidPubkey(pub: Bytes, type: u.PubT): boolean {
   try {
@@ -207,6 +207,22 @@ const OutScripts = [
 // - Actually is very hard, since there is sign/finalize logic
 const _OutScript = P.apply(Script, P.coders.match(OutScripts));
 
+/*
+ * UNSAFE: Custom scripts: mostly ordinals, be very careful when crafting new scripts
+ * Only taproot supported for now.
+ * NOTE: we can use same to move finalization logic from Transaction, but it will significantly change audited code.
+ */
+
+type FinalizeSignature = [{ pubKey: Bytes; leafHash: Bytes }, Bytes];
+type CustomScriptOut = { type: string } & Record<string, any>;
+export type CustomScript = Coder<OptScript, CustomScriptOut | undefined> & {
+  finalizeTaproot?: (
+    script: Bytes,
+    parsed: CustomScriptOut,
+    signatures: FinalizeSignature[]
+  ) => Bytes[] | undefined;
+};
+
 // We can validate this once, because of packed & coders
 export const OutScript = P.validate(_OutScript, (i) => {
   if (i.type === 'pk' && !isValidPubkey(i.pubkey, u.PubT.ecdsa))
@@ -348,9 +364,27 @@ export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2R
 type HashedTree =
   | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes }
   | { type: 'branch'; left: HashedTree; right: HashedTree; hash: Bytes };
-function checkTaprootScript(script: Bytes, internalPubKey: Bytes, allowUnknownOutputs = false) {
+function checkTaprootScript(
+  script: Bytes,
+  internalPubKey: Bytes,
+  allowUnknownOutputs = false,
+  customScripts?: CustomScript[]
+) {
   const out = OutScript.decode(script);
-  if (out.type === 'unknown' && allowUnknownOutputs) return;
+  if (out.type === 'unknown') {
+    // NOTE: this check should be before allowUnknownOutputs, otherwise it will
+    // disable custom. All custom scripts for taproot should have prefix 'tr_'
+    if (customScripts) {
+      const cs = P.apply(Script, P.coders.match(customScripts));
+      const c = cs.decode(script);
+      if (c !== undefined) {
+        if (typeof c.type !== 'string' || !c.type.startsWith('tr_'))
+          throw new Error(`P2TR: invalid custom type=${c.type}`);
+        return;
+      }
+    }
+    if (allowUnknownOutputs) return;
+  }
   if (!['tr_ns', 'tr_ms'].includes(out.type))
     throw new Error(`P2TR: invalid leaf script=${out.type}`);
   const outms = out as OutTRNSType | OutTRMSType;
@@ -457,7 +491,8 @@ function taprootWalkTree(tree: HashedTreeWithPath): TaprootLeaf[] {
 function taprootHashTree(
   tree: TaprootScriptTree,
   internalPubKey: Bytes,
-  allowUnknownOutputs = false
+  allowUnknownOutputs = false,
+  customScripts?: CustomScript[]
 ): HashedTree {
   if (!tree) throw new Error('taprootHashTree: empty tree');
   if (Array.isArray(tree) && tree.length === 1) tree = tree[0];
@@ -469,7 +504,7 @@ function taprootHashTree(
       throw new Error('P2TR: tapRoot leafScript cannot have tree');
     const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
     if (!u.isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
-    checkTaprootScript(script, internalPubKey, allowUnknownOutputs);
+    checkTaprootScript(script, internalPubKey, allowUnknownOutputs, customScripts);
     return {
       type: 'leaf',
       version,
@@ -482,8 +517,8 @@ function taprootHashTree(
   if (tree.length !== 2) throw new Error('hashTree: non binary tree!');
   // branch
   // Both nodes should exist
-  const left = taprootHashTree(tree[0], internalPubKey, allowUnknownOutputs);
-  const right = taprootHashTree(tree[1], internalPubKey, allowUnknownOutputs);
+  const left = taprootHashTree(tree[0], internalPubKey, allowUnknownOutputs, customScripts);
+  const right = taprootHashTree(tree[1], internalPubKey, allowUnknownOutputs, customScripts);
   // We cannot swap left/right here, since it will change structure of tree
   let [lH, rH] = [left.hash, right.hash];
   if (u.compareBytes(rH, lH) === -1) [lH, rH] = [rH, lH];
@@ -501,7 +536,8 @@ export function p2tr(
   internalPubKey?: Bytes | string,
   tree?: TaprootScriptTree,
   network = NETWORK,
-  allowUnknownOutputs = false
+  allowUnknownOutputs = false,
+  customScripts?: CustomScript[]
 ): P2TROut {
   // Unspendable
   if (!internalPubKey && !tree) throw new Error('p2tr: should have pubKey or scriptTree (or both)');
@@ -511,7 +547,7 @@ export function p2tr(
       : internalPubKey || u.TAPROOT_UNSPENDABLE_KEY;
   if (!isValidPubkey(pubKey, u.PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
   let hashedTree = tree
-    ? taprootAddPath(taprootHashTree(tree, pubKey, allowUnknownOutputs))
+    ? taprootAddPath(taprootHashTree(tree, pubKey, allowUnknownOutputs, customScripts))
     : undefined;
   const tapMerkleRoot = hashedTree ? hashedTree.hash : undefined;
   const [tweakedPubkey, parity] = u.taprootTweakPubkey(pubKey, tapMerkleRoot || P.EMPTY);
