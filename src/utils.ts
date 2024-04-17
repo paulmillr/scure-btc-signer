@@ -12,7 +12,7 @@ export { sha256, isBytes, concatBytes };
 export const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 export const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concatBytes(...msgs)));
 export const randomPrivateKeyBytes = schnorr.utils.randomPrivateKey;
-export const pubSchnorr = schnorr.getPublicKey;
+export const pubSchnorr = schnorr.getPublicKey as (priv: string | Uint8Array) => Uint8Array;
 export const pubECDSA = secp.getPublicKey;
 
 // low-r signature grinding. Used to reduce tx size by 1 byte.
@@ -24,10 +24,11 @@ export function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
   let sig = secp.sign(hash, privateKey);
   if (lowR && !hasLowR(sig)) {
     const extraEntropy = new Uint8Array(32);
-    for (let cnt = 0; cnt < Number.MAX_SAFE_INTEGER; cnt++) {
-      extraEntropy.set(U32LE.encode(cnt));
+    let counter = 0;
+    while (!hasLowR(sig)) {
+      extraEntropy.set(U32LE.encode(counter++));
       sig = secp.sign(hash, privateKey, { extraEntropy });
-      if (hasLowR(sig)) break;
+      if (counter > 4294967295) throw new Error('lowR counter overflow: report the error');
     }
   }
   return sig.toDERRawBytes();
