@@ -45,7 +45,7 @@ should('cmp', () => {
   ];
   for (let [l, r, ret] of CASES)
     deepStrictEqual(
-      btc._cmpBytes(new Uint8Array(l), new Uint8Array(r)),
+      btc.utils.compareBytes(new Uint8Array(l), new Uint8Array(r)),
       ret,
       `l=${l} r=${r} ret=${ret}`
     );

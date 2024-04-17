@@ -1,15 +1,10 @@
 {
   "name": "@scure/btc-signer",
-  "version": "1.2.2",
+  "version": "1.3.0-pre",
   "description": "Audited & minimal library for creating, signing & decoding Bitcoin transactions: with Schnorr, Taproot, UTXO & PSBT",
   "files": [
-    "lib/index.js",
-    "lib/esm/index.js",
-    "lib/esm/index.js.map",
-    "lib/esm/package.json",
-    "lib/index.d.ts",
-    "lib/index.d.ts.map",
-    "index.ts"
+    "lib",
+    "src"
   ],
   "main": "lib/index.js",
   "module": "lib/esm/index.js",
@@ -19,6 +14,41 @@
       "types": "./lib/index.d.ts",
       "import": "./lib/esm/index.js",
       "default": "./lib/index.js"
+    },
+    "./index": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/esm/index.js",
+      "default": "./lib/index.js"
+    },
+    "./payment": {
+      "types": "./lib/payment.d.ts",
+      "import": "./lib/esm/payment.js",
+      "default": "./lib/payment.js"
+    },
+    "./psbt": {
+      "types": "./lib/psbt.d.ts",
+      "import": "./lib/esm/psbt.js",
+      "default": "./lib/psbt.js"
+    },
+    "./script": {
+      "types": "./lib/script.d.ts",
+      "import": "./lib/esm/script.js",
+      "default": "./lib/script.js"
+    },
+    "./transaction": {
+      "types": "./lib/transaction.d.ts",
+      "import": "./lib/esm/transaction.js",
+      "default": "./lib/transaction.js"
+    },
+    "./utils": {
+      "types": "./lib/utils.d.ts",
+      "import": "./lib/esm/utils.js",
+      "default": "./lib/utils.js"
+    },
+    "./utxo": {
+      "types": "./lib/utxo.d.ts",
+      "import": "./lib/esm/utxo.js",
+      "default": "./lib/utxo.js"
     }
   },
   "dependencies": {

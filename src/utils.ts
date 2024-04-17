@@ -11,6 +11,7 @@ export { sha256, isBytes, concatBytes };
 
 export const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 export const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concatBytes(...msgs)));
+export const randomPrivateKeyBytes = schnorr.utils.randomPrivateKey;
 export const pubSchnorr = schnorr.getPublicKey;
 export const pubECDSA = secp.getPublicKey;
 

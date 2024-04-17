@@ -17,7 +17,7 @@ For discussions, questions and support, visit
 [GitHub Discussions](https://github.com/paulmillr/scure-btc-signer/discussions)
 section of the repository.
 
-_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
 ### This library belongs to _scure_
 
@@ -65,6 +65,7 @@ import * as btc from '@scure/btc-signer';
   - [Basic transaction sign](#basic-transaction-sign)
   - [BIP174 PSBT multi-sig example](#bip174-psbt-multi-sig-example)
 - [UTXO selection](#utxo-selection)
+- [Ordinals and custom scripts](#ordinals-and-custom-scripts)
 - [Utils](#utils)
   - [getAddress](#getaddress)
     - [WIF](#wif)
@@ -874,6 +875,18 @@ tx.finalize();
 deepStrictEqual(tx.id, 'b702078d65edd65a84b2a97a669df5631b06f42a67b0d7090e540b02cc65aed5');
 // real tx fee, can be bigger than estimated, since we expect signatures of maximal size
 deepStrictEqual(tx.fee, 394n);
+```
+
+## Ordinals and custom scripts
+
+We support custom scripts. You can pass it as last argument to `p2tr`.
+
+Ordinals, inscriptions, runes and others are handled by a separate package for now: `micro-ordinals`.
+
+For example usage, real code and ordinals / inscriptions CLI tool, check out the package:
+
+```
+import * as ord from 'micro-ordinals';
 ```
 
 ## Utils

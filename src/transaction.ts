@@ -1,7 +1,7 @@
 import * as P from 'micro-packed';
 import { hex } from '@scure/base';
 
-import { Address, OutScript, checkScript, tapLeafHash } from './payment.js';
+import { Address, CustomScript, OutScript, checkScript, tapLeafHash } from './payment.js';
 import * as psbt from './psbt.js'; // circular
 import { CompactSizeLen, RawOutput, RawTx, RawWitness, Script, VarBytes } from './script.js';
 import { NETWORK, Bytes, concatBytes, isBytes } from './utils.js';
@@ -76,6 +76,7 @@ export type TxOpts = {
   // result paying higher mining fee
   allowLegacyWitnessUtxo?: boolean;
   lowR?: boolean; // Use lowR signatures
+  customScripts?: CustomScript[]; // UNSAFE: Custom payment scripts
 };
 
 /**
@@ -201,6 +202,20 @@ function validateOpts(opts: TxOpts) {
     if (v === undefined) continue; // optional
     if (typeof v !== 'boolean')
       throw new Error(`Transation options wrong type: ${k}=${v} (${typeof v})`);
+  }
+  if (_opts.customScripts !== undefined) {
+    const cs = _opts.customScripts;
+    if (!Array.isArray(cs)) {
+      throw new Error(
+        `wrong custom scripts type (expected array): customScripts=${cs} (${typeof cs})`
+      );
+    }
+    for (const s of cs) {
+      if (typeof s.encode !== 'function' || typeof s.decode !== 'function')
+        throw new Error(`wrong script=${s} (${typeof s})`);
+      if (s.finalizeTaproot !== undefined && typeof s.finalizeTaproot !== 'function')
+        throw new Error(`wrong script=${s} (${typeof s})`);
+    }
   }
   return Object.freeze(_opts);
 }
@@ -894,7 +909,24 @@ export class Transaction {
               .sort((a, b) => a.pos - b.pos)
               .map((i) => i.signature);
             if (!signatures.length) continue;
-          } else throw new Error('Finalize: Unknown tapLeafScript');
+          } else {
+            const custom = this.opts.customScripts;
+            if (custom) {
+              for (const c of custom) {
+                if (!c.finalizeTaproot) continue;
+                const scriptDecoded = Script.decode(script);
+                const csEncoded = c.encode(scriptDecoded);
+                if (csEncoded === undefined) continue;
+                const finalized = c.finalizeTaproot(script, csEncoded, scriptSig);
+                if (!finalized) continue;
+                input.finalScriptWitness = finalized.concat(psbt.TaprootControlBlock.encode(cb));
+                input.finalScriptSig = P.EMPTY;
+                cleanFinalInput(input);
+                return;
+              }
+            }
+            throw new Error('Finalize: Unknown tapLeafScript');
+          }
           // Witness is stack, so last element will be used first
           input.finalScriptWitness = signatures
             .reverse()
