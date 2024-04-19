@@ -1,26 +1,28 @@
 import { deepStrictEqual, throws } from 'node:assert';
-import { should } from 'micro-should';
+import { describe, should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../lib/esm/index.js';
 import { default as psbtV } from './fixtures/psbt_vectors.js';
 import * as bip32 from '@scure/bip32';
 
-for (let i = 0; i < psbtV.length; i++) {
-  const v = psbtV[i];
-  should(`PSBTv${v.v2 ? '2' : '0'}(${i}), ${v.invalid ? 'invalid' : 'valid'}: ${v.name}`, () => {
-    const tx = hex.decode(v.hex);
-    if (v.invalid) {
-      if (v.signer) return; // we don't test these, because we have no key for signer
-      throws(() => btc.Transaction.fromPSBT(tx));
-    } else {
-      const parsed = btc.Transaction.fromPSBT(tx);
-      const encoded = parsed.toPSBT();
-      deepStrictEqual(btc._DebugPSBT.decode(encoded), btc._DebugPSBT.decode(tx));
-      deepStrictEqual(hex.encode(encoded), v.hex);
-      if (v.lockTime) deepStrictEqual(parsed.lockTime, v.lockTime);
-    }
-  });
-}
+describe('bip174-psbt', () => {
+  for (let i = 0; i < psbtV.length; i++) {
+    const v = psbtV[i];
+    should(`PSBTv${v.v2 ? '2' : '0'}(${i}), ${v.invalid ? 'invalid' : 'valid'}: ${v.name}`, () => {
+      const tx = hex.decode(v.hex);
+      if (v.invalid) {
+        if (v.signer) return; // we don't test these, because we have no key for signer
+        throws(() => btc.Transaction.fromPSBT(tx));
+      } else {
+        const parsed = btc.Transaction.fromPSBT(tx);
+        const encoded = parsed.toPSBT();
+        deepStrictEqual(btc._DebugPSBT.decode(encoded), btc._DebugPSBT.decode(tx));
+        deepStrictEqual(hex.encode(encoded), v.hex);
+        if (v.lockTime) deepStrictEqual(parsed.lockTime, v.lockTime);
+      }
+    });
+  }
+});
 
 // should('PSBT combiner', () => {
 //   // Currently we skip unknown keys. Need to add support?
@@ -55,7 +57,7 @@ for (let i = 0; i < psbtV.length; i++) {
 // });
 
 // TODO!!
-should('BIP174: PSBT multi-sign example', () => {
+should('bip174-psbt: PSBT multisig example', () => {
   const testnet = {
     wif: 0xef,
     bip32: {
@@ -235,7 +237,7 @@ should('BIP174: PSBT multi-sign example', () => {
   );
 });
 
-should('PSBT garbage', () => {
+should('bip174-psbt: PSBT garbage', () => {
   // Parsed by bitcoinjs-lib, however contains garbage inside
   throws(() =>
     btc.Transaction.fromPSBT(

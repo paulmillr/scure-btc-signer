@@ -893,6 +893,17 @@ The package contains:
 
 ## Utils
 
+### secp256k1 keys
+
+```ts
+import { pubSchnorr, signSchnorr } from '@scure/btc-signer/utils';
+import { pubECDSA, signECDSA } from '@scure/btc-signer/utils';
+import { randomPrivateKeyBytes } from '@scure/btc-signer/utils';
+
+const priv = randomPrivateKeyBytes();
+const pub = pubSchnorr(priv);
+```
+
 ### getAddress
 
 Returns common addresses from privateKey

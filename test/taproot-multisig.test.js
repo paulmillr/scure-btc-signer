@@ -1,5 +1,5 @@
 import { deepStrictEqual } from 'node:assert';
-import { should } from 'micro-should';
+import { describe, should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../lib/esm/index.js';
 
@@ -205,19 +205,21 @@ const SCRIPTS = [
 ];
 // TODO: there were tapscripts with csv?
 
-for (const s of SCRIPTS) {
-  should(`script=${s}`, () => {
-    const d = hex.decode(s);
-    const parsed = btc.OutScript.decode(d);
-    // if (parsed.type === 'unknown') {
-    //   const hs = hex.decode(s);
-    //   console.log(parsed, btc.Script.decode(hs));
-    //   console.log('W', btc.OutScript.decode(hex.decode(s)));
-    //   throw new Error('wat?');
-    // }
-    deepStrictEqual(btc.OutScript.encode(btc.OutScript.decode(d)), d);
-  });
-}
+describe('taproot-multisig', () => {
+  for (const s of SCRIPTS) {
+    should(`script=${s}`, () => {
+      const d = hex.decode(s);
+      const parsed = btc.OutScript.decode(d);
+      // if (parsed.type === 'unknown') {
+      //   const hs = hex.decode(s);
+      //   console.log(parsed, btc.Script.decode(hs));
+      //   console.log('W', btc.OutScript.decode(hex.decode(s)));
+      //   throw new Error('wat?');
+      // }
+      deepStrictEqual(btc.OutScript.encode(btc.OutScript.decode(d)), d);
+    });
+  }
+});
 
 // ESM is broken.
 import url from 'url';
