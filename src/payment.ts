@@ -652,13 +652,19 @@ export function getAddress(type: 'pkh' | 'wpkh' | 'tr', privKey: Bytes, network 
 
 export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(u.compareBytes);
 
-export function multisig(m: number, pubkeys: Bytes[], sorted = false, witness = false) {
+export function multisig(
+  m: number,
+  pubkeys: Bytes[],
+  sorted = false,
+  witness = false,
+  network = NETWORK
+) {
   const ms = p2ms(m, sorted ? _sortPubkeys(pubkeys) : pubkeys);
-  return witness ? p2wsh(ms) : p2sh(ms);
+  return witness ? p2wsh(ms, network) : p2sh(ms, network);
 }
 
-export function sortedMultisig(m: number, pubkeys: Bytes[], witness = false) {
-  return multisig(m, pubkeys, true, witness);
+export function sortedMultisig(m: number, pubkeys: Bytes[], witness = false, network = NETWORK) {
+  return multisig(m, pubkeys, true, witness, network);
 }
 
 const base58check = createBase58check(u.sha256);
