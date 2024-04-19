@@ -1,6 +1,6 @@
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { Address, OutScript, checkScript } from './payment.js';
+import { Address, CustomScript, OutScript, checkScript, tapLeafHash } from './payment.js';
 import * as psbt from './psbt.js';
 import { CompactSizeLen, RawOutput, RawTx, RawWitness, Script, VarBytes } from './script.js';
 import {
@@ -11,6 +11,7 @@ import {
   Transaction,
 } from './transaction.js'; // circular
 import { NETWORK, Bytes, compareBytes, isBytes, TAPROOT_UNSPENDABLE_KEY, sha256 } from './utils.js';
+import { validatePubkey, PubT } from './utils.js';
 
 // Normalizes input
 export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof RawOutput> {
@@ -116,14 +117,72 @@ export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtx
 export const toVsize = (weight: number) => Math.ceil(weight / 4);
 // UTXO Select
 type Output = { address: string; amount: bigint } | { script: Uint8Array; amount: bigint };
+type TapLeafScript = psbt.TransactionInput['tapLeafScript'];
+type TB = Parameters<typeof psbt.TaprootControlBlock.encode>[0];
+const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
+
+function iterLeafs(tapLeafScript: TapLeafScript, sigSize: number, customScripts?: CustomScript[]) {
+  if (!tapLeafScript || !tapLeafScript.length) throw new Error('no leafs');
+  const empty = () => new Uint8Array(sigSize);
+  // If user want to select specific leaf, which can signed,
+  // it is possible to remove all other leafs manually.
+  // Sort leafs by control block length.
+  const leafs = tapLeafScript.sort(
+    (a, b) => encodeTapBlock(a[0]).length - encodeTapBlock(b[0]).length
+  );
+  for (const [cb, _script] of leafs) {
+    // Last byte is version
+    const script = _script.slice(0, -1);
+    const ver = _script[_script.length - 1];
+    const outs = OutScript.decode(script);
+
+    let signatures: Bytes[] = [];
+    if (outs.type === 'tr_ms') {
+      const m = outs.m;
+      const n = outs.pubkeys.length - m;
+      for (let i = 0; i < m; i++) signatures.push(empty());
+      for (let i = 0; i < n; i++) signatures.push(P.EMPTY);
+    } else if (outs.type === 'tr_ns') {
+      for (const _pub of outs.pubkeys) signatures.push(empty());
+    } else {
+      if (!customScripts) throw new Error('Finalize: Unknown tapLeafScript');
+      const leafHash = tapLeafHash(script, ver);
+      for (const c of customScripts) {
+        if (!c.finalizeTaproot) continue;
+        const scriptDecoded = Script.decode(script);
+        const csEncoded = c.encode(scriptDecoded);
+        if (csEncoded === undefined) continue;
+        const pubKeys = scriptDecoded.filter((i) => {
+          if (!P.isBytes(i)) return false;
+          try {
+            validatePubkey(i, PubT.schnorr);
+            return true;
+          } catch (e) {
+            return false;
+          }
+        }) as Bytes[];
+        const finalized = c.finalizeTaproot(
+          script,
+          csEncoded,
+          pubKeys.map((pubKey) => [{ pubKey, leafHash }, empty()])
+        );
+        if (!finalized) continue;
+        return finalized.concat(encodeTapBlock(cb));
+      }
+    }
+    // Witness is stack, so last element will be used first
+    return signatures.reverse().concat([script, encodeTapBlock(cb)]);
+  }
+  throw new Error('there was no witness');
+}
 
 function estimateInput(
   inputType: ReturnType<typeof getInputType>,
   input: psbt.TransactionInput,
   opts: TxOpts
 ) {
-  let script: Bytes = P.EMPTY,
-    witness: Bytes[] | undefined;
+  let script: Bytes = P.EMPTY;
+  let witness: Bytes[] | undefined;
 
   // schnorr sig is always 64 bytes. except for cases when sighash is not default!
   if (inputType.txType === 'taproot') {
@@ -131,53 +190,31 @@ function estimateInput(
     if (input.tapInternalKey && !P.equalBytes(input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
       witness = [new Uint8Array(SCHNORR_SIG_SIZE)];
     } else if (input.tapLeafScript) {
-      // If user want to select specific leaf (which can signed, it is possible to remove all other leafs manually);
-      // Sort leafs by control block length.
-      const leafs = input.tapLeafScript.sort(
-        (a, b) =>
-          psbt.TaprootControlBlock.encode(a[0]).length -
-          psbt.TaprootControlBlock.encode(b[0]).length
-      );
-      for (const [cb, _script] of leafs) {
-        // Last byte is version
-        const script = _script.slice(0, -1);
-        const outScript = OutScript.decode(script);
-        let signatures: Bytes[] = [];
-        if (outScript.type === 'tr_ms') {
-          const m = outScript.m;
-          for (let i = 0; i < m; i++) signatures.push(new Uint8Array(SCHNORR_SIG_SIZE));
-          const n = outScript.pubkeys.length - m;
-          for (let i = 0; i < n; i++) signatures.push(P.EMPTY);
-        } else if (outScript.type === 'tr_ns') {
-          for (const _pub of outScript.pubkeys) signatures.push(new Uint8Array(SCHNORR_SIG_SIZE));
-        } else throw new Error('Finalize: Unknown tapLeafScript');
-        // Witness is stack, so last element will be used first
-        witness = signatures.reverse().concat([script, psbt.TaprootControlBlock.encode(cb)]);
-        break;
-      }
+      witness = iterLeafs(input.tapLeafScript, SCHNORR_SIG_SIZE, opts.customScripts);
     } else throw new Error('estimateInput/taproot: unknown input');
   } else {
     // It is possible to grind signatures until it has minimal size (but changing fee value +N satoshi),
     // which will make estimations exact. But will be very hard for multi sig (need to make sure all signatures has small size).
-    const SIG_SIZE = 72; // Maximum size of signatures
-    const PUB_KEY_SIZE = 33;
+    const empty = () => new Uint8Array(72); // max size of sigs
+    const emptyPub = () => new Uint8Array(33); // size of pubkey
     let inputScript = P.EMPTY;
     let inputWitness: Uint8Array[] = [];
-    if (inputType.last.type === 'ms') {
+    const ltype = inputType.last.type;
+    if (ltype === 'ms') {
       const m = inputType.last.m;
       const sig: (number | Uint8Array)[] = [0];
-      for (let i = 0; i < m; i++) sig.push(new Uint8Array(SIG_SIZE));
+      for (let i = 0; i < m; i++) sig.push(empty());
       inputScript = Script.encode(sig);
-    } else if (inputType.last.type === 'pk') {
+    } else if (ltype === 'pk') {
       // 71 sig + 1 sighash
-      inputScript = Script.encode([new Uint8Array(SIG_SIZE)]);
-    } else if (inputType.last.type === 'pkh') {
-      inputScript = Script.encode([new Uint8Array(SIG_SIZE), new Uint8Array(PUB_KEY_SIZE)]);
-    } else if (inputType.last.type === 'wpkh') {
+      inputScript = Script.encode([empty()]);
+    } else if (ltype === 'pkh') {
+      inputScript = Script.encode([empty(), emptyPub()]);
+    } else if (ltype === 'wpkh') {
       inputScript = P.EMPTY;
-      inputWitness = [new Uint8Array(SIG_SIZE), new Uint8Array(PUB_KEY_SIZE)];
-    } else if (inputType.last.type === 'unknown' && !opts.allowUnknownInputs)
-      throw new Error('Unknown inputs not allowed');
+      inputWitness = [empty(), emptyPub()];
+    } else if (ltype === 'unknown' && !opts.allowUnknownInputs)
+      throw new Error('Unknown inputs are not allowed');
     if (inputType.type.includes('wsh-')) {
       // P2WSH
       if (inputScript.length && inputType.lastScript.length) {

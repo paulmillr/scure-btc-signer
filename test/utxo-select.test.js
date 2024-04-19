@@ -3,6 +3,7 @@ import { describe, should } from 'micro-should';
 import { hex } from '@scure/base';
 import * as btc from '../lib/esm/index.js';
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
+import * as P from 'micro-packed';
 
 describe('UTXO Select', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
@@ -534,6 +535,94 @@ describe('UTXO Select', () => {
     t([INPUTS[0]], [OUTPUTS[11]], 4);
     t([INPUTS[0]], [OUTPUTS[12]], 4);
     t([INPUTS[6]], [OUTPUTS[13]]);
+  });
+
+  should('estimating size of custom scripts', () => {
+    const customScripts = [
+      {
+        encode(from) {
+          const res = { type: 'tr_ord_reveal' };
+          res.inscriptions = ['test'];
+          res.pubkey = from[0];
+          return res;
+        },
+        decode: (to) => {
+          if (to.type !== 'tr_ord_reveal') return;
+          const out = [to.pubkey, 'CHECKSIG'];
+          out.push(
+            0,
+            'IF',
+            new Uint8Array(['o'.charCodeAt(0), 'r'.charCodeAt(0), 'd'.charCodeAt(0)])
+          );
+          // Body
+          out.push(0);
+          out.push(new Uint8Array([1, 2, 3]));
+          out.push('ENDIF');
+          return out;
+        },
+        finalizeTaproot: (script, parsed, signatures) => {
+          if (signatures.length !== 1)
+            throw new Error('tr_ord_reveal/finalize: wrong signatures array');
+          const [{ pubKey }, sig] = signatures[0];
+          if (!P.equalBytes(pubKey, parsed.pubkey)) return;
+          return [sig, script];
+        },
+      },
+    ];
+    const p2tr_ord_reveal = (pubkey, inscriptions) => {
+      return {
+        type: 'tr_ord_reveal',
+        script: P.apply(btc.Script, customScripts[0]).encode({
+          type: 'tr_ord_reveal',
+          pubkey,
+          inscriptions,
+        }),
+      };
+    };
+
+    const privKey = hex.decode('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a');
+    const pubKey = secp256k1_schnorr.getPublicKey(privKey);
+    const payment = btc.p2tr(
+      undefined,
+      p2tr_ord_reveal(pubKey, []),
+      regtest,
+      undefined,
+      customScripts
+    );
+    // Test custom scripts inside tx just in case
+    const tx = new btc.Transaction({ customScripts });
+    tx.addInput({
+      txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 100n },
+      ...payment,
+    });
+    tx.addOutputAddress('bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2', 80n, regtest);
+    tx.sign(privKey, undefined, new Uint8Array(32));
+    tx.finalize();
+    // Actual utxo
+    const s = btc.selectUTXO(
+      [
+        {
+          txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+          index: 0,
+          witnessUtxo: { script: payment.script, amount: 1000n },
+          ...payment,
+        },
+      ],
+      [],
+      'all',
+      {
+        changeAddress: 'bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2',
+        feePerByte: 1n,
+        network: regtest,
+        customScripts,
+      }
+    );
+    s.tx.sign(privKey, undefined, new Uint8Array(32));
+    s.tx.finalize();
+    deepStrictEqual(s.tx.weight, s.weight);
+    deepStrictEqual(tx.weight, s.weight);
   });
 
   should('estimator', () => {
