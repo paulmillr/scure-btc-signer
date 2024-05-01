@@ -1,5 +1,12 @@
 /*! scure-btc-signer - MIT License (c) 2022 Paul Miller (paulmillr.com) */
-import { isBytes, concatBytes, compareBytes, pubSchnorr, randomPrivateKeyBytes } from './utils.js';
+import {
+  isBytes,
+  concatBytes,
+  compareBytes,
+  pubSchnorr,
+  randomPrivateKeyBytes,
+  taprootTweakPubkey,
+} from './utils.js';
 // prettier-ignore
 export {
   p2pk, p2pkh, p2sh, p2ms, p2wsh, p2wpkh, p2tr, p2tr_ns, p2tr_ms, p2tr_pk,
@@ -14,7 +21,14 @@ export { Transaction } from './transaction.js';
 export { getInputType, selectUTXO } from './utxo.js';
 export { NETWORK, TEST_NETWORK, TAPROOT_UNSPENDABLE_KEY } from './utils.js';
 
-export const utils = { isBytes, concatBytes, compareBytes, pubSchnorr, randomPrivateKeyBytes };
+export const utils = {
+  isBytes,
+  concatBytes,
+  compareBytes,
+  pubSchnorr,
+  randomPrivateKeyBytes,
+  taprootTweakPubkey,
+};
 
 // Utils
 // prettier-ignore
