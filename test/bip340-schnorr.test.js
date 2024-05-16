@@ -2,7 +2,7 @@ import { deepStrictEqual } from 'node:assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
 import { schnorr } from '@noble/curves/secp256k1';
-import { default as v340 } from './fixtures/bip340.json' assert { type: 'json' };
+import { default as v340 } from './fixtures/bip340.json' with { type: 'json' };
 
 // BIP340 (same as in secp256k1, just to be sure)
 for (const v of v340) {

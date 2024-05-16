@@ -564,7 +564,7 @@ describe('UTXO Select', () => {
           if (signatures.length !== 1)
             throw new Error('tr_ord_reveal/finalize: wrong signatures array');
           const [{ pubKey }, sig] = signatures[0];
-          if (!P.equalBytes(pubKey, parsed.pubkey)) return;
+          if (!P.utils.equalBytes(pubKey, parsed.pubkey)) return;
           return [sig, script];
         },
       },

@@ -258,7 +258,7 @@ export type OutScriptType = typeof OutScript;
 
 // Basic sanity check for scripts
 function checkWSH(s: OutWSHType, witnessScript: Bytes) {
-  if (!P.equalBytes(s.hash, u.sha256(witnessScript)))
+  if (!u.equalBytes(s.hash, u.sha256(witnessScript)))
     throw new Error('checkScript: wsh wrong witnessScript hash');
   const w = OutScript.decode(witnessScript);
   if (w.type === 'tr' || w.type === 'tr_ns' || w.type === 'tr_ms')
@@ -274,7 +274,7 @@ export function checkScript(script?: Bytes, redeemScript?: Bytes, witnessScript?
     if (s.type === 'tr_ns' || s.type === 'tr_ms' || s.type === 'ms' || s.type == 'pk')
       throw new Error(`checkScript: non-wrapped ${s.type}`);
     if (s.type === 'sh' && redeemScript) {
-      if (!P.equalBytes(s.hash, u.hash160(redeemScript)))
+      if (!u.equalBytes(s.hash, u.hash160(redeemScript)))
         throw new Error('checkScript: sh wrong redeemScript hash');
       const r = OutScript.decode(redeemScript);
       if (r.type === 'tr' || r.type === 'tr_ns' || r.type === 'tr_ms')
@@ -390,7 +390,7 @@ function checkTaprootScript(
   const outms = out as OutTRNSType | OutTRMSType;
   if (!allowUnknownOutputs && outms.pubkeys) {
     for (const p of outms.pubkeys) {
-      if (P.equalBytes(p, u.TAPROOT_UNSPENDABLE_KEY))
+      if (u.equalBytes(p, u.TAPROOT_UNSPENDABLE_KEY))
         throw new Error('Unspendable taproot key in leaf script');
       // It's likely a mistake at this point:
       // 1. p2tr(A, p2tr_ns(2, [A, B])) == p2tr(A, p2tr_pk(B)) (A or B key)
@@ -399,7 +399,7 @@ function checkTaprootScript(
       // User creates 2 of 3 multisig of keys [A, B, C],
       // but key A always can spend whole output without signatures from other keys.
       // p2tr(A, p2tr_ns(2, [B, C, D])) is ok: A or (B and C) or (B and D) or (C and D)
-      if (P.equalBytes(p, internalPubKey)) {
+      if (u.equalBytes(p, internalPubKey)) {
         throw new Error(
           'Using P2TR with leaf script with same key as internal key is not supported'
         );
@@ -500,7 +500,7 @@ function taprootHashTree(
   if (!Array.isArray(tree)) {
     const { leafVersion: version, script: leafScript } = tree;
     // Earliest tree walk where we can validate tapScripts
-    if (tree.tapLeafScript || (tree.tapMerkleRoot && !P.equalBytes(tree.tapMerkleRoot, P.EMPTY)))
+    if (tree.tapLeafScript || (tree.tapMerkleRoot && !u.equalBytes(tree.tapMerkleRoot, P.EMPTY)))
       throw new Error('P2TR: tapRoot leafScript cannot have tree');
     const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
     if (!u.isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);

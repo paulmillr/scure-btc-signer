@@ -1,4 +1,5 @@
 import * as P from 'micro-packed';
+import { isBytes } from './utils.js';
 
 export const MAX_SCRIPT_BYTE_LENGTH = 520;
 
@@ -57,10 +58,11 @@ export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<big
         throw new Error(`ScriptNum: number (${len}) bigger than limit=${bytesLimit}`);
       if (len === 0) return 0n;
       if (forceMinimal) {
+        const data = r.bytes(len, true);
         // MSB is zero (without sign bit) -> not minimally encoded
-        if ((r.data[len - 1] & 0x7f) === 0) {
+        if ((data[data.length - 1] & 0x7f) === 0) {
           // exception
-          if (len <= 1 || (r.data[len - 2] & 0x80) === 0)
+          if (len <= 1 || (data[data.length - 2] & 0x80) === 0)
             throw new Error('Non-minimally encoded ScriptNum');
         }
       }
@@ -81,7 +83,7 @@ export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<big
 
 export function OpToNum(op: ScriptOP, bytesLimit = 4, forceMinimal = true) {
   if (typeof op === 'number') return op;
-  if (P.isBytes(op)) {
+  if (isBytes(op)) {
     try {
       const val = ScriptNum(bytesLimit, forceMinimal).decode(op);
       if (val > Number.MAX_SAFE_INTEGER) return;
@@ -120,7 +122,7 @@ export const Script: P.CoderType<ScriptType> = P.wrap({
       }
       // Encode big numbers
       if (typeof o === 'number') o = ScriptNum().encode(BigInt(o));
-      if (!P.isBytes(o)) throw new Error(`Wrong Script OP=${o} (${typeof o})`);
+      if (!isBytes(o)) throw new Error(`Wrong Script OP=${o} (${typeof o})`);
       // Bytes
       const len = o.length;
       if (len < OP.PUSHDATA1) w.byte(len);
@@ -195,7 +197,7 @@ export const CompactSize: P.CoderType<bigint> = P.wrap({
 });
 
 // Same thing, but in number instead of bigint. Checks for safe integer inside
-export const CompactSizeLen = P.apply(CompactSize, P.coders.number);
+export const CompactSizeLen = P.apply(CompactSize, P.coders.numberBigint);
 
 // ui8a of size <CompactSize>
 export const VarBytes = P.bytes(CompactSize);

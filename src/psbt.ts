@@ -2,7 +2,7 @@ import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { CompactSize, CompactSizeLen, RawOutput, RawTx, RawWitness, VarBytes } from './script.js';
 import { Transaction } from './transaction.js'; // circular
-import { Bytes, compareBytes, PubT, validatePubkey } from './utils.js';
+import { Bytes, compareBytes, PubT, validatePubkey, equalBytes } from './utils.js';
 
 // PSBT BIP174, BIP370, BIP371
 
@@ -272,8 +272,7 @@ export const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     const prevOut = i.nonWitnessUtxo.outputs[i.index];
     if (
       i.witnessUtxo &&
-      (!P.equalBytes(i.witnessUtxo.script, prevOut.script) ||
-        i.witnessUtxo.amount !== prevOut.amount)
+      (!equalBytes(i.witnessUtxo.script, prevOut.script) || i.witnessUtxo.amount !== prevOut.amount)
     )
       throw new Error('validateInput: witnessUtxo different from nonWitnessUtxo');
   }
@@ -499,7 +498,7 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
     } else if (typeof res[k] === 'string') {
       res[k] = vC.decode(hex.decode(res[k] as string));
     } else if (cannotChange && k in val && cur && cur[k] !== undefined) {
-      if (!P.equalBytes(vC.encode(val[k]), vC.encode(cur[k])))
+      if (!equalBytes(vC.encode(val[k]), vC.encode(cur[k])))
         throw new Error(`Cannot change signed field=${k}`);
     }
   }

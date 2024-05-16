@@ -4,7 +4,7 @@ import { hex } from '@scure/base';
 import { Address, CustomScript, OutScript, checkScript, tapLeafHash } from './payment.js';
 import * as psbt from './psbt.js'; // circular
 import { CompactSizeLen, RawOutput, RawTx, RawWitness, Script, VarBytes } from './script.js';
-import { NETWORK, Bytes, concatBytes, isBytes } from './utils.js';
+import { NETWORK, Bytes, concatBytes, isBytes, equalBytes } from './utils.js';
 import * as u from './utils.js';
 import { getInputType, toVsize, normalizeInput, getPrevOut } from './utxo.js'; // circular
 
@@ -108,7 +108,7 @@ function getTaprootKeys(
   internalKey: Bytes,
   merkleRoot: Bytes = P.EMPTY
 ) {
-  if (P.equalBytes(internalKey, pubKey)) {
+  if (equalBytes(internalKey, pubKey)) {
     privKey = u.taprootTweakPrivKey(privKey, merkleRoot);
     pubKey = u.pubSchnorr(privKey);
   }
@@ -700,7 +700,7 @@ export class Transaction {
         .map(([pubKey, { path }]) => {
           let s = privateKey as HDKey;
           for (const i of path) s = s.deriveChild(i);
-          if (!P.equalBytes(s.publicKey, pubKey)) throw new Error('bip32Derivation: wrong pubKey');
+          if (!equalBytes(s.publicKey, pubKey)) throw new Error('bip32Derivation: wrong pubKey');
           if (!s.privateKey) throw new Error('bip32Derivation: no privateKey');
           return s;
         });
@@ -754,7 +754,7 @@ export class Transaction {
           merkleRoot
         );
         const [taprootPubKey, _] = u.taprootTweakPubkey(input.tapInternalKey, merkleRoot);
-        if (P.equalBytes(taprootPubKey, pubKey)) {
+        if (equalBytes(taprootPubKey, pubKey)) {
           const hash = this.preimageWitnessV1(idx, prevOutScript, sighash, amount);
           const sig = concatBytes(
             u.signSchnorr(hash, privKey, _auxRand),
@@ -772,7 +772,7 @@ export class Transaction {
           const ver = _script[_script.length - 1];
           const hash = tapLeafHash(script, ver);
           // NOTE: no need to tweak internal key here, since we don't support nested p2tr
-          const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, schnorrPub));
+          const pos = scriptDecoded.findIndex((i) => isBytes(i) && equalBytes(i, schnorrPub));
           // Skip if there is no public key in tapLeafScript
           if (pos === -1) continue;
           const msg = this.preimageWitnessV1(
@@ -806,8 +806,7 @@ export class Transaction {
       let hasPubkey = false;
       const pubKeyHash = u.hash160(pubKey);
       for (const i of Script.decode(inputType.lastScript)) {
-        if (isBytes(i) && (P.equalBytes(i, pubKey) || P.equalBytes(i, pubKeyHash)))
-          hasPubkey = true;
+        if (isBytes(i) && (equalBytes(i, pubKey) || equalBytes(i, pubKeyHash))) hasPubkey = true;
       }
       if (!hasPubkey) throw new Error(`Input script doesn't have pubKey: ${inputType.lastScript}`);
       let hash;
@@ -870,14 +869,14 @@ export class Transaction {
           const ver = _script[_script.length - 1];
           const outScript = OutScript.decode(script);
           const hash = tapLeafHash(script, ver);
-          const scriptSig = input.tapScriptSig.filter((i) => P.equalBytes(i[0].leafHash, hash));
+          const scriptSig = input.tapScriptSig.filter((i) => equalBytes(i[0].leafHash, hash));
           let signatures: Bytes[] = [];
           if (outScript.type === 'tr_ms') {
             const m = outScript.m;
             const pubkeys = outScript.pubkeys;
             let added = 0;
             for (const pub of pubkeys) {
-              const sigIdx = scriptSig.findIndex((i) => P.equalBytes(i[0].pubKey, pub));
+              const sigIdx = scriptSig.findIndex((i) => equalBytes(i[0].pubKey, pub));
               // Should have exact amount of signatures (more -- will fail)
               if (added === m || sigIdx === -1) {
                 signatures.push(P.EMPTY);
@@ -890,7 +889,7 @@ export class Transaction {
             if (added !== m) continue;
           } else if (outScript.type === 'tr_ns') {
             for (const pub of outScript.pubkeys) {
-              const sigIdx = scriptSig.findIndex((i) => P.equalBytes(i[0].pubKey, pub));
+              const sigIdx = scriptSig.findIndex((i) => equalBytes(i[0].pubKey, pub));
               if (sigIdx === -1) continue;
               signatures.push(scriptSig[sigIdx][1]);
             }
@@ -900,7 +899,7 @@ export class Transaction {
             const scriptDecoded = Script.decode(script);
             signatures = scriptSig
               .map(([{ pubKey }, signature]) => {
-                const pos = scriptDecoded.findIndex((i) => isBytes(i) && P.equalBytes(i, pubKey));
+                const pos = scriptDecoded.findIndex((i) => isBytes(i) && equalBytes(i, pubKey));
                 if (pos === -1)
                   throw new Error('finalize/taproot: cannot find position of pubkey in script');
                 return { signature, pos };
@@ -951,7 +950,7 @@ export class Transaction {
       let signatures = [];
       // partial: [pubkey, sign]
       for (const pub of pubkeys) {
-        const sign = input.partialSig.find((s) => P.equalBytes(pub, s[0]));
+        const sign = input.partialSig.find((s) => equalBytes(pub, s[0]));
         if (!sign) continue;
         signatures.push(sign[1]);
       }
@@ -1024,7 +1023,7 @@ export class Transaction {
     }
     const thisUnsigned = this.global.unsignedTx ? RawTx.encode(this.global.unsignedTx) : P.EMPTY;
     const otherUnsigned = other.global.unsignedTx ? RawTx.encode(other.global.unsignedTx) : P.EMPTY;
-    if (!P.equalBytes(thisUnsigned, otherUnsigned))
+    if (!equalBytes(thisUnsigned, otherUnsigned))
       throw new Error(`Transaction/combine: different unsigned tx`);
     this.global = psbt.mergeKeyMap(psbt.PSBTGlobal, this.global, other.global);
     for (let i = 0; i < this.inputs.length; i++) this.updateInput(i, other.inputs[i], true);

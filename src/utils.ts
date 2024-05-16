@@ -1,4 +1,4 @@
-import { isBytes, concatBytes, U32LE } from 'micro-packed';
+import { utils as packedUtils, U32LE } from 'micro-packed';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import { sha256 } from '@noble/hashes/sha256';
 import { secp256k1 as secp, schnorr } from '@noble/curves/secp256k1';
@@ -7,7 +7,8 @@ export type Bytes = Uint8Array;
 const Point = secp.ProjectivePoint;
 const CURVE_ORDER = secp.CURVE.n;
 
-export { sha256, isBytes, concatBytes };
+const { isBytes, concatBytes, equalBytes } = packedUtils;
+export { sha256, isBytes, concatBytes, equalBytes };
 
 export const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
 export const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concatBytes(...msgs)));

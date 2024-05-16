@@ -10,7 +10,15 @@ import {
   SignatureHash,
   Transaction,
 } from './transaction.js'; // circular
-import { NETWORK, Bytes, compareBytes, isBytes, TAPROOT_UNSPENDABLE_KEY, sha256 } from './utils.js';
+import {
+  NETWORK,
+  Bytes,
+  compareBytes,
+  equalBytes,
+  isBytes,
+  TAPROOT_UNSPENDABLE_KEY,
+  sha256,
+} from './utils.js';
 import { validatePubkey, PubT } from './utils.js';
 
 // Normalizes input
@@ -153,7 +161,7 @@ function iterLeafs(tapLeafScript: TapLeafScript, sigSize: number, customScripts?
         const csEncoded = c.encode(scriptDecoded);
         if (csEncoded === undefined) continue;
         const pubKeys = scriptDecoded.filter((i) => {
-          if (!P.isBytes(i)) return false;
+          if (!isBytes(i)) return false;
           try {
             validatePubkey(i, PubT.schnorr);
             return true;
@@ -187,7 +195,7 @@ function estimateInput(
   // schnorr sig is always 64 bytes. except for cases when sighash is not default!
   if (inputType.txType === 'taproot') {
     const SCHNORR_SIG_SIZE = inputType.sighash !== SignatureHash.DEFAULT ? 65 : 64;
-    if (input.tapInternalKey && !P.equalBytes(input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
+    if (input.tapInternalKey && !equalBytes(input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
       witness = [new Uint8Array(SCHNORR_SIG_SIZE)];
     } else if (input.tapLeafScript) {
       witness = iterLeafs(input.tapLeafScript, SCHNORR_SIG_SIZE, opts.customScripts);
