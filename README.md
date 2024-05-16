@@ -424,7 +424,7 @@ but txid is consistent across block explorers, while some explorers treat hash
 as txid - so hash is not consistent.
 
 Use `getInput` and `inputsLength` to read information about inputs: they return a copy.
-This is neccessary to avoid accidential modification of internal structures without calling methods (addInput/updateInput) that will verify correctness.
+This is necessary to avoid accidental modification of internal structures without calling methods (addInput/updateInput) that will verify correctness.
 
 ```ts
 type TransactionInput = {
@@ -521,14 +521,14 @@ for (let i = 0; i < tx.inputsLength; i++) {
 
 ### Outputs
 
-`addOutputAddress` uses bigint amounts, which mean satoshis - NOT btc. If you need btc representation, use Decimal:
+`addOutputAddress` uses bigint amounts, which means satoshis - NOT btc. If you need btc representation, use Decimal:
 
 ```ts
 const amountSatoshi = btc.Decimal.decode('1.5'); // 1.5 btc in satoshi
 ```
 
 Use `getOutput` and `outputsLength` to read outputs information. This methods returns copy of output, instead of internal representation.
-This is neccessary to avoid accidential modification of internal structures without calling methods (addOutput/updateOutput) that will verify correctness.
+This is necessary to avoid accidental modification of internal structures without calling methods (addOutput/updateOutput) that will verify correctness.
 
 ```ts
 type TransactionOutput = {
@@ -863,7 +863,7 @@ deepStrictEqual(selected.outputs, [
     amount: 50_000_000n,
   },
   // Change address
-  // NOTE: with bip69 it is not neccesarily last item in outputs
+  // NOTE: with bip69 it is not necessarily last item in outputs
   {
     address: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
     amount: 99_949_606n,
@@ -920,7 +920,7 @@ deepStrictEqual(
 
 #### WIF
 
-Encoding/decoding of WIF privateKeys. Only compessed keys are supported for now.
+Encoding/decoding of WIF privateKeys. Only compressed keys are supported for now.
 
 ```ts
 const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
