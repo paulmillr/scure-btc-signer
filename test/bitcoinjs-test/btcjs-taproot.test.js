@@ -3,8 +3,8 @@ import { should } from 'micro-should';
 import { hex, base64 } from '@scure/base';
 import * as btc from '../../lib/esm/index.js';
 import * as P from 'micro-packed';
-import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' assert { type: 'json' };
-import { default as tapPsbt } from './fixtures/bitcoinjs-taproot/psbt.json' assert { type: 'json' };
+import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
+import { default as tapPsbt } from './fixtures/bitcoinjs-taproot/psbt.json' with { type: 'json' };
 
 // TODO: move to index.ts as compat layer for bitcoinjs-lib?
 function fromASM(asm) {
@@ -66,7 +66,7 @@ for (let i = 0; i < tapPsbt.signInput.checks.length; i++) {
 }
 
 // ESM is broken.
-import url from 'url';
+import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   should.run();
 }

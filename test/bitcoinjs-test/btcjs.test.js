@@ -3,11 +3,11 @@ import { should } from 'micro-should';
 import { hex, base64 } from '@scure/base';
 import * as btc from '../../lib/esm/index.js';
 import * as bip32 from '@scure/bip32';
-import { default as f_transaction } from './fixtures/bitcoinjs/transaction.json' assert { type: 'json' };
-import { default as f_script } from './fixtures/bitcoinjs/script.json' assert { type: 'json' };
-import { default as f_script_number } from './fixtures/bitcoinjs/script_number.json' assert { type: 'json' };
-import { default as f_address } from './fixtures/bitcoinjs/address.json' assert { type: 'json' };
-import { default as psbt } from './fixtures/bitcoinjs/psbt.json' assert { type: 'json' };
+import { default as f_transaction } from './fixtures/bitcoinjs/transaction.json' with { type: 'json' };
+import { default as f_script } from './fixtures/bitcoinjs/script.json' with { type: 'json' };
+import { default as f_script_number } from './fixtures/bitcoinjs/script_number.json' with { type: 'json' };
+import { default as f_address } from './fixtures/bitcoinjs/address.json' with { type: 'json' };
+import { default as psbt } from './fixtures/bitcoinjs/psbt.json' with { type: 'json' };
 import * as utils from './utils.js';
 
 should('version is int32le', () => {
@@ -633,7 +633,7 @@ for (let i = 0; i < psbt.signInputHD.checks.length; i++) {
 }
 
 // ESM is broken.
-import url from 'url';
+import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   should.run();
 }

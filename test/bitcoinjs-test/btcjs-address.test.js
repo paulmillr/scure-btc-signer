@@ -2,15 +2,15 @@ import { deepStrictEqual, throws } from 'node:assert';
 import { should } from 'micro-should';
 import { hex, base64 } from '@scure/base';
 import * as btc from '../../lib/esm/index.js';
-import { default as p2ms } from './fixtures/bitcoinjs/p2ms.json' assert { type: 'json' };
-import { default as p2pk } from './fixtures/bitcoinjs/p2pk.json' assert { type: 'json' };
-import { default as p2pkh } from './fixtures/bitcoinjs/p2pkh.json' assert { type: 'json' };
-import { default as p2sh } from './fixtures/bitcoinjs/p2sh.json' assert { type: 'json' };
-import { default as p2wpkh } from './fixtures/bitcoinjs/p2wpkh.json' assert { type: 'json' };
-import { default as p2wsh } from './fixtures/bitcoinjs/p2wsh.json' assert { type: 'json' };
-import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' assert { type: 'json' };
-import { default as p2tr_ns } from './fixtures/bitcoinjs-taproot/p2tr_ns.json' assert { type: 'json' };
-import { default as p2tr_bitgo } from './fixtures/bitcoinjs-taproot/p2tr_bitgo.json' assert { type: 'json' };
+import { default as p2ms } from './fixtures/bitcoinjs/p2ms.json' with { type: 'json' };
+import { default as p2pk } from './fixtures/bitcoinjs/p2pk.json' with { type: 'json' };
+import { default as p2pkh } from './fixtures/bitcoinjs/p2pkh.json' with { type: 'json' };
+import { default as p2sh } from './fixtures/bitcoinjs/p2sh.json' with { type: 'json' };
+import { default as p2wpkh } from './fixtures/bitcoinjs/p2wpkh.json' with { type: 'json' };
+import { default as p2wsh } from './fixtures/bitcoinjs/p2wsh.json' with { type: 'json' };
+import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
+import { default as p2tr_ns } from './fixtures/bitcoinjs-taproot/p2tr_ns.json' with { type: 'json' };
+import { default as p2tr_bitgo } from './fixtures/bitcoinjs-taproot/p2tr_bitgo.json' with { type: 'json' };
 
 import * as utils from './utils.js';
 
@@ -85,7 +85,7 @@ for (const type in payments) {
 }
 
 // ESM is broken.
-import url from 'url';
+import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   should.run();
 }
