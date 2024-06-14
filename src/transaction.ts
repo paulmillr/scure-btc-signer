@@ -502,6 +502,12 @@ export class Transaction {
     this.checkOutputIdx(idx);
     return cloneDeep(this.outputs[idx]);
   }
+  getOutputAddress(idx: number, network = NETWORK): string | undefined {
+    const out = this.getOutput(idx);
+    if (!out.script) return;
+    return Address(network).encode(OutScript.decode(out.script));
+  }
+
   get outputsLength() {
     return this.outputs.length;
   }

@@ -269,6 +269,8 @@ export type EstimatorOpts = TxOpts & {
   network?: typeof NETWORK;
   dust?: number; // how much vbytes considered dust?
   createTx?: boolean; // Create tx inside selection
+  requiredInputs?: psbt.TransactionInputUpdate[]; // these inputs always will be used
+  allowSameUtxo?: boolean; // allow using UTXO multiple times (for test purposes)
 };
 
 function getScript(o: Output, opts: TxOpts = {}, network = NETWORK) {
@@ -310,6 +312,7 @@ export class _Estimator {
   private baseWeight: number;
   private changeWeight: number;
   private amount: bigint;
+  private requiredIndices: number[] = [];
   private normalizedInputs: {
     inputType: ReturnType<typeof getInputType>;
     normalized: ReturnType<typeof normalizeInput>;
@@ -325,7 +328,7 @@ export class _Estimator {
   private dust = 148n; // compat with coinselect
 
   constructor(
-    private inputs: psbt.TransactionInputUpdate[],
+    inputs: psbt.TransactionInputUpdate[],
     private outputs: Output[],
     private opts: EstimatorOpts
   ) {
@@ -335,6 +338,8 @@ export class _Estimator {
       if (typeof opts.dust !== 'bigint') throw new Error(`Estimator: wrong dust=${opts.dust}`);
       this.dust = opts.dust;
     }
+    if (opts.requiredInputs !== undefined && !Array.isArray(opts.requiredInputs))
+      throw new Error(`Estimator: wrong required inputs=${opts.requiredInputs}`);
     const network = opts.network || NETWORK;
     let amount = 0n;
     // Base weight: tx with outputs, no inputs
@@ -356,9 +361,19 @@ export class _Estimator {
     this.baseWeight = baseWeight;
     this.changeWeight = changeWeight;
     this.amount = amount;
-    this.normalizedInputs = this.inputs.map((i) => {
+    const allInputs = Array.from(inputs);
+    if (opts.requiredInputs) {
+      for (let i = 0; i < opts.requiredInputs.length; i++)
+        this.requiredIndices.push(allInputs.push(opts.requiredInputs[i]) - 1);
+    }
+    const inputKeys = new Set();
+    this.normalizedInputs = allInputs.map((i) => {
       const normalized = normalizeInput(i, undefined, undefined, opts.disableScriptCheck);
       inputBeforeSign(normalized); // check fields
+      const key = `${hex.encode(normalized.txid!)}:${normalized.index}`;
+      if (!opts.allowSameUtxo && inputKeys.has(key))
+        throw new Error(`Estimator: same input passed multiple times: ${key}`);
+      inputKeys.add(key);
       const inputType = getInputType(normalized, opts.allowLegacyWitnessUtxo);
       const prev = getPrevOut(normalized);
       const estimate = estimateInput(inputType, normalized, this.opts);
@@ -367,7 +382,7 @@ export class _Estimator {
     });
   }
   private checkInputIdx(idx: number) {
-    if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.inputs.length)
+    if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.normalizedInputs.length)
       throw new Error(`Wrong input index=${idx}`);
     return idx;
   }
@@ -397,7 +412,7 @@ export class _Estimator {
 
   // Sort by value instead of amount
   get biggest() {
-    return this.inputs
+    return this.normalizedInputs
       .map((_i, j) => j)
       .sort((a, b) => _cmpBig(this.normalizedInputs[b].value, this.normalizedInputs[a].value));
   }
@@ -408,7 +423,7 @@ export class _Estimator {
   // Otherwise, we have no way to know which tx is oldest
   // Explorers usually give UTXO in this order.
   get oldest() {
-    return this.inputs.map((_i, j) => j);
+    return this.normalizedInputs.map((_i, j) => j);
   }
   get newest() {
     return this.oldest.reverse();
@@ -433,6 +448,22 @@ export class _Estimator {
     const targetAmount = this.amount;
     const res = [];
     let fee;
+    for (const idx of this.requiredIndices) {
+      this.checkInputIdx(idx);
+      const { estimate, amount } = this.normalizedInputs[idx];
+      let newWeight = weight + estimate.weight;
+      if (!hasWitnesses && estimate.hasWitnesses) newWeight += 2; // enable witness if needed
+      const totalWeight = newWeight + 4 * CompactSizeLen.encode(num).length; // number of outputs can change weight
+      fee = this.getSatoshi(totalWeight);
+      weight = newWeight;
+      if (estimate.hasWitnesses) hasWitnesses = true;
+      num++;
+      inputsAmount += amount;
+      res.push(idx);
+      // inputsAmount is enough to cover cost of tx
+      if (!all && targetAmount + fee < inputsAmount)
+        return { indices: res, fee, weight: totalWeight, total: inputsAmount };
+    }
     for (const idx of indices) {
       this.checkInputIdx(idx);
       const { estimate, amount, value } = this.normalizedInputs[idx];
@@ -477,7 +508,7 @@ export class _Estimator {
   private select(strategy: SelectionStrategy) {
     if (strategy === 'all') {
       return this.accumulate(
-        this.inputs.map((_, j) => j),
+        this.normalizedInputs.map((_, j) => j),
         false,
         true,
         true
@@ -531,7 +562,7 @@ export class _Estimator {
       outputs = this.sortOutputs(outputs).map((i) => outputs[i]);
     }
     const res = {
-      inputs: inputs.map((i) => this.inputs[i]),
+      inputs: inputs.map((i) => this.normalizedInputs[i].normalized),
       outputs,
       fee,
       weight: this.opts.alwaysChange ? s.weight : changeWeight,

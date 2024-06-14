@@ -1863,6 +1863,14 @@ should('unspendable output (gh-66)', () => {
     newTx.addInput({ txid, index, nonWitnessUtxo: raw });
 });
 
+should('getOutputAddress', () => {
+  const tx = new btc.Transaction();
+  for (const [address, amount] of TX_TEST_OUTPUTS) {
+    const idx = tx.addOutputAddress(address, amount);
+    deepStrictEqual(tx.getOutputAddress(idx), address);
+  }
+});
+
 // ESM is broken.
 import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {

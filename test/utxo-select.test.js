@@ -666,6 +666,7 @@ describe('UTXO Select', () => {
       changeAddress: '2MshuFeVGhXVdRv77UcJYvRBi2JyTNwgSR2',
       network: regtest,
       allowLegacyWitnessUtxo: true,
+      allowSameUtxo: true,
     });
 
     const t = (est, i, exact, skipNegative) => {
@@ -819,6 +820,7 @@ describe('UTXO Select', () => {
         network: regtest,
         allowLegacyWitnessUtxo: true,
         createTx: true,
+        allowSameUtxo: true,
       });
       const acc = est.result(strategy);
       if (!acc) return;
@@ -1005,6 +1007,7 @@ describe('UTXO Select', () => {
           allowLegacyWitnessUtxo: true,
           feePerByte: 1n,
           changeAddress: '1KAD5EnzzLtrSo2Da2G4zzD7uZrjk8zRAv',
+          allowSameUtxo: true,
         }
       );
       return est.sortIndices(inputs.map((_, i) => i));
@@ -1187,6 +1190,111 @@ describe('UTXO Select', () => {
     deepStrictEqual(tx.id, 'b702078d65edd65a84b2a97a669df5631b06f42a67b0d7090e540b02cc65aed5');
     // real tx fee, can be bigger than estimated, since we expect signatures of maximal size
     deepStrictEqual(tx.fee, 394n);
+  });
+  should('requiredInputs', () => {
+    const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+    const pubKey = secp256k1.getPublicKey(privKey, true);
+    const spend = btc.p2wpkh(pubKey, regtest);
+    const txid = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
+    const utxo = [
+      {
+        ...spend,
+        txid,
+        index: 0,
+        witnessUtxo: { script: spend.script, amount: 100_000n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: btc.Decimal.decode('1.5') }, // value in btc
+      },
+    ];
+    const requiredSmall = [
+      {
+        ...spend,
+        txid,
+        index: 99,
+        witnessUtxo: { script: spend.script, amount: 100_000n },
+      },
+    ];
+    const requiredBig = [
+      {
+        ...spend,
+        txid,
+        index: 99,
+        witnessUtxo: { script: spend.script, amount: btc.Decimal.decode('2.5') },
+      },
+    ];
+    const outputs = [
+      { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 50_000n }, // amount in satoshi
+      {
+        address: 'bcrt1pw53jtgez0wf69n06fchp0ctk48620zdscnrj8heh86wykp9mv20q7vd3gm',
+        amount: btc.Decimal.decode('0.5'), // amount in btc
+      },
+    ];
+    // Big input covers everything, no need for others
+    const selectedBig = btc.selectUTXO(utxo, outputs, 'default', {
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', // required, address to send change
+      feePerByte: 2n, // require, fee per vbyte in satoshi
+      bip69: true, // lexicographical Indexing of Transaction Inputs and Outputs
+      createTx: true, // create tx with selected inputs/outputs
+      network: regtest,
+      requiredInputs: requiredBig,
+    });
+    deepStrictEqual(selectedBig.inputs, [
+      {
+        txid,
+        index: 99,
+        witnessUtxo: { script: spend.script, amount: 250000000n },
+        sequence: 4294967295,
+      },
+    ]);
+    deepStrictEqual(selectedBig.outputs, [
+      { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 50000n },
+      {
+        address: 'bcrt1pw53jtgez0wf69n06fchp0ctk48620zdscnrj8heh86wykp9mv20q7vd3gm',
+        amount: 50_000_000n,
+      },
+      {
+        address: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+        amount: 199_949_606n,
+      },
+    ]);
+    // This covered by 1.5btc input, but we force add required input anyway
+    const selectedSmall = btc.selectUTXO(utxo, outputs, 'default', {
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', // required, address to send change
+      feePerByte: 2n, // require, fee per vbyte in satoshi
+      bip69: true, // lexicographical Indexing of Transaction Inputs and Outputs
+      createTx: true, // create tx with selected inputs/outputs
+      network: regtest,
+      requiredInputs: requiredSmall,
+    });
+    deepStrictEqual(selectedSmall.inputs, [
+      {
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 150000000n },
+        sequence: 4294967295,
+      },
+      {
+        txid,
+        index: 99,
+        witnessUtxo: { script: spend.script, amount: 100000n },
+        sequence: 4294967295,
+      },
+    ]);
+    deepStrictEqual(selectedSmall.outputs, [
+      { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 50000n },
+      {
+        address: 'bcrt1pw53jtgez0wf69n06fchp0ctk48620zdscnrj8heh86wykp9mv20q7vd3gm',
+        amount: 50_000_000n,
+      },
+      {
+        address: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+        amount: 100_049_470n,
+      },
+    ]);
   });
 });
 
