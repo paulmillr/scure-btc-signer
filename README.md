@@ -18,7 +18,8 @@ For discussions, questions and support, visit
 [GitHub Discussions](https://github.com/paulmillr/scure-btc-signer/discussions)
 section of the repository.
 
-_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [ordinals](https://github.com/paulmillr/micro-ordinals)
+_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scurimport * as btc from '@scure/btc-signer';
+// import * as btc from "npm:@scure/btc-signer@1.0.0"; // Denoe-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [ordinals](https://github.com/paulmillr/micro-ordinals)
 
 ### This library belongs to _scure_
 
