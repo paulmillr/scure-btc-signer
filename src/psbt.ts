@@ -251,7 +251,7 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
 
 export const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
   if (i.finalScriptWitness && !i.finalScriptWitness.length)
-    throw new Error('validateInput: wmpty finalScriptWitness');
+    throw new Error('validateInput: empty finalScriptWitness');
   //if (i.finalScriptSig && !i.finalScriptSig.length) throw new Error('validateInput: empty finalScriptSig');
   if (i.partialSig && !i.partialSig.length) throw new Error('Empty partialSig');
   if (i.partialSig) for (const [k] of i.partialSig) validatePubkey(k, PubT.ecdsa);
