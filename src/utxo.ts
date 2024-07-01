@@ -333,9 +333,9 @@ export class _Estimator {
     private opts: EstimatorOpts
   ) {
     if (typeof opts.feePerByte !== 'bigint')
-      throw new Error(`Estimator: wrong feePerByte=${opts.feePerByte}`);
+      throw new Error(`Estimator: wrong feePerByte=${opts.feePerByte}, should be of type bigint but got ${typeof opts.feePerByte}.`);
     if (opts.dust) {
-      if (typeof opts.dust !== 'bigint') throw new Error(`Estimator: wrong dust=${opts.dust}`);
+      if (typeof opts.dust !== 'bigint') throw new Error(`Estimator: wrong dust=${opts.dust}, should be of type bigint but got ${typeof opts.dust}.`);
       this.dust = opts.dust;
     }
     if (opts.requiredInputs !== undefined && !Array.isArray(opts.requiredInputs))
