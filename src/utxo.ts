@@ -284,7 +284,7 @@ function getScript(o: Output, opts: TxOpts = {}, network = NETWORK) {
     script = OutScript.encode(Address(network).decode(o.address));
   }
   if (!script) throw new Error('Estimator: wrong output script');
-  if (typeof o.amount !== 'bigint') throw new Error(`Estimator: wrong output amount=${o.amount}`);
+  if (typeof o.amount !== 'bigint') throw new Error(`Estimator: wrong output amount=${o.amount}, should be of type bigint but got ${typeof o.amount}.`);
   if (script && !opts.allowUnknownOutputs && OutScript.decode(script).type === 'unknown') {
     throw new Error(
       'Estimator: unknown output script type, there is a chance that input is unspendable. Pass allowUnknownOutputs=true, if you sure'
@@ -333,9 +333,9 @@ export class _Estimator {
     private opts: EstimatorOpts
   ) {
     if (typeof opts.feePerByte !== 'bigint')
-      throw new Error(`Estimator: wrong feePerByte=${opts.feePerByte}`);
+      throw new Error(`Estimator: wrong feePerByte=${opts.feePerByte}, should be of type bigint but got ${typeof opts.feePerByte}.`);
     if (opts.dust) {
-      if (typeof opts.dust !== 'bigint') throw new Error(`Estimator: wrong dust=${opts.dust}`);
+      if (typeof opts.dust !== 'bigint') throw new Error(`Estimator: wrong dust=${opts.dust}, should be of type bigint but got ${typeof opts.dust}.`);
       this.dust = opts.dust;
     }
     if (opts.requiredInputs !== undefined && !Array.isArray(opts.requiredInputs))
