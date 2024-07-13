@@ -518,7 +518,10 @@ export class Transaction {
   ): psbt.TransactionOutput {
     let { amount, script } = o;
     if (amount === undefined) amount = cur?.amount;
-    if (typeof amount !== 'bigint') throw new Error(`Wrong amount type, should be of type bigint in sats, but got ${amount} of type ${typeof amount}`);
+    if (typeof amount !== 'bigint')
+      throw new Error(
+        `Wrong amount type, should be of type bigint in sats, but got ${amount} of type ${typeof amount}`
+      );
     if (typeof script === 'string') script = hex.decode(script);
     if (script === undefined) script = cur?.script;
     let res: psbt.PSBTKeyMapKeys<typeof psbt.PSBTOutput> = { ...cur, ...o, amount, script };
