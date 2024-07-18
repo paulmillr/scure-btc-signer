@@ -12,7 +12,7 @@ should('big multisig (ours)', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
 
   const pkeys = [];
-  for (let i = 1; i < 1000; i++) pkeys.push(P.U256BE.encode(i));
+  for (let i = 1; i < 1000; i++) pkeys.push(P.U256BE.encode(BigInt(i)));
 
   const pubs = pkeys.map(secp256k1_schnorr.getPublicKey);
   const spend = btc.p2tr(undefined, btc.p2tr_ms(999, pubs), regtest);

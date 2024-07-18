@@ -1871,6 +1871,121 @@ should('getOutputAddress', () => {
   }
 });
 
+should('GH-100: end-of-buffer psbt', () => {
+  const psbt = new btc.Transaction();
+  psbt.addOutput({
+    amount: BigInt(10000),
+    script: hex.decode('51203701d8f81bf26a07eebef592f2960e4b6db32b09fce20246db0842ebfc45001b'),
+  });
+
+  const decoded2 = btc.Transaction.fromPSBT(psbt.toPSBT(2));
+  deepStrictEqual(decoded2.inputs, psbt.inputs);
+  deepStrictEqual(decoded2.outputs, psbt.outputs);
+
+  const decoded0 = btc.Transaction.fromPSBT(psbt.toPSBT(0));
+  deepStrictEqual(decoded0.inputs, psbt.inputs);
+  deepStrictEqual(decoded0.outputs, psbt.outputs);
+  // ./bin/bitcoin-cli createpsbt [] '[{"bc1pxuqa37qm7f4q0m477kf099swfdkmx2cfln3qy3kmpppwhlz9qqdsre4trt":0.00010000}]'
+  const corePsbt = base64.decode(
+    'cHNidP8BADUCAAAAAAEQJwAAAAAAACJRIDcB2Pgb8moH7r71kvKWDkttsysJ/OICRtsIQuv8RQAbAAAAAAAA'
+  );
+  deepStrictEqual(psbt.toPSBT(0), corePsbt);
+  // ./bin/bitcoin-cli createpsbt [] []
+  const coreEmpty = base64.decode('cHNidP8BAAoCAAAAAAAAAAAAAA==');
+  deepStrictEqual(new btc.Transaction().toPSBT(0), coreEmpty);
+  // NOTE: bitcoinjs does very strange things (including silently fallback into PSBTv2) and generates non-valid PSBT which
+  // cannot be parsed by bitcoin-cli
+});
+
+should('GH-101: TAP_BIP32_DERIVATION', () => {
+  const opts = {};
+  const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  // setup taproot tx
+  const pubS = secp256k1_schnorr.getPublicKey(privKey);
+  const tx = new btc.Transaction(opts);
+  for (const inp of TX_TEST_INPUTS) {
+    const tr = btc.p2tr(pubS);
+    tx.addInput({
+      ...inp,
+      ...tr,
+      witnessUtxo: { script: tr.script, amount: inp.amount },
+    });
+  }
+  const txWithtapBip32 = btc.Transaction.fromPSBT(
+    hex.decode(
+      '70736274ff010052020000000127744ababf3027fe0d6cf23a96eee2efb188ef52301954585883e69b6624b2420000000000ffffffff0148e6052a01000000160014768e1eeb4cf420866033f80aceff0f9720744969000000000001012b00f2052a010000002251205a2c2cf5b52cf31f83ad2e8da63ff03183ecd8f609c7510ae8a48e03910a07572116fe349064c98d6e2a853fa3c9b12bd8b304a19c195c60efa7ee2393046d3fa2321900772b2da75600008001000080000000800100000000000000011720fe349064c98d6e2a853fa3c9b12bd8b304a19c195c60efa7ee2393046d3fa232002202036b772a6db74d8753c98a827958de6c78ab3312109f37d3e0304484242ece73d818772b2da7540000800100008000000080000000000000000000'
+    )
+  );
+  tx.updateInput(0, {
+    tapBip32Derivation: txWithtapBip32.inputs[0].tapBip32Derivation,
+  });
+  // 'tapBip32Derivation' can be added
+  deepStrictEqual(tx.inputs[0], {
+    txid: hex.decode('c061c23190ed3370ad5206769651eaf6fac6d87d85b5db34e30a74e0c4a6da3e'),
+    index: 0,
+    sequence: 4294967295,
+    tapInternalKey: hex.decode('1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f'),
+    witnessUtxo: {
+      script: hex.decode('51208c5db7f797196d6edc4dd7df6048f4ea6b883a6af6af032342088f436543790f'),
+      amount: 550n,
+    },
+    tapBip32Derivation: [
+      [
+        hex.decode('fe349064c98d6e2a853fa3c9b12bd8b304a19c195c60efa7ee2393046d3fa232'),
+        {
+          hashes: [],
+          der: { fingerprint: 1999318439, path: [2147483734, 2147483649, 2147483648, 1, 0] },
+        },
+      ],
+    ],
+  });
+  // 'tapBip32Derivation' can be removed
+  tx.updateInput(0, {
+    tapBip32Derivation: undefined,
+  });
+  deepStrictEqual(tx.inputs[0], {
+    txid: hex.decode('c061c23190ed3370ad5206769651eaf6fac6d87d85b5db34e30a74e0c4a6da3e'),
+    index: 0,
+    sequence: 4294967295,
+    tapInternalKey: hex.decode('1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f'),
+    witnessUtxo: {
+      script: hex.decode('51208c5db7f797196d6edc4dd7df6048f4ea6b883a6af6af032342088f436543790f'),
+      amount: 550n,
+    },
+  });
+  // re-add & sign
+  tx.updateInput(0, {
+    tapBip32Derivation: txWithtapBip32.inputs[0].tapBip32Derivation,
+  });
+  deepStrictEqual(tx.inputs[0], {
+    txid: hex.decode('c061c23190ed3370ad5206769651eaf6fac6d87d85b5db34e30a74e0c4a6da3e'),
+    index: 0,
+    sequence: 4294967295,
+    tapInternalKey: hex.decode('1b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f'),
+    witnessUtxo: {
+      script: hex.decode('51208c5db7f797196d6edc4dd7df6048f4ea6b883a6af6af032342088f436543790f'),
+      amount: 550n,
+    },
+    tapBip32Derivation: [
+      [
+        hex.decode('fe349064c98d6e2a853fa3c9b12bd8b304a19c195c60efa7ee2393046d3fa232'),
+        {
+          hashes: [],
+          der: { fingerprint: 1999318439, path: [2147483734, 2147483649, 2147483648, 1, 0] },
+        },
+      ],
+    ],
+  });
+  // Should be same as without field
+  for (const [address, amount] of TX_TEST_OUTPUTS) tx.addOutputAddress(address, amount);
+  tx.sign(privKey, undefined, new Uint8Array(32));
+  tx.finalize();
+  deepStrictEqual(
+    hex.encode(tx.extract()),
+    '020000000001033edaa6c4e0740ae334dbb5857dd8c6faf6ea5196760652ad7033ed9031c261c00000000000ffffffff0d9ae8a4191b3ba5a2b856c21af0f7a4feb97957ae80725ef38a933c906519a20000000000ffffffffc7a4a37d38c2b0de3d3b3e8d8e8a331977c12532fc2a4632df27a89c311ee2fa0000000000ffffffff030a000000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac320000000000000017a914a860f76561c85551594c18eecceffaee8c4822d7875d00000000000000160014e8df018c7e326cc253faac7e46cdc51e68542c420140de7efa69aff37822182ccae4675051454cc878510834d5f43b509168b4e02a231333f72a5bd603afdb32597b01fcbf65ef74c224e3d325aed36e93baf4e569800140ef36f29d16b6271789321dfbfcb0226940545af93d36efc4918fa13dfa4a70547ce752d4e0648df2650fc15213def1a507528c215a4f067e54501bd1c1ee1e9001400e2fb03c1a230294a50ec3069e30d80059ef48230f036013724d2db2ba7ce8805af7878fee31c18f993a70e8db3fd520327b421cf63e8984b499c9153c810e0000000000'
+  );
+});
+
 // ESM is broken.
 import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {

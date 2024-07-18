@@ -236,3 +236,10 @@ function validateRawTx(tx: P.UnwrapCoder<typeof _RawTx>) {
   return tx;
 }
 export const RawTx = P.validate(_RawTx, validateRawTx);
+// Pre-SegWit serialization format (for PSBTv0)
+export const RawOldTx = P.struct({
+  version: P.I32LE,
+  inputs: BTCArray(RawInput),
+  outputs: BTCArray(RawOutput),
+  lockTime: P.U32LE,
+});

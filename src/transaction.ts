@@ -1,9 +1,9 @@
 import * as P from 'micro-packed';
 import { hex } from '@scure/base';
-
 import { Address, CustomScript, OutScript, checkScript, tapLeafHash } from './payment.js';
 import * as psbt from './psbt.js'; // circular
-import { CompactSizeLen, RawOutput, RawTx, RawWitness, Script, VarBytes } from './script.js';
+import { CompactSizeLen, Script, VarBytes } from './script.js';
+import { RawOutput, RawTx, RawOldTx, RawWitness } from './script.js';
 import { NETWORK, Bytes, concatBytes, isBytes, equalBytes } from './utils.js';
 import * as u from './utils.js';
 import { getInputType, toVsize, normalizeInput, getPrevOut } from './utxo.js'; // circular
@@ -284,6 +284,11 @@ export class Transaction {
   toPSBT(PSBTVersion = this.opts.PSBTVersion) {
     if (PSBTVersion !== 0 && PSBTVersion !== 2)
       throw new Error(`Wrong PSBT version=${PSBTVersion}`);
+    // if (PSBTVersion === 0 && this.inputs.length === 0) {
+    //   throw new Error(
+    //     'PSBT version=0 export for transaction without inputs disabled, please use version=2. Please check `toPSBT` method for explanation.'
+    //   );
+    // }
     const inputs = this.inputs.map((i) => psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTInput, i));
     for (const inp of inputs) {
       // Don't serialize empty fields
@@ -294,7 +299,23 @@ export class Transaction {
     const outputs = this.outputs.map((i) => psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTOutput, i));
     const global = { ...this.global };
     if (PSBTVersion === 0) {
-      global.unsignedTx = RawTx.decode(this.unsignedTx);
+      /*
+      - Bitcoin raw transaction expects to have at least 1 input because it uses case with zero inputs as marker for SegWit
+      - this means we cannot serialize raw tx with zero inputs since it will be parsed as SegWit tx
+      - Parsing of PSBTv0 depends on unsignedTx (it looks for input count here)
+      - BIP-174 requires old serialization format (without witnesses) inside global, which solves this
+      */
+      global.unsignedTx = RawOldTx.decode(
+        RawOldTx.encode({
+          version: this.version,
+          lockTime: this.lockTime,
+          inputs: this.inputs.map(inputBeforeSign).map((i) => ({
+            ...i,
+            finalScriptSig: P.EMPTY,
+          })),
+          outputs: this.outputs.map(outputBeforeSign),
+        })
+      );
       delete global.fallbackLocktime;
       delete global.txVersion;
     } else {
@@ -744,7 +765,6 @@ export class Transaction {
     // Taproot
     const prevOut = getPrevOut(input);
     if (inputType.txType === 'taproot') {
-      if (input.tapBip32Derivation) throw new Error('tapBip32Derivation unsupported');
       const prevOuts = this.inputs.map(getPrevOut);
       const prevOutScript = prevOuts.map((i) => i.script);
       const amount = prevOuts.map((i) => i.amount);
@@ -1030,8 +1050,10 @@ export class Transaction {
         );
       }
     }
-    const thisUnsigned = this.global.unsignedTx ? RawTx.encode(this.global.unsignedTx) : P.EMPTY;
-    const otherUnsigned = other.global.unsignedTx ? RawTx.encode(other.global.unsignedTx) : P.EMPTY;
+    const thisUnsigned = this.global.unsignedTx ? RawOldTx.encode(this.global.unsignedTx) : P.EMPTY;
+    const otherUnsigned = other.global.unsignedTx
+      ? RawOldTx.encode(other.global.unsignedTx)
+      : P.EMPTY;
     if (!equalBytes(thisUnsigned, otherUnsigned))
       throw new Error(`Transaction/combine: different unsigned tx`);
     this.global = psbt.mergeKeyMap(psbt.PSBTGlobal, this.global, other.global);

@@ -14,7 +14,7 @@ export {
 } from './payment.js';
 // prettier-ignore
 export {
-  OP, RawTx, CompactSize,
+  OP, RawTx, CompactSize, RawWitness,
   Script, ScriptNum, ScriptType, MAX_SCRIPT_BYTE_LENGTH,
 } from './script.js';
 export { Transaction } from './transaction.js';

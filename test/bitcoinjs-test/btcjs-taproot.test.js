@@ -33,7 +33,7 @@ should(`PSBT P2TR finalizeInput`, () => {
   // Remove signatures for leaf's we don't want to finalize
   if (tx.inputs[t.index].tapScriptSig) {
     tx.inputs[t.index].tapScriptSig = tx.inputs[t.index].tapScriptSig.filter((i) =>
-      P.equalBytes(i[0].leafHash, hex.decode(t.leafHash))
+      P.utils.equalBytes(i[0].leafHash, hex.decode(t.leafHash))
     );
   }
   tx.finalize();

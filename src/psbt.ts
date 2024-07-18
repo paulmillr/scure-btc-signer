@@ -1,6 +1,7 @@
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { CompactSize, CompactSizeLen, RawOutput, RawTx, RawWitness, VarBytes } from './script.js';
+import { CompactSize, CompactSizeLen, VarBytes } from './script.js';
+import { RawOutput, RawTx, RawOldTx, RawWitness } from './script.js';
 import { Transaction } from './transaction.js'; // circular
 import { Bytes, compareBytes, PubT, validatePubkey, equalBytes } from './utils.js';
 
@@ -60,7 +61,7 @@ const Bytes32 = P.bytes(32);
 // Tables from BIP-0174 (https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki)
 // prettier-ignore
 export const PSBTGlobal = {
-  unsignedTx:       [0x00, false,      RawTx,          [0], [0],    false],
+  unsignedTx:       [0x00, false,      RawOldTx,          [0], [0],    false],
   xpub:             [0x01, GlobalXPUB, BIP32Der,       [],  [0, 2], false],
   txVersion:        [0x02, false,      P.U32LE,        [2], [2],    false],
   fallbackLocktime: [0x03, false,      P.U32LE,        [],  [2],    false],
@@ -342,8 +343,6 @@ const PSBTGlobalCoder = P.validate(PSBTKeyMap(PSBTGlobal), (g) => {
   const version = g.version || 0;
   if (version === 0) {
     if (!g.unsignedTx) throw new Error('PSBTv0: missing unsignedTx');
-    if (g.unsignedTx.segwitFlag || g.unsignedTx.witnesses)
-      throw new Error('PSBTv0: witness in unsingedTx');
     for (const inp of g.unsignedTx.inputs)
       if (inp.finalScriptSig && inp.finalScriptSig.length)
         throw new Error('PSBTv0: input scriptSig found in unsignedTx');
