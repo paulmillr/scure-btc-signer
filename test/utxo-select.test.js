@@ -654,10 +654,13 @@ describe('UTXO Select', () => {
 
   should('accumulate', () => {
     const inputs = [];
+    let inputsTotalAmount = 0n;
     for (let i = 0; i < 25; i++) {
+      const amount = 1n << BigInt(i);
+      inputsTotalAmount += amount;
       inputs.push({
         ...INPUTS[0],
-        witnessUtxo: { ...INPUTS[0].witnessUtxo, amount: 1n << BigInt(i) },
+        witnessUtxo: { ...INPUTS[0].witnessUtxo, amount },
       });
     }
     const FEE = 1n;
@@ -677,7 +680,7 @@ describe('UTXO Select', () => {
       for (const idx of indices) {
         tx.addInput(inputs[idx]);
       }
-      tx.addOutputAddress(OUTPUTS[0].address, 100n, regtest);
+      tx.addOutputAddress(OUTPUTS[0].address, est.amount, regtest);
       tx.sign(privKey1);
       tx.finalize();
       const expFee = BigInt(tx.vsize) * FEE;
@@ -715,8 +718,8 @@ describe('UTXO Select', () => {
     est.amount = 256n;
     deepStrictEqual(t(est, est.biggest, true), {
       amounts: [512n],
-      change: 221n,
-      expFee: 191n,
+      change: 66n,
+      expFee: 190n,
       fee: 191n,
     });
     deepStrictEqual(
@@ -725,14 +728,14 @@ describe('UTXO Select', () => {
     );
     deepStrictEqual(t(est, est.smallest, true, false), {
       amounts: [1n, 2n, 4n, 8n, 16n, 32n, 64n, 128n, 256n, 512n, 1024n],
-      change: 261n,
-      expFee: 1686n,
+      change: 106n,
+      expFee: 1685n,
       fee: 1691n,
     });
-    est.amount = 321n;
+    est.amount = 322n;
     deepStrictEqual(t(est, est.biggest, true), {
       amounts: [512n, 256n],
-      change: 329n,
+      change: 107n,
       expFee: 339n,
       fee: 341n,
     });
@@ -740,10 +743,10 @@ describe('UTXO Select', () => {
       est.default().indices.map((i) => 1n << BigInt(i)),
       t(est, est.biggest, true).amounts
     );
-    est.amount = 320n;
+    est.amount = 321n;
     deepStrictEqual(t(est, est.biggest, true), {
       amounts: [512n],
-      change: 221n,
+      change: 0n,
       expFee: 191n,
       fee: 191n,
     });
@@ -856,12 +859,12 @@ describe('UTXO Select', () => {
       change: false,
     });
     deepStrictEqual(t2('accumSmallest', 65n), {
-      i: [256n, 512n],
-      o: [65n, 330n],
-      txFee: 373n,
-      expFee: 373n,
-      fee: 373n,
-      change: true,
+      i: [256n],
+      o: [65n],
+      txFee: 191n,
+      expFee: 191n,
+      fee: 191n,
+      change: false,
     });
     deepStrictEqual(t2('all', 100n), {
       i: [
@@ -965,6 +968,58 @@ describe('UTXO Select', () => {
       txFee: 2771n,
       expFee: 2580n,
       fee: 2591n,
+      change: false,
+    });
+
+    const t3 = (strategy) => {
+      const FEE = 0n // no fee to test exact amounts
+      const est = new btc._Estimator(inputs, [{ ...OUTPUTS[0], amount: inputsTotalAmount }], {
+        feePerByte: FEE,
+        changeAddress: '2MshuFeVGhXVdRv77UcJYvRBi2JyTNwgSR2',
+        network: regtest,
+        allowLegacyWitnessUtxo: true,
+        createTx: true,
+        allowSameUtxo: true,
+      });
+      const acc = est.result(strategy);
+      if (!acc) return;
+      const i = acc.inputs.map((i) => i.witnessUtxo.amount);
+      const o = acc.outputs.map((i) => i.amount);
+      const tx = acc.tx;
+      tx.sign(privKey1);
+      tx.finalize();
+      const expFee = BigInt(tx.vsize) * FEE;
+      return {
+        i,
+        o,
+        txFee: tx.fee,
+        expFee,
+        fee: acc.fee,
+        change: acc.change,
+      };
+    };
+    deepStrictEqual(t3('default'), {
+      i: inputs.map((i) => i.witnessUtxo.amount).reverse(),
+      o: [inputsTotalAmount],
+      txFee: 0n,
+      expFee: 0n,
+      fee: 0n,
+      change: false,
+    });
+    deepStrictEqual(t3('accumSmallest'), {
+      i: inputs.map((i) => i.witnessUtxo.amount),
+      o: [inputsTotalAmount],
+      txFee: 0n,
+      expFee: 0n,
+      fee: 0n,
+      change: false,
+    });
+    deepStrictEqual(t3('all'), {
+      i: inputs.map((i) => i.witnessUtxo.amount),
+      o: [inputsTotalAmount],
+      txFee: 0n,
+      expFee: 0n,
+      fee: 0n,
       change: false,
     });
   });
