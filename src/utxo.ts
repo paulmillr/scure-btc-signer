@@ -562,7 +562,7 @@ export class _Estimator {
     const changeFee = this.getSatoshi(changeWeight);
     let fee = s.fee;
     const change = total - this.amount - changeFee;
-    if (change > this.dust) needChange = true;
+    if (change > this.dust * this.opts.feePerByte) needChange = true;
     let inputs = indices;
     let outputs = Array.from(this.outputs);
     if (needChange) {
