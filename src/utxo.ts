@@ -267,7 +267,8 @@ export type EstimatorOpts = TxOpts & {
   alwaysChange?: boolean; // always create change, even if less than dust threshold
   bip69?: boolean; // https://github.com/bitcoin/bips/blob/master/bip-0069.mediawiki
   network?: typeof NETWORK;
-  dust?: number; // how much vbytes considered dust?
+  dust?: bigint; // how much vbytes considered dust?
+  dustRelayFeeRate?: bigint; // how much vbytes considered dust?
   createTx?: boolean; // Create tx inside selection
   requiredInputs?: psbt.TransactionInputUpdate[]; // these inputs always will be used
   allowSameUtxo?: boolean; // allow using UTXO multiple times (for test purposes)
@@ -325,12 +326,17 @@ export class _Estimator {
     value: bigint;
     estimate: { weight: number; hasWitnesses: boolean };
   }[];
-  // https://github.com/bitcoin/bitcoin/blob/f90603ac6d24f5263649675d51233f1fce8b2ecd/src/policy/policy.cpp#L44
-  // 32 + 4 + 1 + 107 + 4
+  // Number of bytes needed to create and spend a UTXO.
+  // https://github.com/bitcoin/bitcoin/blob/27a770b34b8f1dbb84760f442edb3e23a0c2420b/src/policy/policy.cpp#L28-L41
+  // inputs: 32 + 4 + 1 + 107 + 4 +
+  // output: 34
   // Dust used in accumExact + change address algo
   // - change address: can be smaller for segwit
   // - accumExact: ???
-  private dust = 148n; // compat with coinselect
+  private dust = 148n + 34n;
+
+  // 3 sat/vb is the default minimum fee rate used to calculate dust thresholds by bitcoin core.
+  private dustRelayFeeRate = 3n;
 
   constructor(
     inputs: psbt.TransactionInputUpdate[],
@@ -351,6 +357,15 @@ export class _Estimator {
           }, should be of type bigint but got ${typeof opts.dust}.`
         );
       this.dust = opts.dust;
+    }
+    if (opts.dustRelayFeeRate) {
+      if (typeof opts.dustRelayFeeRate !== 'bigint')
+        throw new Error(
+          `Estimator: wrong dustRelayFeeRate=${
+            opts.dust
+          }, should be of type bigint but got ${typeof opts.dustRelayFeeRate}.`
+        );
+      this.dustRelayFeeRate = opts.dustRelayFeeRate;
     }
     if (opts.requiredInputs !== undefined && !Array.isArray(opts.requiredInputs))
       throw new Error(`Estimator: wrong required inputs=${opts.requiredInputs}`);
@@ -446,7 +461,6 @@ export class _Estimator {
   // exact(biggest) will select one big utxo which is closer to targetValue+dust, if possible.
   // If not, it will accumulate largest utxo until value is close to targetValue+dust.
   accumulate(indices: number[], exact = false, skipNegative = true, all = false) {
-    const { feePerByte } = this.opts;
     // TODO: how to handle change addresses?
     // - cost of input
     // - cost of change output (if input requires change)
@@ -487,7 +501,7 @@ export class _Estimator {
       fee = this.getSatoshi(totalWeight);
       // Best case scenario exact(biggest) -> we find biggest output, less than target+threshold
       if (exact) {
-        const dust = this.dust * feePerByte;
+        const dust = this.dust * this.dustRelayFeeRate;
         // skip if added value is bigger than dust
         if (amount + inputsAmount > targetAmount + fee + dust) continue;
       }
@@ -562,7 +576,7 @@ export class _Estimator {
     const changeFee = this.getSatoshi(changeWeight);
     let fee = s.fee;
     const change = total - this.amount - changeFee;
-    if (change > this.dust * this.opts.feePerByte) needChange = true;
+    if (change > this.dust * this.dustRelayFeeRate) needChange = true;
     let inputs = indices;
     let outputs = Array.from(this.outputs);
     if (needChange) {
