@@ -1351,6 +1351,116 @@ describe('UTXO Select', () => {
       },
     ]);
   });
+  should('drop dust outputs', () => {
+    const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+    const pubKey = secp256k1.getPublicKey(privKey, true);
+    const spend = btc.p2wpkh(pubKey, regtest);
+    const txid = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
+    const utxos = [
+      {
+        ...spend,
+        txid,
+        index: 0,
+        // total fee will be 22200.  22400 - 22200 = 200 is less than dust and so shouldn't be added as change.
+        witnessUtxo: { script: spend.script, amount: 22_400n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+      },
+    ];
+
+    const outputs = [
+      {
+        address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3',
+        amount: 200_000n,
+      },
+    ];
+
+    const selected = btc.selectUTXO(utxos, outputs, 'default', {
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+      feePerByte: 100n,
+      bip69: true,
+      createTx: true,
+      network: regtest,
+    });
+    deepStrictEqual(selected.inputs, [
+      {
+        txid,
+        index: 0,
+        witnessUtxo: { script: spend.script, amount: 22_400n },
+        sequence: 4294967295,
+      },
+      {
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+        sequence: 4294967295,
+      },
+    ]);
+    // No change output added
+    deepStrictEqual(selected.outputs, [
+      { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
+    ]);
+  });
+
+  should('add change outputs if more than dust', () => {
+    const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+    const pubKey = secp256k1.getPublicKey(privKey, true);
+    const spend = btc.p2wpkh(pubKey, regtest);
+    const txid = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
+    const utxos = [
+      {
+        ...spend,
+        txid,
+        index: 0,
+        // total fee will be 22200.  23000 - 22200 = 800 is more than dust and so should be added as change.
+        witnessUtxo: { script: spend.script, amount: 23_000n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+      },
+    ];
+
+    const outputs = [
+      {
+        address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3',
+        amount: 200_000n,
+      },
+    ];
+
+    const selected = btc.selectUTXO(utxos, outputs, 'default', {
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+      feePerByte: 100n,
+      bip69: true,
+      createTx: true,
+      network: regtest,
+    });
+    deepStrictEqual(selected.inputs, [
+      {
+        txid,
+        index: 0,
+        witnessUtxo: { script: spend.script, amount: 23_000n },
+        sequence: 4294967295,
+      },
+      {
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+        sequence: 4294967295,
+      },
+    ]);
+    // Change output should have been added
+    deepStrictEqual(selected.outputs, [
+      { address: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', amount: 800n },
+      { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
+    ]);
+  });
 });
 
 // ESM is broken.
