@@ -268,6 +268,7 @@ export type EstimatorOpts = TxOpts & {
   bip69?: boolean; // https://github.com/bitcoin/bips/blob/master/bip-0069.mediawiki
   network?: typeof NETWORK;
   dust?: number; // how much vbytes considered dust?
+  dustRelayFeeRate?: bigint; // fee per dust byte (DUST_RELAY_TX_FEE)
   createTx?: boolean; // Create tx inside selection
   requiredInputs?: psbt.TransactionInputUpdate[]; // these inputs always will be used
   allowSameUtxo?: boolean; // allow using UTXO multiple times (for test purposes)
@@ -325,13 +326,10 @@ export class _Estimator {
     value: bigint;
     estimate: { weight: number; hasWitnesses: boolean };
   }[];
-  // https://github.com/bitcoin/bitcoin/blob/f90603ac6d24f5263649675d51233f1fce8b2ecd/src/policy/policy.cpp#L44
-  // 32 + 4 + 1 + 107 + 4
   // Dust used in accumExact + change address algo
   // - change address: can be smaller for segwit
   // - accumExact: ???
-  private dust = 148n; // compat with coinselect
-
+  private dust: bigint; // total dust limit (3||opts.dustRelayFeeRate * 182||opts.dust). Default: 546
   constructor(
     inputs: psbt.TransactionInputUpdate[],
     private outputs: Output[],
@@ -343,15 +341,34 @@ export class _Estimator {
           opts.feePerByte
         }, should be of type bigint but got ${typeof opts.feePerByte}.`
       );
-    if (opts.dust) {
-      if (typeof opts.dust !== 'bigint')
-        throw new Error(
-          `Estimator: wrong dust=${
-            opts.dust
-          }, should be of type bigint but got ${typeof opts.dust}.`
-        );
-      this.dust = opts.dust;
+    // Dust stuff
+    // TODO: think about this more:
+    // - current dust filters tx which cannot be relayed by core
+    // - but actual dust meaning is 'can be this amount spent?'
+    // - dust contains full tx size. but we can use other inputs to pay for outputDust (and parially inputsDust)?
+    // - not sure if we can spent anything with feePerByte: 3. It will be relayed, but will it be mined?
+    // - for now it works exactly as bitcoin-core. But will create change/outputs which cannot be spent (reasonable).
+    // Number of bytes needed to create and spend a UTXO.
+    // https://github.com/bitcoin/bitcoin/blob/27a770b34b8f1dbb84760f442edb3e23a0c2420b/src/policy/policy.cpp#L28-L41
+    const inputsDust = 32 + 4 + 1 + 107 + 4; // NOTE: can be smaller for segwit tx?
+    const outputDust = 34; // NOTE: 'nSize = GetSerializeSize(txout)'
+    const dustBytes = opts.dust === undefined ? BigInt(inputsDust + outputDust) : opts.dust;
+    if (typeof dustBytes !== 'bigint') {
+      throw new Error(
+        `Estimator: wrong dust=${opts.dust}, should be of type bigint but got ${typeof opts.dust}.`
+      );
     }
+    // 3 sat/vb is the default minimum fee rate used to calculate dust thresholds by bitcoin core.
+    // 3000 sat/kvb -> 3 sat/vb.
+    // https://github.com/bitcoin/bitcoin/blob/27a770b34b8f1dbb84760f442edb3e23a0c2420b/src/policy/policy.h#L55
+    const dustFee = opts.dustRelayFeeRate === undefined ? 3n : opts.dustRelayFeeRate;
+    if (typeof dustFee !== 'bigint') {
+      throw new Error(
+        `Estimator: wrong dustRelayFeeRate=${opts.dustRelayFeeRate}, should be of type bigint but got ${typeof opts.dustRelayFeeRate}.`
+      );
+    }
+    // Dust uses feePerbyte by default, but we allow separate dust fee if needed
+    this.dust = dustBytes * dustFee;
     if (opts.requiredInputs !== undefined && !Array.isArray(opts.requiredInputs))
       throw new Error(`Estimator: wrong required inputs=${opts.requiredInputs}`);
     const network = opts.network || NETWORK;
@@ -446,7 +463,6 @@ export class _Estimator {
   // exact(biggest) will select one big utxo which is closer to targetValue+dust, if possible.
   // If not, it will accumulate largest utxo until value is close to targetValue+dust.
   accumulate(indices: number[], exact = false, skipNegative = true, all = false) {
-    const { feePerByte } = this.opts;
     // TODO: how to handle change addresses?
     // - cost of input
     // - cost of change output (if input requires change)
@@ -486,11 +502,7 @@ export class _Estimator {
       const totalWeight = newWeight + 4 * CompactSizeLen.encode(num).length; // number of outputs can change weight
       fee = this.getSatoshi(totalWeight);
       // Best case scenario exact(biggest) -> we find biggest output, less than target+threshold
-      if (exact) {
-        const dust = this.dust * feePerByte;
-        // skip if added value is bigger than dust
-        if (amount + inputsAmount > targetAmount + fee + dust) continue;
-      }
+      if (exact && amount + inputsAmount > targetAmount + fee + this.dust) continue; // skip if added value is bigger than dust
       // Negative: cost of using input is more than value provided (negative)
       // By default 'blackjack' mode in coinselect doesn't use that, which means
       // it will use negative output if sorted by 'smallest'
@@ -562,7 +574,7 @@ export class _Estimator {
     const changeFee = this.getSatoshi(changeWeight);
     let fee = s.fee;
     const change = total - this.amount - changeFee;
-    if (change > this.dust * this.opts.feePerByte) needChange = true;
+    if (change > this.dust) needChange = true;
     let inputs = indices;
     let outputs = Array.from(this.outputs);
     if (needChange) {
