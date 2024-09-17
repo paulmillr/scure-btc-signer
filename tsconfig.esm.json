@@ -1,5 +1,5 @@
 {
-  "extends": "@paulmillr/jsbt/tsconfigs/esm.json",
+  "extends": "@paulmillr/jsbt/tsconfig.esm.json",
   "compilerOptions": {
     "module": "es2020",
     "moduleResolution": "bundler",
