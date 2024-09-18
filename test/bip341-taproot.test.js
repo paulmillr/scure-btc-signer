@@ -1,7 +1,7 @@
 import { deepStrictEqual } from 'node:assert';
 import { should } from 'micro-should';
 import { hex } from '@scure/base';
-import * as btc from '../lib/esm/index.js';
+import * as btc from '../esm/index.js';
 import { default as v341 } from './fixtures/bip341.json' with { type: 'json' };
 import { schnorr } from '@noble/curves/secp256k1';
 

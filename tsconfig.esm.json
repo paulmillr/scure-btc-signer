@@ -3,8 +3,8 @@
   "compilerOptions": {
     "module": "es2020",
     "moduleResolution": "bundler",
-    "outDir": "lib/esm"
+    "outDir": "esm"
   },
-  "include": ["index.ts", "src"],
+  "include": ["src"],
   "exclude": ["node_modules", "lib"]
 }

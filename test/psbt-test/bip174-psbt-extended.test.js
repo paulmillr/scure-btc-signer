@@ -1,7 +1,7 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { hex, base64 } from '@scure/base';
-import * as btc from '../../lib/esm/index.js';
+import * as btc from '../../esm/index.js';
 import { default as rpcPSBT } from './fixtures/rpc_psbt.json' with { type: 'json' };
 
 describe('bip174-psbt-extended', () => {

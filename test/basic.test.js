@@ -1,7 +1,7 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { should } from 'micro-should';
 import { hex, base64 } from '@scure/base';
-import * as btc from '../lib/esm/index.js';
+import * as btc from '../esm/index.js';
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
 import * as P from 'micro-packed';

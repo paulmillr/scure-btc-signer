@@ -1,14 +1,18 @@
 {
   "name": "@scure/btc-signer",
   "version": "1.4.0",
-  "description": "Audited & minimal library for creating, signing & decoding Bitcoin transactions: with Schnorr, Taproot, UTXO & PSBT",
+  "description": "Audited & minimal library for Bitcoin. Handle transactions, Schnorr, Taproot, UTXO & PSBT",
   "files": [
-    "lib",
-    "src"
+    "esm",
+    "src",
+    "*.js",
+    "*.d.ts",
+    "*.js.map",
+    "*.d.ts.map"
   ],
-  "main": "./lib/index.js",
-  "module": "./lib/esm/index.js",
-  "types": "./lib/index.d.ts",
+  "main": "./index.js",
+  "module": "./esm/index.js",
+  "types": "./index.d.ts",
   "dependencies": {
     "@noble/curves": "~1.6.0",
     "@noble/hashes": "~1.5.0",
@@ -24,36 +28,36 @@
   },
   "exports": {
     ".": {
-      "import": "./lib/esm/index.js",
-      "require": "./lib/index.js"
+      "import": "./esm/index.js",
+      "require": "./index.js"
     },
     "./index": {
-      "import": "./lib/esm/index.js",
-      "require": "./lib/index.js"
+      "import": "./esm/index.js",
+      "require": "./index.js"
     },
     "./payment": {
-      "import": "./lib/esm/payment.js",
-      "require": "./lib/payment.js"
+      "import": "./esm/payment.js",
+      "require": "./payment.js"
     },
     "./psbt": {
-      "import": "./lib/esm/psbt.js",
-      "require": "./lib/psbt.js"
+      "import": "./esm/psbt.js",
+      "require": "./psbt.js"
     },
     "./script": {
-      "import": "./lib/esm/script.js",
-      "require": "./lib/script.js"
+      "import": "./esm/script.js",
+      "require": "./script.js"
     },
     "./transaction": {
-      "import": "./lib/esm/transaction.js",
-      "require": "./lib/transaction.js"
+      "import": "./esm/transaction.js",
+      "require": "./transaction.js"
     },
     "./utils": {
-      "import": "./lib/esm/utils.js",
-      "require": "./lib/utils.js"
+      "import": "./esm/utils.js",
+      "require": "./utils.js"
     },
     "./utxo": {
-      "import": "./lib/esm/utxo.js",
-      "require": "./lib/utxo.js"
+      "import": "./esm/utxo.js",
+      "require": "./utxo.js"
     }
   },
   "sideEffects": false,
