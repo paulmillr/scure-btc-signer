@@ -44,6 +44,19 @@ should('BTC: P2PKH addresses', () => {
   deepStrictEqual(btc.p2pkh(pub).address, ADDR_1);
 });
 
+should('LTC address parsing (GH-112)', () => {
+  const ltc = {
+    bech32: 'ltc',
+    pubKeyHash: 0x30,
+    scriptHash: 0x32,
+    wif: 0xb0,
+  };
+  deepStrictEqual(btc.Address(ltc).decode('LTCHodBXqzzfDvkL1kA3dHRVsx4SCL3Y13'), {
+    hash: hex.decode('57707ca1471cab4b8cbd32a0e92f538a661e4c53'),
+    type: 'pkh',
+  });
+});
+
 // Same as above
 const TX_TEST_OUTPUTS = [
   ['1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP', 10n],

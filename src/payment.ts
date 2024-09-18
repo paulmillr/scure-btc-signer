@@ -719,14 +719,14 @@ export function Address(network = NETWORK) {
     decode(address: string): P.UnwrapCoder<OutScriptType> {
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
       // Bech32
-      if (network.bech32 && address.toLowerCase().startsWith(network.bech32)) {
+      if (network.bech32 && address.toLowerCase().startsWith(`${network.bech32}1`)) {
         let res;
         try {
-          res = bech32.decode(address);
+          res = bech32.decode(address as `${string}1${string}`);
           if (res.words[0] !== 0) throw new Error(`bech32: wrong version=${res.words[0]}`);
         } catch (_) {
           // Starting from version 1 it is decoded as bech32m
-          res = bech32m.decode(address);
+          res = bech32m.decode(address as `${string}1${string}`);
           if (res.words[0] === 0) throw new Error(`bech32m: wrong version=${res.words[0]}`);
         }
         if (res.prefix !== network.bech32) throw new Error(`wrong bech32 prefix=${res.prefix}`);
