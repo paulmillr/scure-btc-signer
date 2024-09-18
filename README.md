@@ -882,12 +882,9 @@ deepStrictEqual(tx.fee, 394n);
 
 We support custom scripts. You can pass it as last argument to `p2tr`.
 
-Ordinals, inscriptions, runes and others are handled by a separate package for now:
-[micro-ordinals](https://github.com/paulmillr/micro-ordinals).
+We've developed separate [micro-ordinals](https://github.com/paulmillr/micro-ordinals) package, which contains:
 
-The package contains:
-
-- Real code for ordinals / inscriptions
+- Real code for ordinals / inscriptions / runes
 - CLI tool that allows to upload files as inscriptions
 - Example usage of custom scripts
 
