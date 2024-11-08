@@ -38,7 +38,7 @@ export const def = <T>(value: T | undefined, def: T) => (value === undefined ? d
 export function cloneDeep<T>(obj: T): T {
   if (Array.isArray(obj)) return obj.map((i) => cloneDeep(i)) as unknown as T;
   // slice of nodejs Buffer doesn't copy
-  else if (obj instanceof Uint8Array) return Uint8Array.from(obj) as unknown as T;
+  else if (isBytes(obj)) return Uint8Array.from(obj) as unknown as T;
   // immutable
   else if (['number', 'bigint', 'boolean', 'string', 'undefined'].includes(typeof obj)) return obj;
   // null is object

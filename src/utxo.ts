@@ -276,7 +276,7 @@ export type EstimatorOpts = TxOpts & {
 
 function getScript(o: Output, opts: TxOpts = {}, network = NETWORK) {
   let script;
-  if ('script' in o && o.script instanceof Uint8Array) {
+  if ('script' in o && isBytes(o.script)) {
     script = o.script;
   }
   if ('address' in o) {
