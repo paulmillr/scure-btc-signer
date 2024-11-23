@@ -381,7 +381,8 @@ export class Transaction {
   // We will lose some vectors -> smaller test coverage of preimages (very important!)
   private inputSighash(idx: number) {
     this.checkInputIdx(idx);
-    const sighash = getInputType(this.inputs[idx], this.opts.allowLegacyWitnessUtxo).sighash;
+    const inputSighash = this.inputs[idx].sighashType;
+    const sighash = inputSighash === undefined ? SignatureHash.DEFAULT : inputSighash;
     // ALL or DEFAULT -- everything signed
     // NONE           -- all inputs + no outputs
     // SINGLE         -- all inputs + output with same index
