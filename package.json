@@ -16,12 +16,12 @@
   "dependencies": {
     "@noble/curves": "~1.7.0",
     "@noble/hashes": "~1.6.0",
-    "@scure/base": "~1.2.0",
-    "micro-packed": "~0.6.2"
+    "@scure/base": "~1.2.1",
+    "micro-packed": "~0.7.0"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.2.1",
-    "@scure/bip32": "~1.5.0",
+    "@scure/bip32": "~1.6.0",
     "micro-should": "0.4.0",
     "prettier": "3.3.2",
     "typescript": "5.5.2"
