@@ -501,8 +501,8 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
         throw new Error(`Cannot change signed field=${k}`);
     }
   }
-  // Remove unknown keys
-  for (const k in res) if (!psbtEnum[k]) delete res[k];
+  // Remove unknown keys except if they are set in the "unknown" array
+  for (const k in res) if (!psbtEnum[k] && k !== 'unknown') delete res[k];
   return res;
 }
 
