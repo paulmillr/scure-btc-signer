@@ -182,7 +182,8 @@ function validateOpts(opts: TxOpts) {
   if (typeof _opts.allowUnknowOutput !== 'undefined')
     opts.allowUnknownOutputs = _opts.allowUnknowOutput;
   // 0 and -1 happens in tests
-  if (![-1, 0, 1, 2, 3].includes(_opts.version)) throw new Error(`Unknown version: ${_opts.version}`);
+  if (![-1, 0, 1, 2, 3].includes(_opts.version))
+    throw new Error(`Unknown version: ${_opts.version}`);
   if (typeof _opts.lockTime !== 'number') throw new Error('Transaction lock time should be number');
   P.U32LE.encode(_opts.lockTime); // Additional range checks that lockTime
   // There is no PSBT v1, and any new version will probably have fields which we don't know how to parse, which
