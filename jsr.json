@@ -1,0 +1,29 @@
+{
+  "name": "@scure/btc-signer",
+  "version": "1.5.0",
+  "exports": {
+    ".": "./src/index.ts",
+    "./payment": "./src/payment.ts",
+    "./psbt": "./src/psbt.ts",
+    "./script": "./src/script.ts",
+    "./transaction": "./src/transaction.ts",
+    "./utils": "./src/utils.ts",
+    "./utxo": "./src/utxo.ts"
+  },
+  "imports": {
+    "@noble/hashes": "jsr:@noble/hashes@1.7.0-1",
+    "micro-packed": "jsr:@paulmillr/micro-packed@0.7.1"
+  },
+  "publish": {
+    "include": [
+      "src",
+      "jsr.json",
+      "LICENSE",
+      "README.md"
+    ],
+    "exclude": [
+      "src/cryptoNode.ts"
+    ]
+  },
+  "license": "MIT"
+}
