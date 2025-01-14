@@ -30,10 +30,10 @@ export const PRECISION = 8;
 export const DEFAULT_VERSION = 2;
 export const DEFAULT_LOCKTIME = 0;
 export const DEFAULT_SEQUENCE = 4294967295;
-export const Decimal = P.coders.decimal(PRECISION);
+export const Decimal: P.Coder<bigint, string> = P.coders.decimal(PRECISION);
 
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
-export const def = <T>(value: T | undefined, def: T) => (value === undefined ? def : value);
+export const def = <T>(value: T | undefined, def: T): T => (value === undefined ? def : value);
 
 export function cloneDeep<T>(obj: T): T {
   if (Array.isArray(obj)) return obj.map((i) => cloneDeep(i)) as unknown as T;
@@ -166,7 +166,7 @@ function unpackSighash(hashType: number) {
   };
 }
 
-function validateOpts(opts: TxOpts) {
+function validateOpts(opts: TxOpts): Readonly<TxOpts> {
   if (opts !== undefined && {}.toString.call(opts) !== '[object Object]')
     throw new Error(`Wrong object type for transaction options: ${opts}`);
 
@@ -234,7 +234,7 @@ export class Transaction {
   }
 
   // Import
-  static fromRaw(raw: Bytes, opts: TxOpts = {}) {
+  static fromRaw(raw: Bytes, opts: TxOpts = {}): Transaction {
     const parsed = RawTx.decode(raw);
     const tx = new Transaction({ ...opts, version: parsed.version, lockTime: parsed.lockTime });
     for (const o of parsed.outputs) tx.addOutput(o);
@@ -247,7 +247,7 @@ export class Transaction {
     return tx;
   }
   // PSBT
-  static fromPSBT(psbt_: Bytes, opts: TxOpts = {}) {
+  static fromPSBT(psbt_: Bytes, opts: TxOpts = {}): Transaction {
     let parsed: P.UnwrapCoder<typeof psbt.RawPSBTV0>;
     try {
       parsed = psbt.RawPSBTV0.decode(psbt_);
@@ -282,7 +282,7 @@ export class Transaction {
     if (lockTime !== DEFAULT_LOCKTIME) tx.global.fallbackLocktime = lockTime;
     return tx;
   }
-  toPSBT(PSBTVersion = this.opts.PSBTVersion) {
+  toPSBT(PSBTVersion: number | undefined = this.opts.PSBTVersion): Uint8Array {
     if (PSBTVersion !== 0 && PSBTVersion !== 2)
       throw new Error(`Wrong PSBT version=${PSBTVersion}`);
     // if (PSBTVersion === 0 && this.inputs.length === 0) {
@@ -339,7 +339,7 @@ export class Transaction {
   }
 
   // BIP370 lockTime (https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time)
-  get lockTime() {
+  get lockTime(): number {
     let height = DEFAULT_LOCKTIME;
     let heightCnt = 0;
     let time = DEFAULT_LOCKTIME;
@@ -359,7 +359,7 @@ export class Transaction {
     return this.global.fallbackLocktime || DEFAULT_LOCKTIME;
   }
 
-  get version() {
+  get version(): number {
     // Should be not possible
     if (this.global.txVersion === undefined) throw new Error('No global.txVersion');
     return this.global.txVersion;
@@ -420,7 +420,7 @@ export class Transaction {
     return { addInput, addOutput, inputs, outputs };
   }
 
-  get isFinal() {
+  get isFinal(): boolean {
     for (let idx = 0; idx < this.inputs.length; idx++)
       if (this.inputStatus(idx) !== 'finalized') return false;
     return true;
@@ -454,7 +454,7 @@ export class Transaction {
   get vsize(): number {
     return toVsize(this.weight);
   }
-  toBytes(withScriptSig = false, withWitness = false) {
+  toBytes(withScriptSig = false, withWitness = false): Uint8Array {
     return RawTx.encode({
       version: this.version,
       lockTime: this.lockTime,
@@ -470,15 +470,15 @@ export class Transaction {
   get unsignedTx(): Bytes {
     return this.toBytes(false, false);
   }
-  get hex() {
+  get hex(): string {
     return hex.encode(this.toBytes(true, this.hasWitnesses));
   }
 
-  get hash() {
+  get hash(): string {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
     return hex.encode(u.sha256x2(this.toBytes(true)));
   }
-  get id() {
+  get id(): string {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
     return hex.encode(u.sha256x2(this.toBytes(true)).reverse());
   }
@@ -487,11 +487,11 @@ export class Transaction {
     if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.inputs.length)
       throw new Error(`Wrong input index=${idx}`);
   }
-  getInput(idx: number) {
+  getInput(idx: number): psbt.TransactionInput {
     this.checkInputIdx(idx);
     return cloneDeep(this.inputs[idx]);
   }
-  get inputsLength() {
+  get inputsLength(): number {
     return this.inputs.length;
   }
   // Modification
@@ -501,7 +501,7 @@ export class Transaction {
     this.inputs.push(normalizeInput(input, undefined, undefined, this.opts.disableScriptCheck));
     return this.inputs.length - 1;
   }
-  updateInput(idx: number, input: psbt.TransactionInputUpdate, _ignoreSignStatus = false) {
+  updateInput(idx: number, input: psbt.TransactionInputUpdate, _ignoreSignStatus = false): void {
     this.checkInputIdx(idx);
     let allowedFields = undefined;
     if (!_ignoreSignStatus) {
@@ -521,17 +521,17 @@ export class Transaction {
     if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.outputs.length)
       throw new Error(`Wrong output index=${idx}`);
   }
-  getOutput(idx: number) {
+  getOutput(idx: number): psbt.TransactionOutput {
     this.checkOutputIdx(idx);
     return cloneDeep(this.outputs[idx]);
   }
-  getOutputAddress(idx: number, network = NETWORK): string | undefined {
+  getOutputAddress(idx: number, network: u.BTC_NETWORK = NETWORK): string | undefined {
     const out = this.getOutput(idx);
     if (!out.script) return;
     return Address(network).encode(OutScript.decode(out.script));
   }
 
-  get outputsLength() {
+  get outputsLength(): number {
     return this.outputs.length;
   }
   private normalizeOutput(
@@ -569,7 +569,7 @@ export class Transaction {
     this.outputs.push(this.normalizeOutput(o));
     return this.outputs.length - 1;
   }
-  updateOutput(idx: number, output: psbt.TransactionOutputUpdate, _ignoreSignStatus = false) {
+  updateOutput(idx: number, output: psbt.TransactionOutputUpdate, _ignoreSignStatus = false): void {
     this.checkOutputIdx(idx);
     let allowedFields = undefined;
     if (!_ignoreSignStatus) {
@@ -579,7 +579,7 @@ export class Transaction {
     }
     this.outputs[idx] = this.normalizeOutput(output, this.outputs[idx], allowedFields);
   }
-  addOutputAddress(address: string, amount: bigint, network = NETWORK): number {
+  addOutputAddress(address: string, amount: bigint, network: u.BTC_NETWORK = NETWORK): number {
     return this.addOutput({ script: OutScript.encode(Address(network).decode(address)), amount });
   }
   // Utils
@@ -634,7 +634,12 @@ export class Transaction {
     });
     return u.sha256x2(tmpTx, P.I32LE.encode(hashType));
   }
-  preimageWitnessV0(idx: number, prevOutScript: Bytes, hashType: number, amount: bigint) {
+  preimageWitnessV0(
+    idx: number,
+    prevOutScript: Bytes,
+    hashType: number,
+    amount: bigint
+  ): Uint8Array {
     const { isAny, isNone, isSingle } = unpackSighash(hashType);
     let inputHash = EMPTY32;
     let sequenceHash = EMPTY32;
@@ -672,7 +677,7 @@ export class Transaction {
     leafScript?: Bytes,
     leafVer = 0xc0,
     annex?: Bytes
-  ) {
+  ): Uint8Array {
     if (!Array.isArray(amount) || this.inputs.length !== amount.length)
       throw new Error(`Invalid amounts array=${amount}`);
     if (!Array.isArray(prevOutScript) || this.inputs.length !== prevOutScript.length)
@@ -879,7 +884,7 @@ export class Transaction {
     return num;
   }
 
-  finalizeIdx(idx: number) {
+  finalizeIdx(idx: number): void {
     this.checkInputIdx(idx);
     if (this.fee < 0n) throw new Error('Outputs spends more than inputs amount');
     const input = this.inputs[idx];
@@ -1028,10 +1033,10 @@ export class Transaction {
     if (finalScriptWitness) input.finalScriptWitness = finalScriptWitness;
     cleanFinalInput(input);
   }
-  finalize() {
+  finalize(): void {
     for (let i = 0; i < this.inputs.length; i++) this.finalizeIdx(i);
   }
-  extract() {
+  extract(): Uint8Array {
     if (!this.isFinal) throw new Error('Transaction has unfinalized inputs');
     if (!this.outputs.length) throw new Error('Transaction has no outputs');
     if (this.fee < 0n) throw new Error('Outputs spends more than inputs amount');
@@ -1063,7 +1068,7 @@ export class Transaction {
     for (let i = 0; i < this.outputs.length; i++) this.updateOutput(i, other.outputs[i], true);
     return this;
   }
-  clone() {
+  clone(): Transaction {
     // deepClone probably faster, but this enforces that encoding is valid
     return Transaction.fromPSBT(this.toPSBT(this.opts.PSBTVersion), this.opts);
   }

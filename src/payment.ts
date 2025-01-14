@@ -2,7 +2,7 @@ import { Coder, hex, bech32, bech32m, createBase58check } from '@scure/base';
 import * as P from 'micro-packed';
 import { TaprootControlBlock, TransactionInput } from './psbt.js';
 import { OpToNum, ScriptType, Script, VarBytes } from './script.js';
-import { Bytes, NETWORK } from './utils.js';
+import { Bytes, BTC_NETWORK, NETWORK } from './utils.js';
 import * as u from './utils.js';
 
 // We need following items:
@@ -224,7 +224,21 @@ export type CustomScript = Coder<OptScript, CustomScriptOut | undefined> & {
 };
 
 // We can validate this once, because of packed & coders
-export const OutScript = P.validate(_OutScript, (i) => {
+export const OutScript: P.CoderType<
+  NonNullable<
+    | OutPKType
+    | OutPKHType
+    | OutSHType
+    | OutWSHType
+    | OutWPKHType
+    | OutMSType
+    | OutTRType
+    | OutTRNSType
+    | OutTRMSType
+    | OutUnknownType
+    | undefined
+  >
+> = P.validate(_OutScript, (i) => {
   if (i.type === 'pk' && !isValidPubkey(i.pubkey, u.PubT.ecdsa))
     throw new Error('OutScript/pk: wrong key');
   if (
@@ -267,7 +281,7 @@ function checkWSH(s: OutWSHType, witnessScript: Bytes) {
     throw new Error(`checkScript: P2${w.type} cannot be wrapped in P2WSH`);
 }
 
-export function checkScript(script?: Bytes, redeemScript?: Bytes, witnessScript?: Bytes) {
+export function checkScript(script?: Bytes, redeemScript?: Bytes, witnessScript?: Bytes): void {
   if (script) {
     const s = OutScript.decode(script);
     // ms||pk maybe work, but there will be no address, hard to spend
@@ -300,7 +314,7 @@ function uniqPubkey(pubkeys: Bytes[]) {
 }
 
 // @ts-ignore
-export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
+export const p2pk = (pubkey: Bytes, network: BTC_NETWORK = NETWORK): P2Ret => {
   // network is unused
   if (!isValidPubkey(pubkey, u.PubT.ecdsa)) throw new Error('P2PK: invalid publicKey');
   return {
@@ -308,7 +322,7 @@ export const p2pk = (pubkey: Bytes, network = NETWORK): P2Ret => {
     script: OutScript.encode({ type: 'pk', pubkey }),
   };
 };
-export const p2pkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
+export const p2pkh = (publicKey: Bytes, network: BTC_NETWORK = NETWORK): P2Ret => {
   if (!isValidPubkey(publicKey, u.PubT.ecdsa)) throw new Error('P2PKH: invalid publicKey');
   const hash = u.hash160(publicKey);
   return {
@@ -317,7 +331,7 @@ export const p2pkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
     address: Address(network).encode({ type: 'pkh', hash }),
   };
 };
-export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
+export const p2sh = (child: P2Ret, network: BTC_NETWORK = NETWORK): P2Ret => {
   // It is already tested inside noble-hashes and checkScript
   const cs = child.script;
   if (!u.isBytes(cs)) throw new Error(`Wrong script: ${typeof child.script}, expected Uint8Array`);
@@ -333,7 +347,7 @@ export const p2sh = (child: P2Ret, network = NETWORK): P2Ret => {
   if (child.witnessScript) res.witnessScript = child.witnessScript;
   return res;
 };
-export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
+export const p2wsh = (child: P2Ret, network: BTC_NETWORK = NETWORK): P2Ret => {
   const cs = child.script;
   if (!u.isBytes(cs)) throw new Error(`Wrong script: ${typeof cs}, expected Uint8Array`);
   const hash = u.sha256(cs);
@@ -346,7 +360,7 @@ export const p2wsh = (child: P2Ret, network = NETWORK): P2Ret => {
     address: Address(network).encode({ type: 'wsh', hash }),
   };
 };
-export const p2wpkh = (publicKey: Bytes, network = NETWORK): P2Ret => {
+export const p2wpkh = (publicKey: Bytes, network: BTC_NETWORK = NETWORK): P2Ret => {
   if (!isValidPubkey(publicKey, u.PubT.ecdsa)) throw new Error('P2WPKH: invalid publicKey');
   if (publicKey.length === 65) throw new Error('P2WPKH: uncompressed public key');
   const hash = u.hash160(publicKey);
@@ -361,7 +375,7 @@ export const p2ms = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): P2R
   return { type: 'ms', script: OutScript.encode({ type: 'ms', pubkeys, m }) };
 };
 
-type HashedTree =
+export type HashedTree =
   | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes }
   | { type: 'branch'; left: HashedTree; right: HashedTree; hash: Bytes };
 function checkTaprootScript(
@@ -409,9 +423,9 @@ function checkTaprootScript(
 }
 
 export type P2TROut = P2Ret & {
-  tweakedPubkey: Uint8Array;
-  tapInternalKey: Uint8Array;
-  tapMerkleRoot?: Uint8Array;
+  tweakedPubkey: Bytes;
+  tapInternalKey: Bytes;
+  tapMerkleRoot?: Bytes;
   tapLeafScript?: TransactionInput['tapLeafScript'];
   leaves?: TaprootLeaf[];
 };
@@ -451,7 +465,7 @@ export function taprootListToTree(taprootList: TaprootScriptList): TaprootScript
   return (last?.childs || last) as TaprootScriptTree;
 }
 
-type TaprootLeaf = {
+export type TaprootLeaf = {
   type: 'leaf';
   version?: number;
   script: Bytes;
@@ -459,7 +473,7 @@ type TaprootLeaf = {
   path: Bytes[];
 };
 
-type HashedTreeWithPath =
+export type HashedTreeWithPath =
   | TaprootLeaf
   | {
       type: 'branch';
@@ -526,7 +540,7 @@ function taprootHashTree(
 }
 
 export const TAP_LEAF_VERSION = 0xc0;
-export const tapLeafHash = (script: Bytes, version = TAP_LEAF_VERSION) =>
+export const tapLeafHash = (script: Bytes, version: number = TAP_LEAF_VERSION): Bytes =>
   u.tagSchnorr('TapLeaf', new Uint8Array([version]), VarBytes.encode(script));
 
 // Works as key OR tree.
@@ -535,7 +549,7 @@ export const tapLeafHash = (script: Bytes, version = TAP_LEAF_VERSION) =>
 export function p2tr(
   internalPubKey?: Bytes | string,
   tree?: TaprootScriptTree,
-  network = NETWORK,
+  network: BTC_NETWORK = NETWORK,
   allowUnknownOutputs = false,
   customScripts?: CustomScript[]
 ): P2TROut {
@@ -631,7 +645,14 @@ export const p2tr_ns = (m: number, pubkeys: Bytes[], allowSamePubkeys = false): 
 // Taproot public key (case of p2tr_ns)
 export const p2tr_pk = (pubkey: Bytes): P2Ret => p2tr_ns(1, [pubkey], undefined)[0];
 
-export function p2tr_ms(m: number, pubkeys: Bytes[], allowSamePubkeys = false) {
+export function p2tr_ms(
+  m: number,
+  pubkeys: Bytes[],
+  allowSamePubkeys = false
+): {
+  type: string;
+  script: Uint8Array;
+} {
   if (!allowSamePubkeys) uniqPubkey(pubkeys);
   return {
     type: 'tr_ms',
@@ -640,7 +661,11 @@ export function p2tr_ms(m: number, pubkeys: Bytes[], allowSamePubkeys = false) {
 }
 
 // Simple pubkey address, without complex scripts
-export function getAddress(type: 'pkh' | 'wpkh' | 'tr', privKey: Bytes, network = NETWORK) {
+export function getAddress(
+  type: 'pkh' | 'wpkh' | 'tr',
+  privKey: Bytes,
+  network: BTC_NETWORK = NETWORK
+): string | undefined {
   if (type === 'tr') {
     return p2tr(u.pubSchnorr(privKey), undefined, network).address;
   }
@@ -650,20 +675,26 @@ export function getAddress(type: 'pkh' | 'wpkh' | 'tr', privKey: Bytes, network 
   throw new Error(`getAddress: unknown type=${type}`);
 }
 
-export const _sortPubkeys = (pubkeys: Bytes[]) => Array.from(pubkeys).sort(u.compareBytes);
+export const _sortPubkeys = (pubkeys: Bytes[]): Uint8Array[] =>
+  Array.from(pubkeys).sort(u.compareBytes);
 
 export function multisig(
   m: number,
   pubkeys: Bytes[],
   sorted = false,
   witness = false,
-  network = NETWORK
-) {
+  network: BTC_NETWORK = NETWORK
+): P2Ret {
   const ms = p2ms(m, sorted ? _sortPubkeys(pubkeys) : pubkeys);
   return witness ? p2wsh(ms, network) : p2sh(ms, network);
 }
 
-export function sortedMultisig(m: number, pubkeys: Bytes[], witness = false, network = NETWORK) {
+export function sortedMultisig(
+  m: number,
+  pubkeys: Bytes[],
+  witness = false,
+  network: BTC_NETWORK = NETWORK
+): P2Ret {
   return multisig(m, pubkeys, true, witness, network);
 }
 
@@ -686,7 +717,7 @@ function formatKey(hashed: Bytes, prefix: number[]): string {
   return base58check.encode(u.concatBytes(Uint8Array.from(prefix), hashed));
 }
 
-export function WIF(network = NETWORK): Coder<Bytes, string> {
+export function WIF(network: BTC_NETWORK = NETWORK): Coder<Bytes, string> {
   return {
     encode(privKey: Bytes) {
       const compressed = u.concatBytes(privKey, new Uint8Array([0x01]));
@@ -705,7 +736,7 @@ export function WIF(network = NETWORK): Coder<Bytes, string> {
 }
 
 // Returns OutType, which can be used to create outscript
-export function Address(network = NETWORK) {
+export function Address(network: BTC_NETWORK = NETWORK) {
   return {
     encode(from: P.UnwrapCoder<OutScriptType>): string {
       const { type } = from;

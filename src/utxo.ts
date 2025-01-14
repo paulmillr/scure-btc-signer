@@ -21,6 +21,8 @@ import {
 } from './utils.js';
 import { validatePubkey, PubT } from './utils.js';
 
+export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
+
 // Normalizes input
 export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof RawOutput> {
   if (input.nonWitnessUtxo) {
@@ -48,7 +50,7 @@ export function normalizeInput(
   if (typeof txid === 'string') txid = hex.decode(txid);
   // TODO: if we have nonWitnessUtxo, we can extract txId from here
   if (txid === undefined) txid = cur?.txid;
-  let res: psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput> = { ...cur, ...i, nonWitnessUtxo, txid };
+  let res: PSBTInputs = { ...cur, ...i, nonWitnessUtxo, txid };
   if (!('nonWitnessUtxo' in i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
   if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
   if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
@@ -122,9 +124,17 @@ export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtx
   }
 }
 
-export const toVsize = (weight: number) => Math.ceil(weight / 4);
+export const toVsize = (weight: number): number => Math.ceil(weight / 4);
 // UTXO Select
-type Output = { address: string; amount: bigint } | { script: Uint8Array; amount: bigint };
+export type Output = { address: string; amount: bigint } | { script: Uint8Array; amount: bigint };
+export type Accumulated =
+  | {
+      indices: number[];
+      fee: bigint | undefined;
+      weight: number;
+      total: bigint;
+    }
+  | undefined;
 type TapLeafScript = psbt.TransactionInput['tapLeafScript'];
 type TB = Parameters<typeof psbt.TaprootControlBlock.encode>[0];
 const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
@@ -252,7 +262,7 @@ function estimateInput(
 }
 
 // Exported for tests, internal method
-export const _cmpBig = (a: bigint, b: bigint) => {
+export const _cmpBig = (a: bigint, b: bigint): 0 | 1 | -1 => {
   const n = a - b;
   if (n < 0n) return -1;
   else if (n > 0n) return 1;
@@ -442,27 +452,27 @@ export class _Estimator {
   }
 
   // Sort by value instead of amount
-  get biggest() {
+  get biggest(): number[] {
     return this.normalizedInputs
       .map((_i, j) => j)
       .sort((a, b) => _cmpBig(this.normalizedInputs[b].value, this.normalizedInputs[a].value));
   }
-  get smallest() {
+  get smallest(): number[] {
     return this.biggest.reverse();
   }
   // These assume that UTXO array has historical order.
   // Otherwise, we have no way to know which tx is oldest
   // Explorers usually give UTXO in this order.
-  get oldest() {
+  get oldest(): number[] {
     return this.normalizedInputs.map((_i, j) => j);
   }
-  get newest() {
+  get newest(): number[] {
     return this.oldest.reverse();
   }
   // exact - like blackjack from coinselect.
   // exact(biggest) will select one big utxo which is closer to targetValue+dust, if possible.
   // If not, it will accumulate largest utxo until value is close to targetValue+dust.
-  accumulate(indices: number[], exact = false, skipNegative = true, all = false) {
+  accumulate(indices: number[], exact = false, skipNegative = true, all = false): Accumulated {
     // TODO: how to handle change addresses?
     // - cost of input
     // - cost of change output (if input requires change)
@@ -524,7 +534,7 @@ export class _Estimator {
   }
 
   // Works like coinselect default method
-  default() {
+  default(): Accumulated {
     const { biggest } = this;
     const exact = this.accumulate(biggest, true, false);
     if (exact) return exact;
@@ -602,7 +612,8 @@ export class _Estimator {
       for (const o of outputs)
         tx.addOutput({ ...o, script: getScript(o, this.opts, this.opts.network) });
     }
-    return { ...res, tx };
+    return Object.assign(res, { tx });
+    // return { ...res, tx: tx };
   }
 }
 

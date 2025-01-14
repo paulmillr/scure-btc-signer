@@ -81,7 +81,7 @@ export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<big
   });
 }
 
-export function OpToNum(op: ScriptOP, bytesLimit = 4, forceMinimal = true) {
+export function OpToNum(op: ScriptOP, bytesLimit = 4, forceMinimal = true): number | undefined {
   if (typeof op === 'number') return op;
   if (isBytes(op)) {
     try {
@@ -197,13 +197,13 @@ export const CompactSize: P.CoderType<bigint> = P.wrap({
 });
 
 // Same thing, but in number instead of bigint. Checks for safe integer inside
-export const CompactSizeLen = P.apply(CompactSize, P.coders.numberBigint);
+export const CompactSizeLen: P.CoderType<number> = P.apply(CompactSize, P.coders.numberBigint);
 
 // ui8a of size <CompactSize>
-export const VarBytes = P.bytes(CompactSize);
+export const VarBytes: P.CoderType<Uint8Array> = P.bytes(CompactSize);
 
 // SegWit v0 stack of witness buffers
-export const RawWitness = P.array(CompactSizeLen, VarBytes);
+export const RawWitness: P.CoderType<Uint8Array[]> = P.array(CompactSizeLen, VarBytes);
 
 // Array of size <CompactSize>
 export const BTCArray = <T>(t: P.CoderType<T>): P.CoderType<T[]> => P.array(CompactSize, t);
@@ -235,7 +235,7 @@ function validateRawTx(tx: P.UnwrapCoder<typeof _RawTx>) {
     throw new Error('Segwit flag with empty witnesses array');
   return tx;
 }
-export const RawTx = P.validate(_RawTx, validateRawTx);
+export const RawTx: typeof _RawTx = P.validate(_RawTx, validateRawTx);
 // Pre-SegWit serialization format (for PSBTv0)
 export const RawOldTx = P.struct({
   version: P.I32LE,
