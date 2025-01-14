@@ -38,8 +38,4 @@ should('big multisig (ours)', () => {
   deepStrictEqual(tx.id, '2687c4795c995431d934432def1cda8264c95920ce404229ca5c21328d7c9bcc');
 });
 
-// ESM is broken.
-import url from 'node:url';
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  should.run();
-}
+should.runWhen(import.meta.url);

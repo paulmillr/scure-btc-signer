@@ -1772,7 +1772,7 @@ should('return immutable outputs/inputs', () => {
   deepStrictEqual(o1.script[0], 0);
   o1.script[0] = 128;
   deepStrictEqual(tx.outputs[1].script[0], 0);
-  console.log('O', tx.outputs[1], o1);
+  // console.log('O', tx.outputs[1], o1);
 });
 
 should('error on internalKey inside leaf script (gh-51)', () => {
@@ -1793,12 +1793,12 @@ should('combine PSBT (gh-56)', () => {
   const pubAlice = secp256k1.getPublicKey(privAlice, true);
   const wpkhAlice = btc.p2wpkh(pubAlice);
 
-  console.log('ALICE', btc.WIF().encode(privAlice));
+  // console.log('ALICE', btc.WIF().encode(privAlice));
   // Bob keys
   const privBob = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
   const pubBob = secp256k1.getPublicKey(privBob, true);
   const wpkhBob = btc.p2wpkh(pubBob);
-  console.log('BOB', btc.WIF().encode(privBob));
+  // console.log('BOB', btc.WIF().encode(privBob));
 
   const txBase = new btc.Transaction();
   // Basic input test
@@ -1823,7 +1823,7 @@ should('combine PSBT (gh-56)', () => {
   // alice + bob inputs -> alice
   txBase.addOutput({ amount: 456n, script: wpkhAlice.script });
   const psbtBase = txBase.toPSBT();
-  console.log('PSBT Base', base64.encode(psbtBase));
+  // console.log('PSBT Base', base64.encode(psbtBase));
 
   // Sign tx by alice key
   const txBaseA = btc.Transaction.fromPSBT(psbtBase);
@@ -1999,8 +1999,4 @@ should('GH-101: TAP_BIP32_DERIVATION', () => {
   );
 });
 
-// ESM is broken.
-import url from 'node:url';
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  should.run();
-}
+should.runWhen(import.meta.url);

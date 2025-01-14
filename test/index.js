@@ -12,5 +12,6 @@ import './bip340-schnorr.test.js';
 import './bip341-taproot.test.js';
 import './taproot-multisig.test.js';
 import './utxo-select.test.js';
+import './psbt-test/bip174-psbt-extended.test.js';
 
-should.run();
+should.runWhen(import.meta.url);
