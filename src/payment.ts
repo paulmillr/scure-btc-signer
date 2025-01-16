@@ -18,6 +18,20 @@ export type P2Ret = {
   witnessScript?: Bytes;
 };
 
+// Pay to Anchor (P2A)
+type OutP2AType = { type: 'p2a'; script: Bytes };
+const OutP2A: Coder<OptScript, OutP2AType | undefined> = {
+  encode(from: ScriptType): OutP2AType | undefined {
+    if (from.length !== 2 || from[0] !== 1 || !u.isBytes(from[1]) || hex.encode(from[1]) !== '4e73')
+      return;
+    return { type: 'p2a', script: Script.encode(from) };
+  },
+  decode: (to: OutP2AType): OptScript => {
+    if (to.type !== 'p2a') return;
+    return [1, hex.decode('4e73')];
+  },
+};
+
 // Public Key (P2PK)
 type OutPKType = { type: 'pk'; pubkey: Bytes };
 export type OptScript = ScriptType | undefined;
@@ -189,6 +203,7 @@ const OutUnknown: Coder<OptScript, OutUnknownType | undefined> = {
 // /Payments
 
 const OutScripts = [
+  OutP2A,
   OutPK,
   OutPKH,
   OutSH,
@@ -226,6 +241,7 @@ export type CustomScript = Coder<OptScript, CustomScriptOut | undefined> & {
 // We can validate this once, because of packed & coders
 export const OutScript: P.CoderType<
   NonNullable<
+    | OutP2AType
     | OutPKType
     | OutPKHType
     | OutSHType
