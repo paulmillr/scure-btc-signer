@@ -73,8 +73,10 @@
     "lint": "prettier --check src",
     "format": "prettier --write src",
     "test": "node test/index.js",
-    "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js",
-    "test:slow": "node test/index.js && node test/slow.test.js"
+    "test:big": "node test/slow.test.js",
+    "test:bun": "bun test/index.js",
+    "test:deno": "deno --allow-env --allow-read test/index.js",
+    "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js"
   },
   "keywords": [
     "bitcoin",
