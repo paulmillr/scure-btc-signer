@@ -11,7 +11,7 @@
     "./utxo": "./src/utxo.ts"
   },
   "imports": {
-    "@noble/curves": "jsr:@noble/hashes@~1.8.0",
+    "@noble/curves": "jsr:@noble/curves@~1.8.0",
     "@noble/hashes": "jsr:@noble/hashes@~1.7.0",
     "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.1"
   },
