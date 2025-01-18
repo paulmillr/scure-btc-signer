@@ -1,7 +1,7 @@
-import { utils as packedUtils, U32LE } from 'micro-packed';
+import { schnorr, secp256k1 as secp } from '@noble/curves/secp256k1';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import { sha256 } from '@noble/hashes/sha256';
-import { secp256k1 as secp, schnorr } from '@noble/curves/secp256k1';
+import { utils as packedUtils, U32LE } from 'micro-packed';
 
 export type Hex = string | Uint8Array;
 export type Bytes = Uint8Array;
@@ -11,7 +11,7 @@ const CURVE_ORDER = secp.CURVE.n;
 const isBytes: (a: unknown) => a is Uint8Array = packedUtils.isBytes;
 const concatBytes: (...arrays: Uint8Array[]) => Uint8Array = packedUtils.concatBytes;
 const equalBytes: (a: Uint8Array, b: Uint8Array) => boolean = packedUtils.equalBytes;
-export { sha256, isBytes, concatBytes, equalBytes };
+export { concatBytes, equalBytes, isBytes, sha256 };
 
 export const hash160 = (msg: Uint8Array): Uint8Array => ripemd160(sha256(msg));
 export const sha256x2 = (...msgs: Uint8Array[]): Uint8Array => sha256(sha256(concatBytes(...msgs)));

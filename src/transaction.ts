@@ -1,12 +1,19 @@
-import * as P from 'micro-packed';
 import { hex } from '@scure/base';
-import { Address, CustomScript, OutScript, checkScript, tapLeafHash } from './payment.js';
+import * as P from 'micro-packed';
+import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.js';
 import * as psbt from './psbt.js'; // circular
-import { CompactSizeLen, Script, VarBytes } from './script.js';
-import { RawOutput, RawTx, RawOldTx, RawWitness } from './script.js';
-import { NETWORK, Bytes, concatBytes, isBytes, equalBytes } from './utils.js';
+import {
+  CompactSizeLen,
+  RawOldTx,
+  RawOutput,
+  RawTx,
+  RawWitness,
+  Script,
+  VarBytes,
+} from './script.js';
 import * as u from './utils.js';
-import { getInputType, toVsize, normalizeInput, getPrevOut } from './utxo.js'; // circular
+import { type Bytes, NETWORK, concatBytes, equalBytes, isBytes } from './utils.js';
+import { getInputType, getPrevOut, normalizeInput, toVsize } from './utxo.js'; // circular
 
 const EMPTY32 = new Uint8Array(32);
 const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
