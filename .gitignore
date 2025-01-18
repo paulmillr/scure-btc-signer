@@ -1,5 +1,4 @@
 node_modules
-/build/scure-btc-signer.js
 /esm
 *.d.ts
 *.d.ts.map
@@ -7,3 +6,4 @@ node_modules
 /*.js
 /abi
 /net
+/test/build
