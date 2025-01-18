@@ -1,6 +1,6 @@
 {
   "name": "@scure/btc-signer",
-  "version": "1.6.0-pre",
+  "version": "1.6.0",
   "exports": {
     ".": "./src/index.ts",
     "./payment": "./src/payment.ts",
@@ -11,10 +11,10 @@
     "./utxo": "./src/utxo.ts"
   },
   "imports": {
-    "@noble/curves": "jsr:@noble/curves@~1.8.0",
-    "@noble/hashes": "jsr:@noble/hashes@~1.7.0",
-    "@scure/base": "jsr:@scure/base@~1.2.1",
-    "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.1"
+    "@noble/curves": "jsr:@noble/curves@~1.8.1",
+    "@noble/hashes": "jsr:@noble/hashes@~1.7.1",
+    "@scure/base": "jsr:@scure/base@~1.2.2",
+    "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.2"
   },
   "publish": {
     "include": [
