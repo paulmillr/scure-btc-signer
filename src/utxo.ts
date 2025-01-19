@@ -34,7 +34,8 @@ export function normalizeInput(
   i: psbt.TransactionInputUpdate,
   cur?: psbt.TransactionInput,
   allowedFields?: (keyof psbt.TransactionInput)[],
-  disableScriptCheck = false
+  disableScriptCheck = false,
+  allowUnknown = false
 ): psbt.TransactionInput {
   let { nonWitnessUtxo, txid } = i;
   // String support for common fields. We usually prefer Uint8Array to avoid errors
@@ -52,7 +53,7 @@ export function normalizeInput(
   if (!('nonWitnessUtxo' in i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
   if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
   if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
-  res = psbt.mergeKeyMap(psbt.PSBTInput, res, cur, allowedFields);
+  res = psbt.mergeKeyMap(psbt.PSBTInput, res, cur, allowedFields, allowUnknown);
   psbt.PSBTInputCoder.encode(res); // Validates that everything is correct at this point
 
   let prevOut;
@@ -399,7 +400,7 @@ export class _Estimator {
     }
     const inputKeys = new Set();
     this.normalizedInputs = allInputs.map((i) => {
-      const normalized = normalizeInput(i, undefined, undefined, opts.disableScriptCheck);
+      const normalized = normalizeInput(i, undefined, undefined, opts.disableScriptCheck, opts.allowUnknown);
       inputBeforeSign(normalized); // check fields
       const key = `${hex.encode(normalized.txid!)}:${normalized.index}`;
       if (!opts.allowSameUtxo && inputKeys.has(key))
