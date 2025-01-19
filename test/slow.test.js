@@ -4,6 +4,7 @@ import * as btc from '../esm/index.js';
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
 import * as P from 'micro-packed';
 
+// Takes 90 sec
 should('big multisig (ours)', () => {
   // Slow: sign + preimage. We can cache preimage, but sign is more complex
 
@@ -27,19 +28,19 @@ should('big multisig (ours)', () => {
   });
   tx.addOutputAddress(outAddr.address, btc.Decimal.decode('1'), regtest);
   let ts = Date.now();
-  for (const p of pkeys) tx.sign(p);
-  // console.log('SIGN', Date.now() - ts);
-  ts = Date.now();
+  console.log('Creating big multisig of', pkeys.length, 'keys');
+  for (let i = 0; i < pkeys.length; i++) {
+    if (i % 30 === 0) console.log(Date.now() - ts, 'ms, added', i, 'keys of', pkeys.length);
+    const p = pkeys[i];
+    tx.sign(p);
+  }
+  console.log(Date.now() - ts, 'ms, signing done');
   tx.finalize();
-  // console.log('FINALIZE', Date.now() - ts);
+  console.log(Date.now() - ts, 'ms, finalized');
 
   // Verified against regnet
   //console.log(hex.encode(tx.extract()))
   deepStrictEqual(tx.id, '2687c4795c995431d934432def1cda8264c95920ce404229ca5c21328d7c9bcc');
 });
 
-// ESM is broken.
-import url from 'node:url';
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  should.run();
-}
+should.runWhen(import.meta.url);

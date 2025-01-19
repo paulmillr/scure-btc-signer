@@ -1,20 +1,24 @@
-import { utils as packedUtils, U32LE } from 'micro-packed';
+import { schnorr, secp256k1 as secp } from '@noble/curves/secp256k1';
 import { ripemd160 } from '@noble/hashes/ripemd160';
 import { sha256 } from '@noble/hashes/sha256';
-import { secp256k1 as secp, schnorr } from '@noble/curves/secp256k1';
+import { utils as packedUtils, U32LE } from 'micro-packed';
 
+export type Hex = string | Uint8Array;
 export type Bytes = Uint8Array;
 const Point = secp.ProjectivePoint;
 const CURVE_ORDER = secp.CURVE.n;
 
-const { isBytes, concatBytes, equalBytes } = packedUtils;
-export { sha256, isBytes, concatBytes, equalBytes };
+const isBytes: (a: unknown) => a is Uint8Array = packedUtils.isBytes;
+const concatBytes: (...arrays: Uint8Array[]) => Uint8Array = packedUtils.concatBytes;
+const equalBytes: (a: Uint8Array, b: Uint8Array) => boolean = packedUtils.equalBytes;
+export { concatBytes, equalBytes, isBytes, sha256 };
 
-export const hash160 = (msg: Bytes) => ripemd160(sha256(msg));
-export const sha256x2 = (...msgs: Bytes[]) => sha256(sha256(concatBytes(...msgs)));
-export const randomPrivateKeyBytes = schnorr.utils.randomPrivateKey;
+export const hash160 = (msg: Uint8Array): Uint8Array => ripemd160(sha256(msg));
+export const sha256x2 = (...msgs: Uint8Array[]): Uint8Array => sha256(sha256(concatBytes(...msgs)));
+export const randomPrivateKeyBytes: () => Uint8Array = schnorr.utils.randomPrivateKey;
 export const pubSchnorr = schnorr.getPublicKey as (priv: string | Uint8Array) => Uint8Array;
-export const pubECDSA = secp.getPublicKey;
+export const pubECDSA: (privateKey: string | Uint8Array, isCompressed?: boolean) => Uint8Array =
+  secp.getPublicKey;
 
 // low-r signature grinding. Used to reduce tx size by 1 byte.
 // noble/secp256k1 does not support the feature: it is not used outside of BTC.
@@ -35,8 +39,8 @@ export function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
   return sig.toDERRawBytes();
 }
 
-export const signSchnorr = schnorr.sign;
-export const tagSchnorr = schnorr.utils.taggedHash;
+export const signSchnorr: typeof schnorr.sign = schnorr.sign;
+export const tagSchnorr: typeof schnorr.utils.taggedHash = schnorr.utils.taggedHash;
 
 export enum PubT {
   ecdsa,
@@ -65,7 +69,7 @@ export function tapTweak(a: Bytes, b: Bytes): bigint {
   return tn;
 }
 
-export function taprootTweakPrivKey(privKey: Uint8Array, merkleRoot = new Uint8Array()) {
+export function taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = new Uint8Array()): Bytes {
   const u = schnorr.utils;
   const seckey0 = u.bytesToNumberBE(privKey); // seckey0 = int_from_bytes(seckey0)
   const P = Point.fromPrivateKey(seckey0); // P = point_mul(G, seckey0)
@@ -78,7 +82,7 @@ export function taprootTweakPrivKey(privKey: Uint8Array, merkleRoot = new Uint8A
   return u.numberToBytesBE(u.mod(seckey + t, CURVE_ORDER), 32);
 }
 
-export function taprootTweakPubkey(pubKey: Uint8Array, h: Uint8Array): [Uint8Array, number] {
+export function taprootTweakPubkey(pubKey: Bytes, h: Bytes): [Bytes, number] {
   const u = schnorr.utils;
   const t = tapTweak(pubKey, h); // t = int_from_bytes(tagged_hash("TapTweak", pubkey + h))
   const P = u.lift_x(u.bytesToNumberBE(pubKey)); // P = lift_x(int_from_bytes(pubkey))
@@ -93,16 +97,22 @@ export function taprootTweakPubkey(pubKey: Uint8Array, h: Uint8Array): [Uint8Arr
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
 // Also used by bitcoin-core and bitcoinjs-lib
-export const TAPROOT_UNSPENDABLE_KEY = sha256(Point.BASE.toRawBytes(false));
+export const TAPROOT_UNSPENDABLE_KEY: Bytes = sha256(Point.BASE.toRawBytes(false));
 
-export const NETWORK = {
+export type BTC_NETWORK = {
+  bech32: string;
+  pubKeyHash: number;
+  scriptHash: number;
+  wif: number;
+};
+export const NETWORK: BTC_NETWORK = {
   bech32: 'bc',
   pubKeyHash: 0x00,
   scriptHash: 0x05,
   wif: 0x80,
 };
 
-export const TEST_NETWORK: typeof NETWORK = {
+export const TEST_NETWORK: BTC_NETWORK = {
   bech32: 'tb',
   pubKeyHash: 0x6f,
   scriptHash: 0xc4,
@@ -110,7 +120,7 @@ export const TEST_NETWORK: typeof NETWORK = {
 };
 
 // Exported for tests, internal method
-export function compareBytes(a: Bytes, b: Bytes) {
+export function compareBytes(a: Bytes, b: Bytes): number {
   if (!isBytes(a) || !isBytes(b)) throw new Error(`cmp: wrong type a=${typeof a} b=${typeof b}`);
   // -1 -> a<b, 0 -> a==b, 1 -> a>b
   const len = Math.min(a.length, b.length);

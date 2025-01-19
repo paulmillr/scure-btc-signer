@@ -133,7 +133,7 @@ should('p2ms', () => {
   const script = hex.decode(
     '208f891aaf2e2d7b146178c54a87e2aeddd9d1d686692257928e67cf08174ff375ac20395f8129dd63b4a5c2f12124eaa05b7a7ed30f70e51fb93305deecc542e7f9ebba20a8ab37bc1609d834c3913b3538dad1c84d7f9b6a835ffc175777915a37ae3572ba539c'
   );
-  console.log(btc.Script.decode(script));
+  // console.log(btc.Script.decode(script));
   deepStrictEqual(btc.OutScript.decode(script), {
     type: 'tr_ms',
     m: 3,
@@ -221,8 +221,4 @@ describe('taproot-multisig', () => {
   }
 });
 
-// ESM is broken.
-import url from 'node:url';
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  should.run();
-}
+should.runWhen(import.meta.url);

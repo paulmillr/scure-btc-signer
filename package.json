@@ -1,6 +1,6 @@
 {
   "name": "@scure/btc-signer",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "Audited & minimal library for Bitcoin. Handle transactions, Schnorr, Taproot, UTXO & PSBT",
   "files": [
     "esm",
@@ -14,15 +14,16 @@
   "module": "./esm/index.js",
   "types": "./index.d.ts",
   "dependencies": {
-    "@noble/curves": "~1.7.0",
-    "@noble/hashes": "~1.6.0",
-    "@scure/base": "~1.2.1",
-    "micro-packed": "~0.7.0"
+    "@noble/curves": "~1.8.1",
+    "@noble/hashes": "~1.7.1",
+    "@scure/base": "~1.2.2",
+    "micro-packed": "~0.7.2"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.2.1",
-    "@scure/bip32": "~1.6.0",
-    "micro-should": "0.4.0",
+    "@paulmillr/jsbt": "0.3.1",
+    "@scure/bip32": "~1.6.1",
+    "micro-bmark": "0.4.0",
+    "micro-should": "0.5.1",
     "prettier": "3.3.2",
     "typescript": "5.5.2"
   },
@@ -69,12 +70,15 @@
     "url": "git+https://github.com/paulmillr/scure-btc-signer.git"
   },
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
+    "build": "tsc && tsc -p tsconfig.cjs.json",
+    "build:release": "npx jsbt esbuild test/build",
     "lint": "prettier --check src",
     "format": "prettier --write src",
-    "test": "node test/index.test.js && node test/psbt-test/bip174-psbt-extended.test.js",
-    "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js",
-    "test:slow": "node test/index.test.js && node test/slow.test.js"
+    "test": "node test/index.js",
+    "test:big": "node test/slow.test.js",
+    "test:bun": "bun test/index.js",
+    "test:deno": "deno --allow-env --allow-read test/index.js",
+    "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js"
   },
   "keywords": [
     "bitcoin",
