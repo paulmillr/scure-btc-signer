@@ -1073,7 +1073,13 @@ export class Transaction {
       : P.EMPTY;
     if (!equalBytes(thisUnsigned, otherUnsigned))
       throw new Error(`Transaction/combine: different unsigned tx`);
-    this.global = psbt.mergeKeyMap(psbt.PSBTGlobal, this.global, other.global, undefined, this.opts.allowUnknown);
+    this.global = psbt.mergeKeyMap(
+      psbt.PSBTGlobal,
+      this.global,
+      other.global,
+      undefined,
+      this.opts.allowUnknown
+    );
     for (let i = 0; i < this.inputs.length; i++) this.updateInput(i, other.inputs[i], true);
     for (let i = 0; i < this.outputs.length; i++) this.updateOutput(i, other.outputs[i], true);
     return this;

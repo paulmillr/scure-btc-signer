@@ -411,7 +411,13 @@ export class _Estimator {
     }
     const inputKeys = new Set();
     this.normalizedInputs = allInputs.map((i) => {
-      const normalized = normalizeInput(i, undefined, undefined, opts.disableScriptCheck, opts.allowUnknown);
+      const normalized = normalizeInput(
+        i,
+        undefined,
+        undefined,
+        opts.disableScriptCheck,
+        opts.allowUnknown
+      );
       inputBeforeSign(normalized); // check fields
       const key = `${hex.encode(normalized.txid!)}:${normalized.index}`;
       if (!opts.allowSameUtxo && inputKeys.has(key))
