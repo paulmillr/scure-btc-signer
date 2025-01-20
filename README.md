@@ -62,6 +62,7 @@ import * as btc from '@scure/btc-signer';
   - [P2TR-NS Taproot multisig](#p2tr-ns-taproot-multisig)
   - [P2TR-MS Taproot M-of-N multisig](#p2tr-ms-taproot-m-of-n-multisig)
   - [P2TR-PK Taproot single P2PK script](#p2tr-pk-taproot-single-p2pk-script)
+  - [P2A Pay To Anchor](#p2a-pay-to-anchor)
 - [Transaction](#transaction)
   - [Encode/decode](#encodedecode)
   - [Inputs](#inputs)
@@ -396,6 +397,17 @@ deepStrictEqual(clean(btc.p2tr(undefined, [btc.p2tr_pk(PubKey)])), {
   address: 'bc1pfj6w68w3v2f4pkzesc9tsqfvy5znw5qgydwa832v3v83vjn76kdsmr4360',
   script: '51204cb4ed1dd1629350d859860ab8012c2505375008235dd3c54c8b0f164a7ed59b',
 });
+```
+
+### P2A (Pay to Anchor)
+
+Ephemeral anchors are supported. [Check out docs](https://bitcoinops.org/en/topics/ephemeral-anchors/).
+
+```ts
+const p2aScript = hex.decode('51024e73');
+const decoded = btc.OutScript.decode(p2aScript);
+deepStrictEqual(decoded, { type: 'p2a', script: p2aScript });
+deepStrictEqual(hex.encode(btc.OutScript.encode(decoded)), '51024e73');
 ```
 
 ## Transaction
