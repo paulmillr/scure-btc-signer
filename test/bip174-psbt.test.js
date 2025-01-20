@@ -280,9 +280,4 @@ should('bip174-psbt: PSBT unknown keys', () => {
   deepStrictEqual(psbt2.inputs[0].unknown, unknown);
 });
 
-// ESM is broken.
-import url from 'node:url';
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  should.run();
-}
 should.runWhen(import.meta.url);
