@@ -458,7 +458,8 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
   psbtEnum: T,
   val: PSBTKeyMapKeys<T>,
   cur?: PSBTKeyMapKeys<T>,
-  allowedFields?: (keyof PSBTKeyMapKeys<T>)[]
+  allowedFields?: (keyof PSBTKeyMapKeys<T>)[],
+  allowUnknown?: boolean
 ): PSBTKeyMapKeys<T> {
   const res: PSBTKeyMapKeys<T> = { ...cur, ...val };
   // All arguments can be provided as hex
@@ -517,8 +518,13 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
         throw new Error(`Cannot change signed field=${k}`);
     }
   }
-  // Remove unknown keys
-  for (const k in res) if (!psbtEnum[k]) delete res[k];
+  // Remove unknown keys except the "unknown" array if allowUnknown is true
+  for (const k in res) {
+    if (!psbtEnum[k]) {
+      if (allowUnknown && k === 'unknown') continue;
+      delete res[k];
+    }
+  }
   return res;
 }
 

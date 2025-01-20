@@ -61,7 +61,7 @@ export function cloneDeep<T>(obj: T): T {
 
 // Mostly security features, hardened defaults;
 // but you still can parse other people tx with unspendable outputs and stuff if you want
-export type TxOpts = {
+export interface TxOpts {
   version?: number;
   lockTime?: number;
   PSBTVersion?: number;
@@ -84,7 +84,9 @@ export type TxOpts = {
   allowLegacyWitnessUtxo?: boolean;
   lowR?: boolean; // Use lowR signatures
   customScripts?: CustomScript[]; // UNSAFE: Custom payment scripts
-};
+  // Allow to add additional unknown keys/values to the "unknown" array member
+  allowUnknown?: boolean;
+}
 
 /**
  * Internal, exported only for backwards-compat. Use `SigHash` instead.
@@ -520,7 +522,8 @@ export class Transaction {
       input,
       this.inputs[idx],
       allowedFields,
-      this.opts.disableScriptCheck
+      this.opts.disableScriptCheck,
+      this.opts.allowUnknown
     );
   }
   // Output stuff
@@ -556,7 +559,7 @@ export class Transaction {
     if (script === undefined) script = cur?.script;
     let res: psbt.PSBTKeyMapKeys<typeof psbt.PSBTOutput> = { ...cur, ...o, amount, script };
     if (res.amount === undefined) delete res.amount;
-    res = psbt.mergeKeyMap(psbt.PSBTOutput, res, cur, allowedFields);
+    res = psbt.mergeKeyMap(psbt.PSBTOutput, res, cur, allowedFields, this.opts.allowUnknown);
     psbt.PSBTOutputCoder.encode(res);
     if (
       res.script &&
@@ -1070,7 +1073,13 @@ export class Transaction {
       : P.EMPTY;
     if (!equalBytes(thisUnsigned, otherUnsigned))
       throw new Error(`Transaction/combine: different unsigned tx`);
-    this.global = psbt.mergeKeyMap(psbt.PSBTGlobal, this.global, other.global);
+    this.global = psbt.mergeKeyMap(
+      psbt.PSBTGlobal,
+      this.global,
+      other.global,
+      undefined,
+      this.opts.allowUnknown
+    );
     for (let i = 0; i < this.inputs.length; i++) this.updateInput(i, other.inputs[i], true);
     for (let i = 0; i < this.outputs.length; i++) this.updateOutput(i, other.outputs[i], true);
     return this;
