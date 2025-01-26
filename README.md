@@ -40,7 +40,7 @@ _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro
 
 > `deno add jsr:@scure/btc-signer`
 
-> `deno doc jsr:@scure/btc-signer`  # command-line documentation
+> `deno doc jsr:@scure/btc-signer` # command-line documentation
 
 We support all major platforms and runtimes.
 For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
@@ -76,8 +76,8 @@ import * as btc from '@scure/btc-signer';
     - [WIF](#wif)
   - [Script](#script)
   - [OutScript](#outscript)
+- [Bitcoin is flawed](#bitcoin-is-flawed)
 - [Security](#security)
-  - [Supply chain security](#supply-chain-security)
 - [License](#license)
 
 ## Payments
@@ -1015,6 +1015,47 @@ deepStrictEqual(
 );
 ```
 
+## Bitcoin is flawed
+
+Bitcoin is more complex than ETH / SOL despite having less features:
+
+- **Legacy:** too much decade-old code / standards
+- **Overengineering:** features were designed to be extensible and future-proof; then abandoned when future arrived.
+  - Transaction has `version` field, which is nice, allowing to change format later, however when there
+    was first change (SegWit V0), instead of using different tx version, there was hack with zero-inputs prefix
+    (tx cannot have zero inputs, so inputsCount=0 + '01' flag after that for tx version with witness data).
+    Probably it was done so it won't interfere with different transaction versions of different coins.
+    However, there is also `txVersion=2` (BIP68) which changes lockTime behaviour, but not tx format.
+  - There is bech32/witness program addresses, which is very extensible. By default rules software should
+    support future versions (0..16), so there will be no change in libraries to support new addresses.
+    However, even after first update (version 0 to 1) format of addresses itself changed from bech32 to bech32m,
+    so whole mechanic of different address versions is already unused. Also, supporting future version
+    of addresses is cool, but they are currently unspendable and we cannot know rules for spending new version address,
+    which means any new version address created now will be unspendable in future (SegWitV0->SegWitV1(taproot) even
+    changes public key format). So we cannot use this whole mechanic of future addresses at all (or users can accidentally create unspendable address and lose coins).
+  - PSBT supports unknown fields, according to spec we need to pass them as is, without modifications.
+    It was probably done this way to be future-proof: new version of PSBT can be parsed with old parser, which will ignore new fields. However, when future came (PSBTv2), format significantly changed (no `global.unsignedTx`) anyway.
+- **Bad BIP specs:** likely because there is only one relevant BTC Core implementation.
+  - To implement something, specs are not enough: need to read source code of Core (which is very complex, especially functional tests which re-implement parts in python) and other bitcoin libraries (such as bitcoinjs-lib)
+  - No one cares about specs much: for example, in [BIP174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki),
+    despite being old 2017 spec, formatting issues still haven't been fixed: `m/0&#39;/0&#39;/0&#39;`
+  - [BIP174](https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki) multisig example has unsorted partialSig field
+    inside input (it's better to sort it)
+  - Many PSBT tests are in format of `valid/invalid` (especially for PSBTv2), which isn't very helpful.
+    Parser which produces garbage, but doesn't throw exception, is still broken.
+- **Major flaws in PSBT:**
+  - PSBT was designed to be opaque key-value store. Combiner only needed to merge dictories, without a need to understand
+    fields. However, parsing requires to understand `unsignedTx`, since there is no input/output count in format itself.
+  - Instead of `global, inputCount, inputs[], outputCount, outputs[]`, inputCount and outputCount are stored inside
+    `global.unsignedTx` (v0) or `global.inputCount/global.outputCount` (v2), which means in order to parse
+    basic structure we need to completely parse global KV and understand its fields.
+  - **Security issue:** Unknown PSBT fields can be used to pass some code to backdoored wallets while being ignore by others.
+  - In JS, it is even harder to implement properly, because JS doesn't support complex keys in objects / dicts.
+    There is whole controlBlock of taproot in key inside tapLeafScript, which we need to parse, leading to structure like:
+    `{key: {version, internalKey, merklePath}, value: {script, version}`.
+    But, since there is no support for complex keys, we cannot do `correct by construction` using js objects,
+    we need to do this dict as array and constantly check if keys are unique.
+
 ## Security
 
 The library has been independently audited:
@@ -1029,20 +1070,20 @@ split the library from one into several files to ease future maintainability.
 
 ### Supply chain security
 
-1. **Commits** are signed with PGP keys, to prevent forgery. Make sure to verify commit signatures.
-2. **Releases** are transparent and built on GitHub CI. Make sure to verify [provenance](https://docs.npmjs.com/generating-provenance-statements) logs
-3. **Rare releasing** is followed.
-   The less often it is done, the less code dependents would need to audit
-4. **Dependencies** are minimal:
-   - All deps are prevented from automatic updates and have locked-down version ranges. Every update is checked with `npm-diff`
-   - Updates themselves are rare, to ensure rogue updates are not catched accidentally
-   - [noble-hashes](https://github.com/paulmillr/noble-hashes) provides hashing functionality
-   - [noble-curves](https://github.com/paulmillr/noble-curves) provides elliptic curve cryptography
-   - [scure-base](https://github.com/paulmillr/scure-base) provides bech32 / base64
-   - [micro-packed](https://github.com/paulmillr/micro-packed) provides binary encoding - it has not been audited
-5. devDependencies are only used if you want to contribute to the repo. They are disabled for end-users:
-   - scure-bip32, micro-packed-debugger and micro-should are developed by the same author and follow identical security practices
-   - prettier (linter), fast-check (property-based testing) and typescript are used for code quality, vector generation and ts compilation. The packages are big, which makes it hard to audit their source code thoroughly and fully
+- **Commits** are signed with PGP keys, to prevent forgery. Make sure to verify commit signatures.
+- **Releases** are transparent and built on GitHub CI. Make sure to verify [provenance](https://docs.npmjs.com/generating-provenance-statements) logs
+- **Rare releasing** is followed to ensure less re-audit need for end-users
+- **Dependencies** are minimized and locked-down:
+  - If your app has 500 dependencies, any dep could get hacked and you'll be downloading
+    malware with every install. We make sure to use as few dependencies as possible
+  - We prevent automatic dependency updates by locking-down version ranges. Every update is checked with `npm-diff`
+  - noble-hashes are used for hashing, curves for ECDSA / Schnorr, scure-base for bech32 / base58, micro-packed for
+    binary encoding
+- **Dev Dependencies** are only used if you want to contribute to the repo. They are disabled for end-users:
+  - scure-base, scure-bip32, scure-bip39, micro-bmark and micro-should are developed by the same author and follow identical security practices
+  - prettier (linter), fast-check (property-based testing) and typescript are used for code quality, vector generation and ts compilation. The packages are big, which makes it hard to audit their source code thoroughly and fully
+  - jsbt is used as base for typescript configs, github ci workflows, and for its build script which helps to create
+    single file
 
 We consider infrastructure attacks like rogue NPM modules very important;
 that's why it's crucial to minimize the amount of 3rd-party dependencies & native bindings.
