@@ -1068,29 +1068,32 @@ The library has been independently audited:
 UTXO selection functionality has not been audited yet. Commit [58d4554](58d455480919e968aabff132503560effb2f8eaf)
 split the library from one into several files to ease future maintainability.
 
+If you see anything unusual: investigate and report.
+
 ### Supply chain security
 
-- **Commits** are signed with PGP keys, to prevent forgery. Make sure to verify commit signatures.
+- **Commits** are signed with PGP keys, to prevent forgery. Make sure to verify commit signatures
 - **Releases** are transparent and built on GitHub CI. Make sure to verify [provenance](https://docs.npmjs.com/generating-provenance-statements) logs
 - **Rare releasing** is followed to ensure less re-audit need for end-users
-- **Dependencies** are minimized and locked-down:
-  - If your app has 500 dependencies, any dep could get hacked and you'll be downloading
-    malware with every install. We make sure to use as few dependencies as possible
-  - We prevent automatic dependency updates by locking-down version ranges. Every update is checked with `npm-diff`
-  - noble-hashes are used for hashing, curves for ECDSA / Schnorr, scure-base for bech32 / base58, micro-packed for
-    binary encoding
-- **Dev Dependencies** are only used if you want to contribute to the repo. They are disabled for end-users:
-  - scure-base, scure-bip32, scure-bip39, micro-bmark and micro-should are developed by the same author and follow identical security practices
-  - prettier (linter), fast-check (property-based testing) and typescript are used for code quality, vector generation and ts compilation. The packages are big, which makes it hard to audit their source code thoroughly and fully
-  - jsbt is used as base for typescript configs, github ci workflows, and for its build script which helps to create
-    single file
+- **Dependencies** are minimized and locked-down: any dependency could get hacked and users will be downloading malware with every install.
+  - We make sure to use as few dependencies as possible
+  - Automatic dep updates are prevented by locking-down version ranges; diffs are checked with `npm-diff`
+- **Dev Dependencies** are disabled for end-users; they are only used to develop / build the source code
 
-We consider infrastructure attacks like rogue NPM modules very important;
-that's why it's crucial to minimize the amount of 3rd-party dependencies & native bindings.
-If your app uses 500 dependencies, any dep could get hacked and you'll be
-downloading malware with every install. Our goal is to minimize this attack vector.
+For this package, there are 4 dependencies; and a few dev dependencies:
 
-If you see anything unusual: investigate and report.
+- [noble-hashes](https://github.com/paulmillr/noble-hashes) provides cryptographic hashing functionality
+- [noble-curves](https://github.com/paulmillr/noble-curves) provides secp256k1 elliptic curve
+- [scure-base](https://github.com/paulmillr/scure-base) provides base58 and bech32
+- [micro-packed](https://github.com/paulmillr/micro-packed) is responsible for binary encoding
+- micro-bmark, micro-should and jsbt are used for benchmarking / testing / build tooling and developed by the same author
+- prettier, fast-check and typescript are used for code quality / test generation / ts compilation. It's hard to audit their source code thoroughly and fully because of their size
+
+## Contributing & testing
+
+- `npm install && npm run build && npm test` will build the code and run tests.
+- `npm run lint` / `npm run format` will run linter / fix linter issues.
+- `npm run build:release` will build single file
 
 ## License
 
