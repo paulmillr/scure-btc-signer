@@ -8,7 +8,7 @@ Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 - 🔀 UTXO selection with different strategies
 - 🎻 Classic & SegWit: P2PK, P2PKH, P2WPKH, P2SH, P2WSH, P2MS
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
-- 📨 BIP174 PSBT
+- 📨 BIP174 PSBT, BIP327 MuSig2
 - 🗳️ Easy ordinals and inscriptions
 - 🪶 3300 lines
 
@@ -70,6 +70,7 @@ import * as btc from '@scure/btc-signer';
   - [Basic transaction sign](#basic-transaction-sign)
   - [BIP174 PSBT multi-sig example](#bip174-psbt-multi-sig-example)
 - [UTXO selection](#utxo-selection)
+- [MuSig2](#musig2)
 - [Ordinals and custom scripts](#ordinals-and-custom-scripts)
 - [Utils](#utils)
   - [getAddress](#getaddress)
@@ -893,6 +894,65 @@ deepStrictEqual(tx.id, 'b702078d65edd65a84b2a97a669df5631b06f42a67b0d7090e540b02
 deepStrictEqual(tx.fee, 394n);
 ```
 
+## MuSig2
+
+MuSig2 implementation conforming to [BIP-327](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
+is available in `@scure/btc-signer/musig2`. Check out [bip327-musig2.test.js](./test/bip327-musig2.test.js) as well:
+
+```ts
+import * as musig2 from '@scure/btc-signer/musig2';
+// MuSig2 Multi-signature for Alice, Bob, and Carol
+// 1. Key Generation (for each signer: Alice, Bob, Carol)
+// - Alice's key generation
+const aliceSecretKey = randomBytes(32); // Alice generates a random 32-byte secret key
+const alicePublicKey = musig2.IndividualPubkey(aliceSecretKey); // Alice derives her individual public key from her secret key
+// - Bob's key generation
+const bobSecretKey = randomBytes(32); // Bob generates a random 32-byte secret key
+const bobPublicKey = musig2.IndividualPubkey(bobSecretKey); // Bob derives his individual public key from his secret key
+// - Carol's key generation
+const carolSecretKey = randomBytes(32); // Carol generates a random 32-byte secret key
+const carolPublicKey = musig2.IndividualPubkey(carolSecretKey); // Carol derives her individual public key from her secret key
+
+// 2. Key Aggregation (All signers participate by sharing public keys)
+const individualPublicKeys = [alicePublicKey, bobPublicKey, carolPublicKey]; // Collect all individual public keys
+const sortedPublicKeys = musig2.sortKeys(individualPublicKeys); // Sort public keys lexicographically (as required by MuSig2)
+const aggregatePublicKey = musig2.keyAggExport(musig2.keyAggregate(sortedPublicKeys)); // Extract the X-only aggregate public key (32 bytes)
+// At this point, all signers have the 'aggregatePublicKey' and 'keyAggContext'.
+// 3. Nonce Generation - Round 1 (Each signer generates and broadcasts public nonce)
+const msg = new Uint8Array(32).fill(5); // Example message to be signed (32-byte message is recommended for BIP340)
+// Alice generates her nonce
+const aliceNonces = musig2.nonceGen(alicePublicKey, aliceSecretKey, aggregatePublicKey, msg);
+// Secret nonce: must be kept secret and used only once per signing session!
+// Public nonce: to be shared with Bob and Carol
+// Bob generates his nonce
+const bobNonces = musig2.nonceGen(bobPublicKey, bobSecretKey, aggregatePublicKey, msg);
+// Carol generates her nonce
+const carolNonces = musig2.nonceGen(carolPublicKey, carolSecretKey, aggregatePublicKey, msg);
+// Each signer creates own instance
+const session = new musig2.Session(
+  // 4. Nonce Aggregation (All signers participate by sharing public nonces)
+  musig2.nonceAggregate([aliceNonces.public, bobNonces.public, carolNonces.public]),
+  sortedPublicKeys,
+  msg
+);
+// At this point, all signers have the 'aggregateNonce'.
+// 5. Partial Signature Generation - Round 2 (Each signer generates partial signature)
+// Alice generates her partial signature
+const alicePartialSignature = session.sign(aliceNonces.secret, aliceSecretKey);
+// Bob generates his partial signature
+const bobPartialSignature = session.sign(bobNonces.secret, bobSecretKey);
+// Carol generates her partial signature
+const carolPartialSignature = session.sign(carolNonces.secret, carolSecretKey);
+// 6. Partial Signature Aggregation (Anyone can aggregate partial signatures)
+const partialSignatures = [alicePartialSignature, bobPartialSignature, carolPartialSignature]; // Collect all partial signatures
+const finalSignature = session.partialSigAgg(partialSignatures); // Aggregate partial signatures to create the final signature
+
+// 7. Signature Verification (Anyone can verify the final signature)
+// Verify the final signature
+import { schnorr } from '@noble/curves/secp256k1';
+schnorr.verify(finalSignature, msg, aggregatePublicKey);
+```
+
 ## Ordinals and custom scripts
 
 We support custom scripts. You can pass it as last argument to `p2tr`.
@@ -1065,7 +1125,8 @@ The library has been independently audited:
   - [Changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/0.3.0..main).
   - The audit has been funded by [Ryan Shea](https://shea.io)
 
-UTXO selection functionality has not been audited yet. Commit [58d4554](58d455480919e968aabff132503560effb2f8eaf)
+MuSig2 and UTXO selection has not been audited yet.
+Commit [58d4554](58d455480919e968aabff132503560effb2f8eaf)
 split the library from one into several files to ease future maintainability.
 
 If you see anything unusual: investigate and report.

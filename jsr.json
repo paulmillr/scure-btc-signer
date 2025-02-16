@@ -3,6 +3,7 @@
   "version": "1.6.0",
   "exports": {
     ".": "./src/index.ts",
+    "./musig2": "./src/musig2.ts",
     "./payment": "./src/payment.ts",
     "./psbt": "./src/psbt.ts",
     "./script": "./src/script.ts",
@@ -22,10 +23,6 @@
       "jsr.json",
       "LICENSE",
       "README.md"
-    ],
-    "exclude": [
-      "src/cryptoNode.ts"
     ]
-  },
   "license": "MIT"
 }

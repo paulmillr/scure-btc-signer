@@ -36,6 +36,10 @@
       "import": "./esm/index.js",
       "require": "./index.js"
     },
+    "./musig2": {
+      "import": "./esm/musig2.js",
+      "require": "./musig2.js"
+    },
     "./payment": {
       "import": "./esm/payment.js",
       "require": "./payment.js"
