@@ -1465,6 +1465,37 @@ describe('UTXO Select', () => {
       { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
     ]);
   });
+  should('GH-122', async () => {
+    const P2PKH_SCRIPT = hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac');
+    const requiredInput = {
+      sequence: 4294967295,
+      txid: new Uint8Array(32).fill(0xaa),
+      index: 0,
+      witnessUtxo: {
+        script: P2PKH_SCRIPT,
+        amount: 7000n,
+      },
+    };
+    // not explicitly required, but we will need it to make up the 10k sats of the output
+    const nonRequiredInput = {
+      sequence: 4294967295,
+      txid: new Uint8Array(32).fill(0xbb),
+      index: 0,
+      witnessUtxo: { script: P2PKH_SCRIPT, amount: 5000n },
+    };
+    // Our output needs 10k sats. The single required input has only 7k.
+    const outputs = [{ address: '134D6gYy8DsR5m4416BnmgASuMBqKvogQh', amount: 10000n }];
+    const selection = btc.selectUTXO([nonRequiredInput], outputs, 'default', {
+      requiredInputs: [requiredInput],
+      feePerByte: 1n,
+      allowSameUtxo: false,
+      allowLegacyWitnessUtxo: true,
+      disableScriptCheck: true,
+      createTx: false, // no need to finalize a Transaction
+      changeAddress: '134D6gYy8DsR5m4416BnmgASuMBqKvogQh',
+    });
+    deepStrictEqual(selection.inputs, [requiredInput, nonRequiredInput]);
+  });
 });
 
 should.runWhen(import.meta.url);

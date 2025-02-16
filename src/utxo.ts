@@ -342,11 +342,11 @@ export class _Estimator {
   // - change address: can be smaller for segwit
   // - accumExact: ???
   private dust: bigint; // total dust limit (3||opts.dustRelayFeeRate * 182||opts.dust). Default: 546
-  constructor(
-    inputs: psbt.TransactionInputUpdate[],
-    private outputs: Output[],
-    private opts: EstimatorOpts
-  ) {
+  private outputs: Output[];
+  private opts: EstimatorOpts;
+  constructor(inputs: psbt.TransactionInputUpdate[], outputs: Output[], opts: EstimatorOpts) {
+    this.outputs = outputs;
+    this.opts = opts;
     if (typeof opts.feePerByte !== 'bigint')
       throw new Error(
         `Estimator: wrong feePerByte=${
@@ -494,10 +494,11 @@ export class _Estimator {
     let num = 0;
     let inputsAmount = 0n;
     const targetAmount = this.amount;
-    const res = [];
+    const res: Set<number> = new Set();
     let fee;
     for (const idx of this.requiredIndices) {
       this.checkInputIdx(idx);
+      if (res.has(idx)) throw new Error('required input encountered multiple times'); // should not happen
       const { estimate, amount } = this.normalizedInputs[idx];
       let newWeight = weight + estimate.weight;
       if (!hasWitnesses && estimate.hasWitnesses) newWeight += 2; // enable witness if needed
@@ -507,13 +508,14 @@ export class _Estimator {
       if (estimate.hasWitnesses) hasWitnesses = true;
       num++;
       inputsAmount += amount;
-      res.push(idx);
+      res.add(idx);
       // inputsAmount is enough to cover cost of tx
       if (!all && targetAmount + fee <= inputsAmount)
-        return { indices: res, fee, weight: totalWeight, total: inputsAmount };
+        return { indices: Array.from(res), fee, weight: totalWeight, total: inputsAmount };
     }
     for (const idx of indices) {
       this.checkInputIdx(idx);
+      if (res.has(idx)) continue; // skip required inputs
       const { estimate, amount, value } = this.normalizedInputs[idx];
       let newWeight = weight + estimate.weight;
       if (!hasWitnesses && estimate.hasWitnesses) newWeight += 2; // enable witness if needed
@@ -529,14 +531,14 @@ export class _Estimator {
       if (estimate.hasWitnesses) hasWitnesses = true;
       num++;
       inputsAmount += amount;
-      res.push(idx);
+      res.add(idx);
       // inputsAmount is enough to cover cost of tx
       if (!all && targetAmount + fee <= inputsAmount)
-        return { indices: res, fee, weight: totalWeight, total: inputsAmount };
+        return { indices: Array.from(res), fee, weight: totalWeight, total: inputsAmount };
     }
     if (all) {
       const newWeight = weight + 4 * CompactSizeLen.encode(num).length;
-      return { indices: res, fee, weight: newWeight, total: inputsAmount };
+      return { indices: Array.from(res), fee, weight: newWeight, total: inputsAmount };
     }
     return undefined;
   }
