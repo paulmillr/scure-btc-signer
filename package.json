@@ -24,8 +24,8 @@
     "@scure/bip32": "~1.6.1",
     "micro-bmark": "0.4.0",
     "micro-should": "0.5.1",
-    "prettier": "3.3.2",
-    "typescript": "5.5.2"
+    "prettier": "3.5.2",
+    "typescript": "5.8.2"
   },
   "exports": {
     ".": {
