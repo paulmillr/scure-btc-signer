@@ -13,6 +13,7 @@ Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 - 🪶 3300 lines
 
 Initial development has been funded by [Ryan Shea](https://shea.io).
+Musig2 feature has been funded by [Arklabs](https://arklabs.to).
 
 For discussions, questions and support, visit
 [GitHub Discussions](https://github.com/paulmillr/scure-btc-signer/discussions)
