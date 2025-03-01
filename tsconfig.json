@@ -4,7 +4,8 @@
     "module": "es2020",
     "moduleResolution": "bundler",
     "outDir": "esm",
-    "isolatedDeclarations": false
+    "isolatedDeclarations": false,
+    "erasableSyntaxOnly": false
   },
   "include": ["src"],
   "exclude": ["node_modules", "lib"]

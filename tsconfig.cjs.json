@@ -2,7 +2,8 @@
   "extends": "@paulmillr/jsbt/tsconfig.cjs.json",
   "compilerOptions": {
     "outDir": ".",
-    "isolatedDeclarations": false
+    "isolatedDeclarations": false,
+    "erasableSyntaxOnly": false
   },
   "include": ["src"],
   "exclude": ["node_modules", "lib"]
