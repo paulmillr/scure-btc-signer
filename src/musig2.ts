@@ -10,7 +10,7 @@ import { schnorr, secp256k1 } from '@noble/curves/secp256k1';
 import { abytes, anumber } from '@noble/hashes/_assert';
 import { randomBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
-import { compareBytes } from './utils.js';
+import { compareBytes } from './utils.ts';
 
 /*
 MuSig2. This is not the full protocol: only an implementation of primitives from BIP-327.

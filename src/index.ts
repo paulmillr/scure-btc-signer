@@ -6,13 +6,13 @@ import {
   pubSchnorr,
   randomPrivateKeyBytes,
   taprootTweakPubkey,
-} from './utils.js';
+} from './utils.ts';
 // should multisig be exported as classicMultisig?
 // prettier-ignore
 export {
   multisig,
   p2ms, p2pk, p2pkh, p2sh, p2tr, p2tr_ms, p2tr_ns, p2tr_pk, p2wpkh, p2wsh
-} from './payment.js';
+} from './payment.ts';
 export {
   CompactSize,
   MAX_SCRIPT_BYTE_LENGTH,
@@ -21,11 +21,11 @@ export {
   RawWitness,
   Script,
   ScriptNum,
-} from './script.js';
-export type { ScriptType } from './script.js';
-export { Transaction } from './transaction.js';
-export { NETWORK, TAPROOT_UNSPENDABLE_KEY, TEST_NETWORK } from './utils.js';
-export { getInputType, selectUTXO } from './utxo.js';
+} from './script.ts';
+export type { ScriptType } from './script.ts';
+export { Transaction } from './transaction.ts';
+export { NETWORK, TAPROOT_UNSPENDABLE_KEY, TEST_NETWORK } from './utils.ts';
+export { getInputType, selectUTXO } from './utxo.ts';
 
 export const utils = {
   isBytes,
@@ -45,9 +45,9 @@ export {
   sortedMultisig,
   taprootListToTree,
   WIF,
-} from './payment.js'; // remove
+} from './payment.ts'; // remove
 // remove
-export type { CustomScript, OptScript } from './payment.js';
-export { _DebugPSBT, TaprootControlBlock } from './psbt.js'; // remove
-export { bip32Path, Decimal, DEFAULT_SEQUENCE, PSBTCombine, SigHash } from './transaction.js'; // remove
-export { _cmpBig, _Estimator } from './utxo.js';
+export type { CustomScript, OptScript } from './payment.ts';
+export { _DebugPSBT, TaprootControlBlock } from './psbt.ts'; // remove
+export { bip32Path, Decimal, DEFAULT_SEQUENCE, PSBTCombine, SigHash } from './transaction.ts'; // remove
+export { _cmpBig, _Estimator } from './utxo.ts';

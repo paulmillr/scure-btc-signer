@@ -1,5 +1,5 @@
 import * as P from 'micro-packed';
-import { isBytes } from './utils.js';
+import { isBytes } from './utils.ts';
 
 export const MAX_SCRIPT_BYTE_LENGTH = 520;
 

@@ -1,15 +1,15 @@
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.js';
-import * as psbt from './psbt.js';
-import { CompactSizeLen, RawOutput, RawTx, RawWitness, Script, VarBytes } from './script.js';
+import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.ts';
+import * as psbt from './psbt.ts';
+import { CompactSizeLen, RawOutput, RawTx, RawWitness, Script, VarBytes } from './script.ts';
 import {
   DEFAULT_SEQUENCE,
   SignatureHash,
   Transaction,
   type TxOpts,
   inputBeforeSign,
-} from './transaction.js'; // circular
+} from './transaction.ts'; // circular
 import {
   type Bytes,
   NETWORK,
@@ -20,7 +20,7 @@ import {
   isBytes,
   sha256,
   validatePubkey,
-} from './utils.js';
+} from './utils.ts';
 
 export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
 

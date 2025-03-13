@@ -1,9 +1,9 @@
 import { bech32, bech32m, type Coder, createBase58check, hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { TaprootControlBlock, type TransactionInput } from './psbt.js';
-import { OpToNum, Script, type ScriptType, VarBytes } from './script.js';
-import * as u from './utils.js';
-import { type BTC_NETWORK, type Bytes, NETWORK } from './utils.js';
+import { TaprootControlBlock, type TransactionInput } from './psbt.ts';
+import { OpToNum, Script, type ScriptType, VarBytes } from './script.ts';
+import * as u from './utils.ts';
+import { type BTC_NETWORK, type Bytes, NETWORK } from './utils.ts';
 
 // We need following items:
 // - encode/decode output script

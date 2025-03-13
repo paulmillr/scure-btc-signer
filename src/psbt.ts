@@ -8,9 +8,9 @@ import {
   RawTx,
   RawWitness,
   VarBytes,
-} from './script.js';
-import { Transaction } from './transaction.js'; // circular
-import { type Bytes, compareBytes, equalBytes, PubT, validatePubkey } from './utils.js';
+} from './script.ts';
+import { Transaction } from './transaction.ts'; // circular
+import { type Bytes, compareBytes, equalBytes, PubT, validatePubkey } from './utils.ts';
 
 // PSBT BIP174, BIP370, BIP371
 
