@@ -1,10 +1,10 @@
-import { deepStrictEqual, throws } from 'node:assert';
-import { should } from 'micro-should';
-import { hex, base64 } from '@scure/base';
-import * as btc from '../esm/index.js';
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
 import { sha256 } from '@noble/hashes/sha256';
+import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
+import { should } from 'micro-should';
+import { deepStrictEqual, throws } from 'node:assert';
+import * as btc from '../esm/index.js';
 
 const testClone = (tx) => deepStrictEqual(tx.clone(), tx);
 
@@ -263,7 +263,10 @@ should('P2A output type', () => {
 
   // Test invalid scripts are rejected
   const wrong_segwit_version = hex.decode('52024e73'); // Wrong SegWit version [2]
-  deepStrictEqual(btc.OutScript.decode(wrong_segwit_version), { type: 'unknown', script: wrong_segwit_version });
+  deepStrictEqual(btc.OutScript.decode(wrong_segwit_version), {
+    type: 'unknown',
+    script: wrong_segwit_version,
+  });
   const invalid_taproot_witness_script = hex.decode('510247e4'); // Non-P2A output signature still decoded as Taproot.
   throws(() => btc.OutScript.decode(invalid_taproot_witness_script));
 });
@@ -279,6 +282,7 @@ should('payTo API', () => {
     type: 'pkh',
     address: '1EXoDusjGwvnjZUyKkxZ4UHEf77z6A5S4P',
     script: hex.decode('76a914946cb2e08075bcbaf157e47bcb67eb2b2339d24288ac'),
+    hash: hex.decode('946cb2e08075bcbaf157e47bcb67eb2b2339d242'),
   });
   deepStrictEqual(btc.p2pk(uncompressed), {
     type: 'pk',
@@ -293,29 +297,34 @@ should('payTo API', () => {
     type: 'pkh',
     address: '134D6gYy8DsR5m4416BnmgASuMBqKvogQh',
     script: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+    hash: hex.decode('168b992bcfc44050310b3a94bd0771136d0b28d1'),
   });
   deepStrictEqual(btc.p2wpkh(compressed), {
     type: 'wpkh',
     address: 'bc1qz69ej270c3q9qvgt822t6pm3zdksk2x35j2jlm',
     script: hex.decode('0014168b992bcfc44050310b3a94bd0771136d0b28d1'),
+    hash: hex.decode('168b992bcfc44050310b3a94bd0771136d0b28d1'),
   });
   deepStrictEqual(btc.p2sh(btc.p2pkh(compressed)), {
     type: 'sh',
     address: '3EPhLJ1FuR2noj6qrTs4YvepCvB6sbShoV',
     script: hex.decode('a9148b530b962725af3bb7c818f197c619db3f71495087'),
     redeemScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+    hash: hex.decode('8b530b962725af3bb7c818f197c619db3f714950'),
   });
   deepStrictEqual(btc.p2sh(btc.p2wpkh(compressed)), {
     type: 'sh',
     address: '3BCuRViGCTXmQjyJ9zjeRUYrdZTUa38zjC',
     script: hex.decode('a91468602f2db7b7d7cdcd2639ab6bf7f5bfe828e53f87'),
     redeemScript: hex.decode('0014168b992bcfc44050310b3a94bd0771136d0b28d1'),
+    hash: hex.decode('68602f2db7b7d7cdcd2639ab6bf7f5bfe828e53f'),
   });
   deepStrictEqual(btc.p2wsh(btc.p2pkh(compressed)), {
     type: 'wsh',
     address: 'bc1qhxtthndg70cthfasy8y4qlk9h7r3006azn9md0fad5dg9hh76nkqaufnuz',
     script: hex.decode('0020b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
     witnessScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+    hash: hex.decode('b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
   });
   // Cannot be wrapped in p2wsh
   throws(() => btc.p2wsh(btc.p2wpkh(compressed)));
@@ -327,6 +336,7 @@ should('payTo API', () => {
       '0020b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'
     ),
     witnessScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+    hash: hex.decode('8a3d36fb710a9c7cae06cfcdf39792ff5773e8f1'),
   });
   const compressed2 = hex.decode(
     '030000000000000000000000000000000000000000000000000000000000000002'
@@ -342,6 +352,7 @@ should('payTo API', () => {
     redeemScript: hex.decode(
       '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
     ),
+    hash: hex.decode('9d91c6de4eacde72a7cc86bff98d1915b3c7818f'),
   });
   // Utils
   deepStrictEqual(
@@ -369,6 +380,7 @@ should('payTo API', () => {
     witnessScript: hex.decode(
       '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
     ),
+    hash: hex.decode('74ee2b4ceec10839a489c07d4a538384394681e3dcd88f3ee87a85199908aa5e'),
   });
   // Multisig 2-of-3 wrapped in P2SH-P2WSH
   deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2ms(2, [compressed, compressed2, compressed3]))), {
@@ -381,6 +393,7 @@ should('payTo API', () => {
     witnessScript: hex.decode(
       '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
     ),
+    hash: hex.decode('ab70ab84b12b891364b4b2a14ca813cac308b242'),
   });
   throws(() => btc.p2tr(undefined, btc.p2ms(2, [compressed, compressed2, compressed3])));
   // Maybe can be wrapped, but non-representable in PSBT
@@ -1749,6 +1762,7 @@ should('return immutable outputs/inputs', () => {
     '0200000001aad73931018bd25f84ae400b68848be09db706eac2ac18298babee71ab656f8b0000000048473044022058f6fc7c6a33e1b31548d481c826c015bd30135aad42cd67790dab66d2ad243b02204a1ced2604c6735b6393e5b41691dd78b00f0c5942fb9f751856faa938157dba01feffffff0280f0fa020000000017a9140fb9463421696b82c833af241c78c17ddbde493487d0f20a270100000017a91429ca74f8a08f81999428185c97b5d852e4063f618765000000';
   const nonWitnessUtxoB = hex.decode(nonWitnessUtxo);
   tx.updateInput(0, { nonWitnessUtxo: nonWitnessUtxo });
+
   tx.updateInput(0, { nonWitnessUtxo: nonWitnessUtxoB });
   tx.addInput({
     txid: hex.decode('75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858'),
@@ -2011,6 +2025,16 @@ should('GH-101: TAP_BIP32_DERIVATION', () => {
     hex.encode(tx.extract()),
     '020000000001033edaa6c4e0740ae334dbb5857dd8c6faf6ea5196760652ad7033ed9031c261c00000000000ffffffff0d9ae8a4191b3ba5a2b856c21af0f7a4feb97957ae80725ef38a933c906519a20000000000ffffffffc7a4a37d38c2b0de3d3b3e8d8e8a331977c12532fc2a4632df27a89c311ee2fa0000000000ffffffff030a000000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac320000000000000017a914a860f76561c85551594c18eecceffaee8c4822d7875d00000000000000160014e8df018c7e326cc253faac7e46cdc51e68542c420140de7efa69aff37822182ccae4675051454cc878510834d5f43b509168b4e02a231333f72a5bd603afdb32597b01fcbf65ef74c224e3d325aed36e93baf4e569800140ef36f29d16b6271789321dfbfcb0226940545af93d36efc4918fa13dfa4a70547ce752d4e0648df2650fc15213def1a507528c215a4f067e54501bd1c1ee1e9001400e2fb03c1a230294a50ec3069e30d80059ef48230f036013724d2db2ba7ce8805af7878fee31c18f993a70e8db3fd520327b421cf63e8984b499c9153c810e0000000000'
   );
+});
+
+should('GH-20: verify transaction hash', () => {
+  const psbt = base64.decode(
+    'cHNidP8BAJoCAAAAAljoeiG1ba8MI76OcHBFbDNvfLqlyHV5JPVFiHuyq911AAAAAAD/////g40EJ9DsZQpoqka7CwmK6kQiwHGyyng1Kgd5WdB86h0BAAAAAP////8CcKrwCAAAAAAWABTYXCtx0AYLCcmIauuBXlCZHdoSTQDh9QUAAAAAFgAUAK6pouXw+HaliN9VRuh0LR2HAI8AAAAAAAEAuwIAAAABqtc5MQGL0l+ErkALaISL4J23BurCrBgpi6vucatlb4sAAAAASEcwRAIgWPb8fGoz4bMVSNSByCbAFb0wE1qtQs1neQ2rZtKtJDsCIEoc7SYExnNbY5PltBaR3XiwDwxZQvufdRhW+qk4FX26Af7///8CgPD6AgAAAAAXqRQPuUY0IWlrgsgzryQceMF9295JNIfQ8gonAQAAABepFCnKdPigj4GZlCgYXJe12FLkBj9hh2UAAAAiAgLath/0mhTban0CsM0fu3j8SxgxK1tOVNrk26L7/vU210gwRQIhAPYQOLMI3B2oZaNIUnRvAVdyk0IIxtJEVDk82ZvfIhd3AiAFbmdaZ1ptCgK4WxTl4pB02KJam1dgvqKBb2YZEKAG6gEBAwQBAAAAAQRHUiEClYO/Oa4KYJdHrRma3dY0+mEIVZ1sXNObTCGD8auW4H8hAtq2H/SaFNtqfQKwzR+7ePxLGDErW05U2uTbovv+9TbXUq4iBgKVg785rgpgl0etGZrd1jT6YQhVnWxc05tMIYPxq5bgfxDZDGpPAAAAgAAAAIAAAACAIgYC2rYf9JoU22p9ArDNH7t4/EsYMStbTlTa5Nui+/71NtcQ2QxqTwAAAIAAAACAAQAAgAABASAAwusLAAAAABepFLf1+vQOPUClpFmx2zU18rcvqSHohyICAjrdkE89bc9Z3bkGsN7iNSm3/7ntUOXoYVGSaGAiHw5zRzBEAiBl9FulmYtZon/+GnvtAWrx8fkNVLOqj3RQql9WolEDvQIgf3JHA60e25ZoCyhLVtT/y4j3+3Weq74IqjDym4UTg9IBAQMEAQAAAAEEIgAgjCNTFzdDtZXftKB7crqOQuN5fadOh/59nXSX47ICiQABBUdSIQMIncEMesbbVPkTKa9hczPbOIzq0MIx9yM3nRuZAwsC3CECOt2QTz1tz1nduQaw3uI1Kbf/ue1Q5ehhUZJoYCIfDnNSriIGAjrdkE89bc9Z3bkGsN7iNSm3/7ntUOXoYVGSaGAiHw5zENkMak8AAACAAAAAgAMAAIAiBgMIncEMesbbVPkTKa9hczPbOIzq0MIx9yM3nRuZAwsC3BDZDGpPAAAAgAAAAIACAACAACICA6mkw39ZltOqJdusa1cK8GUDlEkpQkYLNUdT7Z7spYdxENkMak8AAACAAAAAgAQAAIAAIgICf2OZdX0u/1WhNq0CxoSxg4tlVuXxtrNCgqlLa1AFEJYQ2QxqTwAAAIAAAACABQAAgAA='
+  );
+  const tx = btc.Transaction.fromPSBT(psbt);
+  btc.Transaction.fromPSBT(tx.toPSBT()); // ok
+  tx.inputs[0].txid[0] = 0; // break tx id
+  throws(() => btc.Transaction.fromPSBT(tx.toPSBT()));
 });
 
 should.runWhen(import.meta.url);

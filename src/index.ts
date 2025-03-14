@@ -23,9 +23,9 @@ export {
   ScriptNum,
 } from './script.ts';
 export type { ScriptType } from './script.ts';
-export { Transaction } from './transaction.ts';
+export { getInputType, Transaction } from './transaction.ts';
 export { NETWORK, TAPROOT_UNSPENDABLE_KEY, TEST_NETWORK } from './utils.ts';
-export { getInputType, selectUTXO } from './utxo.ts';
+export { selectUTXO } from './utxo.ts';
 
 export const utils = {
   isBytes,

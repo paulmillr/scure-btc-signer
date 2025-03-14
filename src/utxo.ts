@@ -2,14 +2,17 @@ import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.ts';
 import * as psbt from './psbt.ts';
-import { CompactSizeLen, RawOutput, RawTx, RawWitness, Script, VarBytes } from './script.ts';
+import { CompactSizeLen, RawWitness, Script, VarBytes } from './script.ts';
 import {
-  DEFAULT_SEQUENCE,
   SignatureHash,
   Transaction,
   type TxOpts,
+  getInputType,
+  getPrevOut,
   inputBeforeSign,
-} from './transaction.ts'; // circular
+  normalizeInput,
+  toVsize,
+} from './transaction.ts';
 import {
   type Bytes,
   NETWORK,
@@ -22,111 +25,6 @@ import {
   validatePubkey,
 } from './utils.ts';
 
-export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
-
-// Normalizes input
-export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof RawOutput> {
-  if (input.nonWitnessUtxo) {
-    if (input.index === undefined) throw new Error('Unknown input index');
-    return input.nonWitnessUtxo.outputs[input.index];
-  } else if (input.witnessUtxo) return input.witnessUtxo;
-  else throw new Error('Cannot find previous output info');
-}
-
-export function normalizeInput(
-  i: psbt.TransactionInputUpdate,
-  cur?: psbt.TransactionInput,
-  allowedFields?: (keyof psbt.TransactionInput)[],
-  disableScriptCheck = false,
-  allowUnknown = false
-): psbt.TransactionInput {
-  let { nonWitnessUtxo, txid } = i;
-  // String support for common fields. We usually prefer Uint8Array to avoid errors
-  // like hex looking string accidentally passed, however, in case of nonWitnessUtxo
-  // it is better to expect string, since constructing this complex object will be
-  // difficult for user
-  if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = hex.decode(nonWitnessUtxo);
-  if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
-  if (!('nonWitnessUtxo' in i) && nonWitnessUtxo === undefined)
-    nonWitnessUtxo = cur?.nonWitnessUtxo;
-  if (typeof txid === 'string') txid = hex.decode(txid);
-  // TODO: if we have nonWitnessUtxo, we can extract txId from here
-  if (txid === undefined) txid = cur?.txid;
-  let res: PSBTInputs = { ...cur, ...i, nonWitnessUtxo, txid };
-  if (!('nonWitnessUtxo' in i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
-  if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
-  if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
-  res = psbt.mergeKeyMap(psbt.PSBTInput, res, cur, allowedFields, allowUnknown);
-  psbt.PSBTInputCoder.encode(res); // Validates that everything is correct at this point
-
-  let prevOut;
-  if (res.nonWitnessUtxo && res.index !== undefined)
-    prevOut = res.nonWitnessUtxo.outputs[res.index];
-  else if (res.witnessUtxo) prevOut = res.witnessUtxo;
-  if (prevOut && !disableScriptCheck)
-    checkScript(prevOut && prevOut.script, res.redeemScript, res.witnessScript);
-  return res;
-}
-
-export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtxo = false) {
-  let txType = 'legacy';
-  let defaultSighash = SignatureHash.ALL;
-  const prevOut = getPrevOut(input);
-  const first = OutScript.decode(prevOut.script);
-  let type = first.type;
-  let cur = first;
-  const stack = [first];
-  if (first.type === 'tr') {
-    defaultSighash = SignatureHash.DEFAULT;
-    return {
-      txType: 'taproot',
-      type: 'tr',
-      last: first,
-      lastScript: prevOut.script,
-      defaultSighash,
-      sighash: input.sighashType || defaultSighash,
-    };
-  } else {
-    if (first.type === 'wpkh' || first.type === 'wsh') txType = 'segwit';
-    if (first.type === 'sh') {
-      if (!input.redeemScript) throw new Error('inputType: sh without redeemScript');
-      let child = OutScript.decode(input.redeemScript);
-      if (child.type === 'wpkh' || child.type === 'wsh') txType = 'segwit';
-      stack.push(child);
-      cur = child;
-      type += `-${child.type}`;
-    }
-    // wsh can be inside sh
-    if (cur.type === 'wsh') {
-      if (!input.witnessScript) throw new Error('inputType: wsh without witnessScript');
-      let child = OutScript.decode(input.witnessScript);
-      if (child.type === 'wsh') txType = 'segwit';
-      stack.push(child);
-      cur = child;
-      type += `-${child.type}`;
-    }
-    const last = stack[stack.length - 1];
-    if (last.type === 'sh' || last.type === 'wsh')
-      throw new Error('inputType: sh/wsh cannot be terminal type');
-    const lastScript = OutScript.encode(last);
-    const res = {
-      type,
-      txType,
-      last,
-      lastScript,
-      defaultSighash,
-      sighash: input.sighashType || defaultSighash,
-    };
-    if (txType === 'legacy' && !allowLegacyWitnessUtxo && !input.nonWitnessUtxo) {
-      throw new Error(
-        `Transaction/sign: legacy input without nonWitnessUtxo, can result in attack that forces paying higher fees. Pass allowLegacyWitnessUtxo=true, if you sure`
-      );
-    }
-    return res;
-  }
-}
-
-export const toVsize = (weight: number): number => Math.ceil(weight / 4);
 // UTXO Select
 export type Output = { address: string; amount: bigint } | { script: Uint8Array; amount: bigint };
 export type Accumulated =

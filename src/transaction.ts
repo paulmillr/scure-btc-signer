@@ -1,7 +1,7 @@
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.ts';
-import * as psbt from './psbt.ts'; // circular
+import * as psbt from './psbt.ts';
 import {
   CompactSizeLen,
   RawOldTx,
@@ -13,13 +13,13 @@ import {
 } from './script.ts';
 import * as u from './utils.ts';
 import { type Bytes, NETWORK, concatBytes, equalBytes, isBytes } from './utils.ts';
-import { getInputType, getPrevOut, normalizeInput, toVsize } from './utxo.ts'; // circular
 
 const EMPTY32 = new Uint8Array(32);
 const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
   amount: 0xffffffffffffffffn,
   script: P.EMPTY,
 };
+export const toVsize = (weight: number): number => Math.ceil(weight / 4);
 
 // @scure/bip32 interface
 interface HDKey {
@@ -230,6 +230,146 @@ function validateOpts(opts: TxOpts): Readonly<TxOpts> {
   return Object.freeze(_opts);
 }
 
+// NOTE: we cannot do this inside PSBTInput coder, because there is no index/txid at this point!
+function validateInput(i: psbt.TransactionInput): psbt.TransactionInput {
+  if (i.nonWitnessUtxo && i.index !== undefined) {
+    const last = i.nonWitnessUtxo.outputs.length - 1;
+    if (i.index > last) throw new Error(`validateInput: index(${i.index}) not in nonWitnessUtxo`);
+    const prevOut = i.nonWitnessUtxo.outputs[i.index];
+    if (
+      i.witnessUtxo &&
+      (!equalBytes(i.witnessUtxo.script, prevOut.script) || i.witnessUtxo.amount !== prevOut.amount)
+    )
+      throw new Error('validateInput: witnessUtxo different from nonWitnessUtxo');
+    if (i.txid) {
+      const outputs = i.nonWitnessUtxo.outputs;
+      if (outputs.length - 1 < i.index) throw new Error('nonWitnessUtxo: incorect output index');
+      // At this point, we are using previous tx output to create new input.
+      // Script safety checks are unnecessary:
+      // - User has no control over previous tx. If somebody send money in same tx
+      //   as unspendable output, we still want user able to spend money
+      // - We still want some checks to notify user about possible errors early
+      //   in case user wants to use wrong input by mistake
+      // - Worst case: tx will be rejected by nodes. Still better than disallowing user
+      //   to spend real input, no matter how broken it looks
+      const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo), {
+        allowUnknownOutputs: true,
+        disableScriptCheck: true,
+        allowUnknownInputs: true,
+      });
+      const txid = hex.encode(i.txid);
+      // PSBTv2 vectors have non-final tx in inputs
+      if (tx.isFinal && tx.id !== txid)
+        throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
+    }
+  }
+  return i;
+}
+
+export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
+
+// Normalizes input
+export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof RawOutput> {
+  if (input.nonWitnessUtxo) {
+    if (input.index === undefined) throw new Error('Unknown input index');
+    return input.nonWitnessUtxo.outputs[input.index];
+  } else if (input.witnessUtxo) return input.witnessUtxo;
+  else throw new Error('Cannot find previous output info');
+}
+
+export function normalizeInput(
+  i: psbt.TransactionInputUpdate,
+  cur?: psbt.TransactionInput,
+  allowedFields?: (keyof psbt.TransactionInput)[],
+  disableScriptCheck = false,
+  allowUnknown = false
+): psbt.TransactionInput {
+  let { nonWitnessUtxo, txid } = i;
+  // String support for common fields. We usually prefer Uint8Array to avoid errors
+  // like hex looking string accidentally passed, however, in case of nonWitnessUtxo
+  // it is better to expect string, since constructing this complex object will be
+  // difficult for user
+  if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = hex.decode(nonWitnessUtxo);
+  if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
+  if (!('nonWitnessUtxo' in i) && nonWitnessUtxo === undefined)
+    nonWitnessUtxo = cur?.nonWitnessUtxo;
+  if (typeof txid === 'string') txid = hex.decode(txid);
+  // TODO: if we have nonWitnessUtxo, we can extract txId from here
+  if (txid === undefined) txid = cur?.txid;
+  let res: PSBTInputs = { ...cur, ...i, nonWitnessUtxo, txid };
+  if (!('nonWitnessUtxo' in i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
+  if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
+  if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
+  res = psbt.mergeKeyMap(psbt.PSBTInput, res, cur, allowedFields, allowUnknown);
+  psbt.PSBTInputCoder.encode(res); // Validates that everything is correct at this point
+
+  let prevOut;
+  if (res.nonWitnessUtxo && res.index !== undefined)
+    prevOut = res.nonWitnessUtxo.outputs[res.index];
+  else if (res.witnessUtxo) prevOut = res.witnessUtxo;
+  if (prevOut && !disableScriptCheck)
+    checkScript(prevOut && prevOut.script, res.redeemScript, res.witnessScript);
+  return res;
+}
+
+export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtxo = false) {
+  let txType = 'legacy';
+  let defaultSighash = SignatureHash.ALL;
+  const prevOut = getPrevOut(input);
+  const first = OutScript.decode(prevOut.script);
+  let type = first.type;
+  let cur = first;
+  const stack = [first];
+  if (first.type === 'tr') {
+    defaultSighash = SignatureHash.DEFAULT;
+    return {
+      txType: 'taproot',
+      type: 'tr',
+      last: first,
+      lastScript: prevOut.script,
+      defaultSighash,
+      sighash: input.sighashType || defaultSighash,
+    };
+  } else {
+    if (first.type === 'wpkh' || first.type === 'wsh') txType = 'segwit';
+    if (first.type === 'sh') {
+      if (!input.redeemScript) throw new Error('inputType: sh without redeemScript');
+      let child = OutScript.decode(input.redeemScript);
+      if (child.type === 'wpkh' || child.type === 'wsh') txType = 'segwit';
+      stack.push(child);
+      cur = child;
+      type += `-${child.type}`;
+    }
+    // wsh can be inside sh
+    if (cur.type === 'wsh') {
+      if (!input.witnessScript) throw new Error('inputType: wsh without witnessScript');
+      let child = OutScript.decode(input.witnessScript);
+      if (child.type === 'wsh') txType = 'segwit';
+      stack.push(child);
+      cur = child;
+      type += `-${child.type}`;
+    }
+    const last = stack[stack.length - 1];
+    if (last.type === 'sh' || last.type === 'wsh')
+      throw new Error('inputType: sh/wsh cannot be terminal type');
+    const lastScript = OutScript.encode(last);
+    const res = {
+      type,
+      txType,
+      last,
+      lastScript,
+      defaultSighash,
+      sighash: input.sighashType || defaultSighash,
+    };
+    if (txType === 'legacy' && !allowLegacyWitnessUtxo && !input.nonWitnessUtxo) {
+      throw new Error(
+        `Transaction/sign: legacy input without nonWitnessUtxo, can result in attack that forces paying higher fees. Pass allowLegacyWitnessUtxo=true, if you sure`
+      );
+    }
+    return res;
+  }
+}
+
 export class Transaction {
   private global: psbt.PSBTKeyMapKeys<typeof psbt.PSBTGlobal> = {};
   private inputs: psbt.TransactionInput[] = []; // use getInput()
@@ -277,11 +417,13 @@ export class Transaction {
     const tx = new Transaction({ ...opts, version, lockTime, PSBTVersion });
     // We need slice here, because otherwise
     const inputCount = PSBTVersion === 0 ? unsigned?.inputs.length : parsed.global.inputCount;
-    tx.inputs = parsed.inputs.slice(0, inputCount).map((i, j) => ({
-      finalScriptSig: P.EMPTY,
-      ...parsed.global.unsignedTx?.inputs[j],
-      ...i,
-    }));
+    tx.inputs = parsed.inputs.slice(0, inputCount).map((i, j) =>
+      validateInput({
+        finalScriptSig: P.EMPTY,
+        ...parsed.global.unsignedTx?.inputs[j],
+        ...i,
+      })
+    );
     const outputCount = PSBTVersion === 0 ? unsigned?.outputs.length : parsed.global.outputCount;
     tx.outputs = parsed.outputs.slice(0, outputCount).map((i, j) => ({
       ...i,
@@ -299,7 +441,9 @@ export class Transaction {
     //     'PSBT version=0 export for transaction without inputs disabled, please use version=2. Please check `toPSBT` method for explanation.'
     //   );
     // }
-    const inputs = this.inputs.map((i) => psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTInput, i));
+    const inputs = this.inputs.map((i) =>
+      validateInput(psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTInput, i))
+    );
     for (const inp of inputs) {
       // Don't serialize empty fields
       if (inp.partialSig && !inp.partialSig.length) delete inp.partialSig;

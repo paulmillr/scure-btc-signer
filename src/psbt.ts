@@ -9,7 +9,6 @@ import {
   RawWitness,
   VarBytes,
 } from './script.ts';
-import { Transaction } from './transaction.ts'; // circular
 import { type Bytes, compareBytes, equalBytes, PubT, validatePubkey } from './utils.ts';
 
 // PSBT BIP174, BIP370, BIP371
@@ -282,17 +281,6 @@ export const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
     (i.requiredHeightLocktime <= 0 || i.requiredHeightLocktime >= 500000000)
   )
     throw new Error(`validateInput: wrong heighLocktime=${i.requiredHeightLocktime}`);
-
-  if (i.nonWitnessUtxo && i.index !== undefined) {
-    const last = i.nonWitnessUtxo.outputs.length - 1;
-    if (i.index > last) throw new Error(`validateInput: index(${i.index}) not in nonWitnessUtxo`);
-    const prevOut = i.nonWitnessUtxo.outputs[i.index];
-    if (
-      i.witnessUtxo &&
-      (!equalBytes(i.witnessUtxo.script, prevOut.script) || i.witnessUtxo.amount !== prevOut.amount)
-    )
-      throw new Error('validateInput: witnessUtxo different from nonWitnessUtxo');
-  }
   if (i.tapLeafScript) {
     // tap leaf version appears here twice: in control block and at the end of script
     for (const [k, v] of i.tapLeafScript) {
@@ -301,28 +289,6 @@ export const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
       if (v[v.length - 1] & 1)
         throw new Error('validateInput: tapLeafScript version has parity bit!');
     }
-  }
-  // Validate txid for nonWitnessUtxo is correct
-  if (i.nonWitnessUtxo && i.index !== undefined && i.txid) {
-    const outputs = i.nonWitnessUtxo.outputs;
-    if (outputs.length - 1 < i.index) throw new Error('nonWitnessUtxo: incorect output index');
-    // At this point, we are using previous tx output to create new input.
-    // Script safety checks are unnecessary:
-    // - User has no control over previous tx. If somebody send money in same tx
-    //   as unspendable output, we still want user able to spend money
-    // - We still want some checks to notify user about possible errors early
-    //   in case user wants to use wrong input by mistake
-    // - Worst case: tx will be rejected by nodes. Still better than disallowing user
-    //   to spend real input, no matter how broken it looks
-    const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo), {
-      allowUnknownOutputs: true,
-      disableScriptCheck: true,
-      allowUnknownInputs: true,
-    });
-    const txid = hex.encode(i.txid);
-    // PSBTv2 vectors have non-final tx in inputs
-    if (tx.isFinal && tx.id !== txid)
-      throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
   }
   return i;
 });
