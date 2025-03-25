@@ -1157,6 +1157,13 @@ For this package, there are 4 dependencies; and a few dev dependencies:
 - `npm run lint` / `npm run format` will run linter / fix linter issues.
 - `npm run build:release` will build single file
 
+## Learning & documentation
+
+There are several nice resources on the topic:
+
+- [Learn me a bitcoin](https://learnmeabitcoin.com)
+- [Bitcoin wiki](https://bitcoinwiki.org)
+
 ## License
 
 MIT (c) Paul Miller [(https://paulmillr.com)](https://paulmillr.com), see LICENSE file.
