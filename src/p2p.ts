@@ -41,8 +41,7 @@ const MINUS_3_SQRT = Fp.sqrt(Fp.create(BigInt(-3)));
 const _3n = BigInt(3);
 const _4n = BigInt(4);
 const _7n = BigInt(7);
-const isSquare = FpIsSquare(Fp);
-const isValidX = (x: bigint) => isSquare(Fp.add(Fp.mul(Fp.mul(x, x), x), _7n));
+const isValidX = (x: bigint) => FpIsSquare(Fp, Fp.add(Fp.mul(Fp.mul(x, x), x), _7n));
 const trySqrt = (x: bigint): bigint | void => {
   try {
     return Fp.sqrt(x);
