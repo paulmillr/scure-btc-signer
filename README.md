@@ -964,6 +964,47 @@ We've developed separate [micro-ordinals](https://github.com/paulmillr/micro-ord
 - CLI tool that allows to upload files as inscriptions
 - Example usage of custom scripts
 
+## P2P, ElligatorSwift, BIP324
+
+Experimental implementation of ElligatorSwift from [BIP324](https://github.com/bitcoin/bips/blob/master/bip-0324.mediawiki)
+is available.
+
+ElligatorSwift is Schnorr-like x-only ECDH with public keys indistinguishable from uniformly random bytes.
+
+Check out [libsecp](https://github.com/bitcoin/bitcoin/blob/master/src/secp256k1/doc/ellswift.md) docs.
+
+```ts
+import { elligatorSwift } from '@scure/btc-signer/p2p';
+
+const alice = elligatorSwift.keygen();
+const bob = elligatorSwift.keygen();
+// ECDH
+const sharedAlice = elligatorSwift.getSharedSecret(alice.privateKey, bob.publicKey);
+const sharedBob = elligatorSwift.getSharedSecret(bob.privateKey, alice.publicKey);
+// deepStrictEqual(sharedAlice, sharedBob);
+// ECDH BIP324
+const sharedAlice2 = elligatorSwift.getSharedSecretBip324(
+  alice.privateKey,
+  bob.publicKey,
+  alice.publicKey,
+  true
+);
+const sharedBob2 = elligatorSwift.getSharedSecretBip324(
+  bob.privateKey,
+  alice.publicKey,
+  bob.publicKey,
+  false
+);
+// deepStrictEqual(sharedAlice2, sharedBob2);
+// pubKey decoding
+for (const k of [alice, bob]) {
+  // deepStrictEqual(
+  //   toHex(elligatorSwift.decode(k.publicKey)),
+  //   toHex(secp256k1.getPublicKey(k.privateKey, true).subarray(1))
+  // );
+}
+```
+
 ## Utils
 
 ### secp256k1 keys

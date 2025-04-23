@@ -6,6 +6,8 @@ import './utils.test.js';
 import './bip67-multisig.test.js';
 // Partially Signed Bitcoin Transaction Format
 import './bip174-psbt.test.js';
+// BIP324: elligatorswift
+import './bip324-p2p.test.js';
 // Schnorr Signatures for secp256k1
 import './bip340-schnorr.test.js';
 // Taproot: SegWit version 1 spending rules
