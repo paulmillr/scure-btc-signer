@@ -72,6 +72,7 @@ import * as btc from '@scure/btc-signer';
   - [BIP174 PSBT multi-sig example](#bip174-psbt-multi-sig-example)
 - [UTXO selection](#utxo-selection)
 - [MuSig2](#musig2)
+- [P2P, ElligatorSwift, BIP324](#p2p-elligatorswift-bip324)
 - [Ordinals and custom scripts](#ordinals-and-custom-scripts)
 - [Utils](#utils)
   - [getAddress](#getaddress)
