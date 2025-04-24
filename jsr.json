@@ -1,9 +1,10 @@
 {
   "name": "@scure/btc-signer",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "exports": {
     ".": "./src/index.ts",
     "./musig2": "./src/musig2.ts",
+    "./p2p": "./src/p2p.ts",
     "./payment": "./src/payment.ts",
     "./psbt": "./src/psbt.ts",
     "./script": "./src/script.ts",
@@ -12,17 +13,18 @@
     "./utxo": "./src/utxo.ts"
   },
   "imports": {
-    "@noble/curves": "jsr:@noble/curves@~1.8.1",
-    "@noble/hashes": "jsr:@noble/hashes@~1.7.1",
-    "@scure/base": "jsr:@scure/base@~1.2.2",
-    "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.2"
+    "@noble/curves": "jsr:@noble/curves@~1.9.0",
+    "@noble/hashes": "jsr:@noble/hashes@~1.8.0",
+    "@scure/base": "jsr:@scure/base@~1.2.5",
+    "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.3"
   },
   "publish": {
     "include": [
       "src",
-      "jsr.json",
       "LICENSE",
-      "README.md"
+      "README.md",
+      "jsr.json"
     ]
+  },
   "license": "MIT"
 }
