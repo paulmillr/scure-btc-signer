@@ -66,6 +66,8 @@ export interface TxOpts {
   lockTime?: number;
   PSBTVersion?: number;
   // Flags
+  // Allow non-standard transaction version
+  allowUnknownVersion?: boolean;
   // Allow output scripts to be unknown scripts (probably unspendable)
   /** @deprecated Use `allowUnknownOutputs` */
   allowUnknowOutput?: boolean;
@@ -190,9 +192,6 @@ function validateOpts(opts: TxOpts): Readonly<TxOpts> {
     opts.allowUnknownInputs = _opts.allowUnknowInput;
   if (typeof _opts.allowUnknowOutput !== 'undefined')
     opts.allowUnknownOutputs = _opts.allowUnknowOutput;
-  // 0 and -1 happens in tests
-  if (![-1, 0, 1, 2, 3].includes(_opts.version))
-    throw new Error(`Unknown version: ${_opts.version}`);
   if (typeof _opts.lockTime !== 'number') throw new Error('Transaction lock time should be number');
   P.U32LE.encode(_opts.lockTime); // Additional range checks that lockTime
   // There is no PSBT v1, and any new version will probably have fields which we don't know how to parse, which
@@ -201,6 +200,7 @@ function validateOpts(opts: TxOpts): Readonly<TxOpts> {
     throw new Error(`Unknown PSBT version ${_opts.PSBTVersion}`);
   // Flags
   for (const k of [
+    'allowUnknownVersion',
     'allowUnknownOutputs',
     'allowUnknownInputs',
     'disableScriptCheck',
@@ -213,6 +213,13 @@ function validateOpts(opts: TxOpts): Readonly<TxOpts> {
     if (typeof v !== 'boolean')
       throw new Error(`Transation options wrong type: ${k}=${v} (${typeof v})`);
   }
+  // 0 and -1 happens in tests
+  if (
+    _opts.allowUnknownVersion
+      ? typeof _opts.version === 'number'
+      : ![-1, 0, 1, 2, 3].includes(_opts.version)
+  )
+    throw new Error(`Unknown version: ${_opts.version}`);
   if (_opts.customScripts !== undefined) {
     const cs = _opts.customScripts;
     if (!Array.isArray(cs)) {
