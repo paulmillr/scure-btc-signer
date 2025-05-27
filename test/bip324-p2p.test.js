@@ -3,8 +3,8 @@ import {
   hexToBytes,
   hexToNumber,
   bytesToHex as toHex,
-} from '@noble/curves/abstract/utils';
-import { secp256k1 } from '@noble/curves/secp256k1';
+} from '@noble/curves/abstract/utils.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
 import * as fs from 'node:fs';

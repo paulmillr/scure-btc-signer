@@ -1,6 +1,6 @@
-import { bytesToNumberBE, concatBytes, numberToBytesBE } from '@noble/curves/abstract/utils';
-import { schnorr, secp256k1 } from '@noble/curves/secp256k1';
-import { hexToBytes, randomBytes } from '@noble/hashes/utils';
+import { bytesToNumberBE, concatBytes, numberToBytesBE } from '@noble/curves/abstract/utils.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { hexToBytes, randomBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as musig2 from '../esm/musig2.js';

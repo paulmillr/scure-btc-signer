@@ -1,9 +1,9 @@
-import { deepStrictEqual } from 'node:assert';
-import { describe, should } from 'micro-should';
+import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
-import * as btc from '../esm/index.js';
-import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
 import * as P from 'micro-packed';
+import { describe, should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
+import * as btc from '../esm/index.js';
 
 describe('UTXO Select', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };

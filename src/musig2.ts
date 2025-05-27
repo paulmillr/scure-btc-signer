@@ -1,14 +1,13 @@
-import { mod } from '@noble/curves/abstract/modular';
+import { mod } from '@noble/curves/abstract/modular.js';
 import {
   aInRange,
   bytesToNumberBE,
   concatBytes,
   equalBytes,
   numberToBytesBE,
-} from '@noble/curves/abstract/utils';
-import { schnorr, secp256k1 } from '@noble/curves/secp256k1';
-import { abytes, anumber } from '@noble/hashes/_assert';
-import { randomBytes } from '@noble/hashes/utils';
+} from '@noble/curves/abstract/utils.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { abytes, anumber, randomBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import { compareBytes } from './utils.ts';
 

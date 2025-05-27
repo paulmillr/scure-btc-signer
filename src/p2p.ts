@@ -18,17 +18,17 @@
  * @module
  */
 
-import { FpIsSquare } from '@noble/curves/abstract/modular';
-import type { Hex } from '@noble/curves/abstract/utils';
+import { FpIsSquare } from '@noble/curves/abstract/modular.js';
+import type { Hex } from '@noble/curves/abstract/utils.js';
 import {
   bytesToNumberBE,
   concatBytes,
   ensureBytes,
   numberToBytesBE,
-} from '@noble/curves/abstract/utils';
-import { type ProjPointType as PointType } from '@noble/curves/abstract/weierstrass';
-import { schnorr, secp256k1 } from '@noble/curves/secp256k1';
-import { randomBytes } from '@noble/hashes/utils';
+} from '@noble/curves/abstract/utils.js';
+import { type ProjPointType as PointType } from '@noble/curves/abstract/weierstrass.js';
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { randomBytes } from '@noble/hashes/utils.js';
 import { tagSchnorr } from './utils.ts';
 
 const Fp = secp256k1.CURVE.Fp;

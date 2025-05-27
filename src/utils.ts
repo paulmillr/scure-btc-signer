@@ -1,6 +1,6 @@
-import { schnorr, secp256k1 as secp } from '@noble/curves/secp256k1';
-import { ripemd160 } from '@noble/hashes/ripemd160';
-import { sha256 } from '@noble/hashes/sha256';
+import { schnorr, secp256k1 as secp } from '@noble/curves/secp256k1.js';
+import { ripemd160 } from '@noble/hashes/legacy.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { utils as packedUtils, U32LE } from 'micro-packed';
 
 export type Hex = string | Uint8Array;
@@ -69,7 +69,7 @@ export function tapTweak(a: Bytes, b: Bytes): bigint {
   return tn;
 }
 
-export function taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = new Uint8Array()): Bytes {
+export function taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = Uint8Array.of()): Bytes {
   const u = schnorr.utils;
   const seckey0 = u.bytesToNumberBE(privKey); // seckey0 = int_from_bytes(seckey0)
   const P = Point.fromPrivateKey(seckey0); // P = point_mul(G, seckey0)

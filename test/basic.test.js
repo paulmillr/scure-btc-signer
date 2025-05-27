@@ -1,5 +1,5 @@
-import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1';
-import { sha256 } from '@noble/hashes/sha256';
+import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { should } from 'micro-should';

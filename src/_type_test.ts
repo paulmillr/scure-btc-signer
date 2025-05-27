@@ -14,7 +14,7 @@ tx.addInput({
   txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
   index: 0,
   ...wpkh,
-  finalScriptSig: new Uint8Array(),
+  finalScriptSig: Uint8Array.of(),
   sequence: 1,
 });
 
