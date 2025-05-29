@@ -10,7 +10,7 @@ Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
 - 📨 BIP174 PSBT, BIP327 MuSig2
 - 🗳️ Easy ordinals and inscriptions
-- 🪶 40KB gzipped with all deps
+- 🪶 39KB (gzipped) with all deps
 
 Initial development has been funded by [Ryan Shea](https://shea.io).
 Musig2 feature has been funded by [Arklabs](https://arklabs.to).
