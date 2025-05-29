@@ -1,16 +1,16 @@
 {
   "name": "@scure/btc-signer",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "exports": {
     ".": "./src/index.ts",
-    "./musig2": "./src/musig2.ts",
-    "./p2p": "./src/p2p.ts",
-    "./payment": "./src/payment.ts",
-    "./psbt": "./src/psbt.ts",
-    "./script": "./src/script.ts",
-    "./transaction": "./src/transaction.ts",
-    "./utils": "./src/utils.ts",
-    "./utxo": "./src/utxo.ts"
+    "./musig2.js": "./src/musig2.ts",
+    "./p2p.js": "./src/p2p.ts",
+    "./payment.js": "./src/payment.ts",
+    "./psbt.js": "./src/psbt.ts",
+    "./script.js": "./src/script.ts",
+    "./transaction.js": "./src/transaction.ts",
+    "./utils.js": "./src/utils.ts",
+    "./utxo.js": "./src/utxo.ts"
   },
   "imports": {
     "@noble/curves": "jsr:@noble/curves@~1.9.0",

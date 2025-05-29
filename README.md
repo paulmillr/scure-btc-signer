@@ -899,10 +899,10 @@ deepStrictEqual(tx.fee, 394n);
 ## MuSig2
 
 MuSig2 implementation conforming to [BIP-327](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
-is available in `@scure/btc-signer/musig2`. Check out [bip327-musig2.test.js](./test/bip327-musig2.test.js) as well:
+is available in `@scure/btc-signer/musig2.js`. Check out [bip327-musig2.test.js](./test/bip327-musig2.test.js) as well:
 
 ```ts
-import * as musig2 from '@scure/btc-signer/musig2';
+import * as musig2 from '@scure/btc-signer/musig2.js';
 // MuSig2 Multi-signature for Alice, Bob, and Carol
 // 1. Key Generation (for each signer: Alice, Bob, Carol)
 // - Alice's key generation
@@ -975,7 +975,7 @@ ElligatorSwift is Schnorr-like x-only ECDH with public keys indistinguishable fr
 Check out [libsecp](https://github.com/bitcoin/bitcoin/blob/master/src/secp256k1/doc/ellswift.md) docs.
 
 ```ts
-import { elligatorSwift } from '@scure/btc-signer/p2p';
+import { elligatorSwift } from '@scure/btc-signer/p2p.js';
 
 const alice = elligatorSwift.keygen();
 const bob = elligatorSwift.keygen();
@@ -1011,9 +1011,9 @@ for (const k of [alice, bob]) {
 ### secp256k1 keys
 
 ```ts
-import { pubSchnorr, signSchnorr } from '@scure/btc-signer/utils';
-import { pubECDSA, signECDSA } from '@scure/btc-signer/utils';
-import { randomPrivateKeyBytes } from '@scure/btc-signer/utils';
+import { pubSchnorr, signSchnorr } from '@scure/btc-signer/utils.js';
+import { pubECDSA, signECDSA } from '@scure/btc-signer/utils.js';
+import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
 
 const priv = randomPrivateKeyBytes();
 const pub = pubSchnorr(priv);

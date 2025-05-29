@@ -1,6 +1,6 @@
 {
   "name": "@scure/btc-signer",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Audited & minimal library for Bitcoin. Handle transactions, Schnorr, Taproot, UTXO & PSBT",
   "files": [
     "esm",
@@ -61,6 +61,38 @@
       "require": "./utils.js"
     },
     "./utxo": {
+      "import": "./esm/utxo.js",
+      "require": "./utxo.js"
+    },
+    "./index.js": {
+      "import": "./esm/index.js",
+      "require": "./index.js"
+    },
+    "./musig2.js": {
+      "import": "./esm/musig2.js",
+      "require": "./musig2.js"
+    },
+    "./payment.js": {
+      "import": "./esm/payment.js",
+      "require": "./payment.js"
+    },
+    "./psbt.js": {
+      "import": "./esm/psbt.js",
+      "require": "./psbt.js"
+    },
+    "./script.js": {
+      "import": "./esm/script.js",
+      "require": "./script.js"
+    },
+    "./transaction.js": {
+      "import": "./esm/transaction.js",
+      "require": "./transaction.js"
+    },
+    "./utils.js": {
+      "import": "./esm/utils.js",
+      "require": "./utils.js"
+    },
+    "./utxo.js": {
       "import": "./esm/utxo.js",
       "require": "./utxo.js"
     }
