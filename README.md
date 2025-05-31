@@ -89,8 +89,8 @@ BTC has several UTXO types:
 
 - P2PK: Legacy, from 2010
 - P2PKH, P2SH, P2MS: Classic
-- P2WPKH, P2WSH: classic, SegWit
-- P2TR: Taproot, recommended
+- P2WPKH, P2WSH: SegWit (signature is removed from tx hash calculation)
+- P2TR: Taproot (schnorr signatures instead of ECDSA)
 
 For test examples, the usage is as following:
 
