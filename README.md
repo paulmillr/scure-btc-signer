@@ -158,7 +158,11 @@ deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
 
 ### P2WPKH (Witness Public Key Hash)
 
-SegWit V0 version of [P2PKH](#p2pkh-public-key-hash). Basic bech32 address. Can't be wrapped in [P2WSH](#p2wsh-witness-script-hash).
+SegWit V0 version of [P2PKH](#p2pkh-public-key-hash).
+In SegWit, signature is removed from tx hash calculation.
+
+Uses bech32 address.
+Can't be wrapped in [P2WSH](#p2wsh-witness-script-hash).
 
 ```ts
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
@@ -196,6 +200,7 @@ deepStrictEqual(btc.p2sh(btc.p2pkh(PubKey)), {
 ### P2WSH (Witness Script Hash)
 
 SegWit V0 version of [P2SH](#p2sh-script-hash).
+In SegWit, signature is removed from tx hash calculation.
 
 Required tx input fields to make it spendable: `witnessScript`
 
