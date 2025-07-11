@@ -635,11 +635,9 @@ export class Transaction {
   }
 
   get hash(): string {
-    if (!this.isFinal) throw new Error('Transaction is not finalized');
     return hex.encode(u.sha256x2(this.toBytes(true)));
   }
   get id(): string {
-    if (!this.isFinal) throw new Error('Transaction is not finalized');
     return hex.encode(u.sha256x2(this.toBytes(true)).reverse());
   }
   // Input stuff
