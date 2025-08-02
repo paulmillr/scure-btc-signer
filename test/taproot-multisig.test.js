@@ -1,7 +1,7 @@
-import { deepStrictEqual } from 'node:assert';
-import { describe, should } from 'micro-should';
 import { hex } from '@scure/base';
-import * as btc from '../esm/index.js';
+import { describe, should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
+import * as btc from '../index.js';
 
 const p2tr_ns_vec = [
   {

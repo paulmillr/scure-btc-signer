@@ -1,9 +1,8 @@
-import { deepStrictEqual } from 'node:assert';
-import { should } from 'micro-should';
-import { hex, base64 } from '@scure/base';
-import * as btc from '../../esm/index.js';
+import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
+import { should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
+import * as btc from '../../index.js';
 import { default as tapPsbt } from './fixtures/bitcoinjs-taproot/psbt.json' with { type: 'json' };
 
 // TODO: move to index.ts as compat layer for bitcoinjs-lib?

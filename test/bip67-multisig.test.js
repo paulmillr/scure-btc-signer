@@ -1,7 +1,7 @@
-import { deepStrictEqual } from 'node:assert';
-import { should } from 'micro-should';
 import { hex } from '@scure/base';
-import * as btc from '../esm/index.js';
+import { should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
+import * as btc from '../index.js';
 
 const BIP67 = [
   {

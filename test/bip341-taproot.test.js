@@ -2,7 +2,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
 import { should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
-import * as btc from '../esm/index.js';
+import * as btc from '../index.js';
 import { default as v341 } from './fixtures/bip341.json' with { type: 'json' };
 
 for (let i = 0; i < v341.keyPathSpending.length; i++) {

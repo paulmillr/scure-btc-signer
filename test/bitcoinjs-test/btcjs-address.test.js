@@ -1,16 +1,16 @@
-import { deepStrictEqual, throws } from 'node:assert';
+import { hex } from '@scure/base';
 import { should } from 'micro-should';
-import { hex, base64 } from '@scure/base';
-import * as btc from '../../esm/index.js';
+import { deepStrictEqual } from 'node:assert';
+import * as btc from '../../index.js';
+import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
+import { default as p2tr_bitgo } from './fixtures/bitcoinjs-taproot/p2tr_bitgo.json' with { type: 'json' };
+import { default as p2tr_ns } from './fixtures/bitcoinjs-taproot/p2tr_ns.json' with { type: 'json' };
 import { default as p2ms } from './fixtures/bitcoinjs/p2ms.json' with { type: 'json' };
 import { default as p2pk } from './fixtures/bitcoinjs/p2pk.json' with { type: 'json' };
 import { default as p2pkh } from './fixtures/bitcoinjs/p2pkh.json' with { type: 'json' };
 import { default as p2sh } from './fixtures/bitcoinjs/p2sh.json' with { type: 'json' };
 import { default as p2wpkh } from './fixtures/bitcoinjs/p2wpkh.json' with { type: 'json' };
 import { default as p2wsh } from './fixtures/bitcoinjs/p2wsh.json' with { type: 'json' };
-import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
-import { default as p2tr_ns } from './fixtures/bitcoinjs-taproot/p2tr_ns.json' with { type: 'json' };
-import { default as p2tr_bitgo } from './fixtures/bitcoinjs-taproot/p2tr_bitgo.json' with { type: 'json' };
 
 import * as utils from './utils.js';
 

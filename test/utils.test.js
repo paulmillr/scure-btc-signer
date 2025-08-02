@@ -1,6 +1,6 @@
-import { deepStrictEqual, throws } from 'node:assert';
 import { should } from 'micro-should';
-import * as btc from '../esm/index.js';
+import { deepStrictEqual, throws } from 'node:assert';
+import * as btc from '../index.js';
 
 should('Packed CompactSize', () => {
   const CASES = [

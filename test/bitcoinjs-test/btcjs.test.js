@@ -1,13 +1,13 @@
-import { deepStrictEqual, throws } from 'node:assert';
-import { should } from 'micro-should';
-import { hex, base64 } from '@scure/base';
-import * as btc from '../../esm/index.js';
+import { base64, hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
-import { default as f_transaction } from './fixtures/bitcoinjs/transaction.json' with { type: 'json' };
-import { default as f_script } from './fixtures/bitcoinjs/script.json' with { type: 'json' };
-import { default as f_script_number } from './fixtures/bitcoinjs/script_number.json' with { type: 'json' };
+import { should } from 'micro-should';
+import { deepStrictEqual, throws } from 'node:assert';
+import * as btc from '../../index.js';
 import { default as f_address } from './fixtures/bitcoinjs/address.json' with { type: 'json' };
 import { default as psbt } from './fixtures/bitcoinjs/psbt.json' with { type: 'json' };
+import { default as f_script } from './fixtures/bitcoinjs/script.json' with { type: 'json' };
+import { default as f_script_number } from './fixtures/bitcoinjs/script_number.json' with { type: 'json' };
+import { default as f_transaction } from './fixtures/bitcoinjs/transaction.json' with { type: 'json' };
 import * as utils from './utils.js';
 
 should('version is int32le', () => {
@@ -224,9 +224,10 @@ for (let i = 0; i < psbt.signInput.checks.length; i++) {
     for (const k of ['shouldSign', 'shouldThrow']) {
       const item = v[k];
       if (!item) continue;
-      const tx = btc.Transaction.fromPSBT(base64.decode(item.psbt));
       const privKey = btc.WIF().decode(item.WIF);
-      const fn = () => tx.signIdx(privKey, item.inputToCheck, item.sighashTypes);
+      const psbt = base64.decode(item.psbt);
+      const fn = () =>
+        btc.Transaction.fromPSBT(psbt).signIdx(privKey, item.inputToCheck, item.sighashTypes);
       if (k === 'shouldSign') fn();
       if (k === 'shouldThrow') throws(fn);
     }

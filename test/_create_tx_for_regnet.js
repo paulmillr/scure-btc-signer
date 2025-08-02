@@ -1,5 +1,5 @@
-import * as btc from '../esm/index.js';
 import { hex } from '@scure/base';
+import * as btc from '../index.js';
 
 const ADDRS = [
   '2MtPBzgKuhnYGEk67u43QtTkJE9rq2xpLnV',

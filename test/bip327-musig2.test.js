@@ -1,9 +1,9 @@
-import { bytesToNumberBE, concatBytes, numberToBytesBE } from '@noble/curves/abstract/utils.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { bytesToNumberBE, concatBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { hexToBytes, randomBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as musig2 from '../esm/musig2.js';
+import * as musig2 from '../musig2.js';
 import { default as detSignVectors } from './fixtures/bip327/det_sign_vectors.json' with { type: 'json' };
 import { default as keyAggVectors } from './fixtures/bip327/key_agg_vectors.json' with { type: 'json' };
 import { default as keySortVectors } from './fixtures/bip327/key_sort_vectors.json' with { type: 'json' };
@@ -12,7 +12,7 @@ import { default as nonceGenVectors } from './fixtures/bip327/nonce_gen_vectors.
 import { default as sigAggVectors } from './fixtures/bip327/sig_agg_vectors.json' with { type: 'json' };
 import { default as signVerifyVectors } from './fixtures/bip327/sign_verify_vectors.json' with { type: 'json' };
 import { default as tweakVectors } from './fixtures/bip327/tweak_vectors.json' with { type: 'json' };
-const Point = secp256k1.ProjectivePoint;
+const Point = secp256k1.Point;
 
 const assertError = (error, cb) => {
   try {
@@ -194,7 +194,7 @@ describe('BIP327', () => {
     const k2 = bytesToNumberBE(secnonces[0].slice(32, 64));
     const R_s1 = Point.BASE.multiply(k1);
     const R_s2 = Point.BASE.multiply(k2);
-    deepStrictEqual(pnonce[0], concatBytes(R_s1.toRawBytes(true), R_s2.toRawBytes(true)));
+    deepStrictEqual(pnonce[0], concatBytes(R_s1.toBytes(true), R_s2.toBytes(true)));
 
     for (const t of signVerifyVectors.valid_test_cases) {
       const pubkeys = t.key_indices.map((i) => X[i]);

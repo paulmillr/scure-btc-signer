@@ -3,7 +3,7 @@ import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
-import * as btc from '../esm/index.js';
+import * as btc from '../index.js';
 
 describe('UTXO Select', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
