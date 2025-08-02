@@ -19,21 +19,14 @@
  */
 
 import { FpIsSquare } from '@noble/curves/abstract/modular.js';
-import type { Hex } from '@noble/curves/abstract/utils.js';
-import {
-  bytesToNumberBE,
-  concatBytes,
-  ensureBytes,
-  numberToBytesBE,
-} from '@noble/curves/abstract/utils.js';
-import { type ProjPointType as PointType } from '@noble/curves/abstract/weierstrass.js';
+import { concatBytes, abytes } from '@noble/curves/utils.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { randomBytes } from '@noble/hashes/utils.js';
 import { tagSchnorr } from './utils.ts';
 
-const Fp = secp256k1.CURVE.Fp;
-const Point = secp256k1.ProjectivePoint;
-
+const Point = secp256k1.Point;
+const Fp = Point.Fp;
+const Fn = Point.Fn;
 const _1n = BigInt(1);
 const _2n = BigInt(2);
 
@@ -86,29 +79,23 @@ export const elligatorSwift = {
     return Fp.mul(w0, Fp.add(Fp.div(Fp.mul(u, t0), _2n), v));
   },
   // Encode public key (point or x coordinate bigint) into 64-byte pseudorandom encoding
-  encode: (x: bigint | PointType<bigint>): Uint8Array => {
-    if (x instanceof secp256k1.ProjectivePoint) x = x.x;
-    if (typeof x !== 'bigint') {
-      throw new Error(
-        'elligatorSwift.encode: wrong public key. Should be Projective point or x coordinate (bigint)'
-      );
-    }
+  encode: (x: bigint): Uint8Array => {
     // 200k test cycles per keygen: avg=4 max=48
     // seems too much, but same as for reference implementation
     while (true) {
       // random scalar 1..Fp.ORDER
-      const u = Fp.create(Fp.fromBytes(secp256k1.utils.randomPrivateKey()));
+      const u = Fp.create(Fp.fromBytes(secp256k1.utils.randomSecretKey()));
       const ellCase = randomBytes(1)[0] & 7; // [0..8)
       const t = elligatorSwift._inv(x, u, ellCase);
       if (!t) continue;
-      return concatBytes(numberToBytesBE(u, 32), numberToBytesBE(t, 32));
+      return concatBytes(Fp.toBytes(u), Fp.toBytes(t));
     }
   },
   // Decode elligatorSwift point to xonly
-  decode: (data: Hex): Uint8Array => {
-    const _data = ensureBytes('data', data, 64);
-    let u = Fp.create(Fp.fromBytes(_data.subarray(0, 32)));
-    let t = Fp.create(Fp.fromBytes(_data.subarray(32, 64)));
+  decode: (data: Uint8Array): Uint8Array => {
+    const _data = abytes(data, 64, 'data');
+    let u = Fp.create(Fp.fromBytes(_data.subarray(0, 32), true));
+    let t = Fp.create(Fp.fromBytes(_data.subarray(32, 64), true));
     if (Fp.is0(u)) u = Fp.create(_1n);
     if (Fp.is0(t)) t = Fp.create(_1n);
     const u3 = Fp.mul(Fp.mul(u, u), u); // u**3
@@ -121,36 +108,37 @@ export const elligatorSwift = {
     const y = Fp.div(Fp.add(x, t), Fp.mul(MINUS_3_SQRT, u));
     // try different cases
     let res = Fp.add(u, Fp.mul(Fp.mul(y, y), _4n)); // u + 4 * Y ** 2,
-    if (isValidX(res)) return numberToBytesBE(res, 32);
+    if (isValidX(res)) return Fp.toBytes(res);
     res = Fp.div(Fp.sub(Fp.div(Fp.neg(x), y), u), _2n); // (-X / Y - u) / 2
-    if (isValidX(res)) return numberToBytesBE(res, 32);
+    if (isValidX(res)) return Fp.toBytes(res);
     res = Fp.div(Fp.sub(Fp.div(x, y), u), _2n); // (X / Y - u) / 2
-    if (isValidX(res)) return numberToBytesBE(res, 32);
+    if (isValidX(res)) return Fp.toBytes(res);
     throw new Error('elligatorSwift: cannot decode public key');
   },
   // Generate pair (public key, secret key)
   keygen: () => {
-    const privateKey = secp256k1.utils.randomPrivateKey();
-    const publicKey = elligatorSwift.encode(Point.fromPrivateKey(privateKey));
+    const privateKey = secp256k1.utils.randomSecretKey();
+    const p = Point.BASE.multiply(Point.Fn.fromBytes(privateKey));
+    const publicKey = elligatorSwift.encode(p.x);
     return { privateKey, publicKey };
   },
   // Generates shared secret between a pub key and a priv key
-  getSharedSecret: (privateKeyA: Hex, publicKeyB: Hex) => {
+  getSharedSecret: (privateKeyA: Uint8Array, publicKeyB: Uint8Array) => {
     const pub = elligatorSwift.decode(publicKeyB);
-    const priv = ensureBytes('privKey', privateKeyA, 32);
+    const priv = abytes(privateKeyA, 32, 'privKey');
     const point = schnorr.utils.lift_x(Fp.fromBytes(pub));
-    const d = bytesToNumberBE(priv);
-    return numberToBytesBE(point.multiply(d).x, 32);
+    const d = Fn.fromBytes(priv);
+    return Fp.toBytes(point.multiply(d).x);
   },
   // BIP324 shared secret
   getSharedSecretBip324: (
-    privateKeyOurs: Hex,
-    publicKeyTheirs: Hex,
-    publicKeyOurs: Hex,
+    privateKeyOurs: Uint8Array,
+    publicKeyTheirs: Uint8Array,
+    publicKeyOurs: Uint8Array,
     initiating: boolean
   ) => {
-    const ours = ensureBytes('publicKeyOurs', publicKeyOurs);
-    const theirs = ensureBytes('publicKeyTheirs', publicKeyTheirs);
+    const ours = abytes(publicKeyOurs, undefined, 'publicKeyOurs');
+    const theirs = abytes(publicKeyTheirs, undefined, 'publicKeyTheirs');
     const ecdhPoint = elligatorSwift.getSharedSecret(privateKeyOurs, theirs);
     const pubs = initiating ? [ours, theirs] : [theirs, ours];
     return tagSchnorr('bip324_ellswift_xonly_ecdh', ...pubs, ecdhPoint);

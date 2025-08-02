@@ -1,4 +1,4 @@
-import { secp256k1 as secp } from '@noble/curves/secp256k1';
+import { secp256k1 as secp } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
 import * as btc from './index.ts';
 

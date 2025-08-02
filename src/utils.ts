@@ -1,12 +1,15 @@
 import { schnorr, secp256k1 as secp } from '@noble/curves/secp256k1.js';
+import { bytesToNumberBE, numberToBytesBE } from '@noble/curves/utils.js';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utils as packedUtils, U32LE } from 'micro-packed';
 
 export type Hex = string | Uint8Array;
 export type Bytes = Uint8Array;
-const Point = secp.ProjectivePoint;
-const CURVE_ORDER = secp.CURVE.n;
+const Point = secp.Point;
+const Fn = Point.Fn;
+const CURVE_ORDER = Point.Fn.ORDER;
+export const hasEven = (y: bigint) => y % 2n === 0n;
 
 const isBytes: (a: unknown) => a is Uint8Array = packedUtils.isBytes;
 const concatBytes: (...arrays: Uint8Array[]) => Uint8Array = packedUtils.concatBytes;
@@ -15,9 +18,9 @@ export { concatBytes, equalBytes, isBytes, sha256 };
 
 export const hash160 = (msg: Uint8Array): Uint8Array => ripemd160(sha256(msg));
 export const sha256x2 = (...msgs: Uint8Array[]): Uint8Array => sha256(sha256(concatBytes(...msgs)));
-export const randomPrivateKeyBytes: () => Uint8Array = schnorr.utils.randomPrivateKey;
+export const randomPrivateKeyBytes: () => Uint8Array = schnorr.utils.randomSecretKey;
 export const pubSchnorr = schnorr.getPublicKey as (priv: string | Uint8Array) => Uint8Array;
-export const pubECDSA: (privateKey: string | Uint8Array, isCompressed?: boolean) => Uint8Array =
+export const pubECDSA: (privateKey: Uint8Array, isCompressed?: boolean) => Uint8Array =
   secp.getPublicKey;
 
 // low-r signature grinding. Used to reduce tx size by 1 byte.
@@ -26,17 +29,17 @@ export const pubECDSA: (privateKey: string | Uint8Array, isCompressed?: boolean)
 // Not best way, but closest to bitcoin implementation (easier to check)
 const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < CURVE_ORDER / 2n;
 export function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
-  let sig = secp.sign(hash, privateKey);
+  let sig = secp.Signature.fromBytes(secp.sign(hash, privateKey, { prehash: false }));
   if (lowR && !hasLowR(sig)) {
     const extraEntropy = new Uint8Array(32);
     let counter = 0;
     while (!hasLowR(sig)) {
       extraEntropy.set(U32LE.encode(counter++));
-      sig = secp.sign(hash, privateKey, { extraEntropy });
+      sig = secp.Signature.fromBytes(secp.sign(hash, privateKey, { prehash: false, extraEntropy }));
       if (counter > 4294967295) throw new Error('lowR counter overflow: report the error');
     }
   }
-  return sig.toDERRawBytes();
+  return sig.toBytes('der');
 }
 
 export const signSchnorr: typeof schnorr.sign = schnorr.sign;
@@ -50,11 +53,11 @@ export function validatePubkey(pub: Bytes, type: PubT): Bytes {
   const len = pub.length;
   if (type === PubT.ecdsa) {
     if (len === 32) throw new Error('Expected non-Schnorr key');
-    Point.fromHex(pub); // does assertValidity
+    Point.fromBytes(pub); // does assertValidity
     return pub;
   } else if (type === PubT.schnorr) {
     if (len !== 32) throw new Error('Expected 32-byte Schnorr key');
-    schnorr.utils.lift_x(schnorr.utils.bytesToNumberBE(pub));
+    schnorr.utils.lift_x(bytesToNumberBE(pub));
     return pub;
   } else {
     throw new Error('Unknown key type');
@@ -64,30 +67,30 @@ export function validatePubkey(pub: Bytes, type: PubT): Bytes {
 export function tapTweak(a: Bytes, b: Bytes): bigint {
   const u = schnorr.utils;
   const t = u.taggedHash('TapTweak', a, b);
-  const tn = u.bytesToNumberBE(t);
+  const tn = bytesToNumberBE(t);
   if (tn >= CURVE_ORDER) throw new Error('tweak higher than curve order');
   return tn;
 }
 
 export function taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = Uint8Array.of()): Bytes {
   const u = schnorr.utils;
-  const seckey0 = u.bytesToNumberBE(privKey); // seckey0 = int_from_bytes(seckey0)
-  const P = Point.fromPrivateKey(seckey0); // P = point_mul(G, seckey0)
+  const seckey0 = bytesToNumberBE(privKey); // seckey0 = int_from_bytes(seckey0)
+  const P = Point.BASE.multiply(seckey0); // P = point_mul(G, seckey0)
   // seckey = seckey0 if has_even_y(P) else SECP256K1_ORDER - seckey0
-  const seckey = P.hasEvenY() ? seckey0 : u.mod(-seckey0, CURVE_ORDER);
+  const seckey = hasEven(P.y) ? seckey0 : Fn.neg(seckey0);
   const xP = u.pointToBytes(P);
   // t = int_from_bytes(tagged_hash("TapTweak", bytes_from_int(x(P)) + h)); >= SECP256K1_ORDER check
   const t = tapTweak(xP, merkleRoot);
   // bytes_from_int((seckey + t) % SECP256K1_ORDER)
-  return u.numberToBytesBE(u.mod(seckey + t, CURVE_ORDER), 32);
+  return numberToBytesBE(Fn.add(seckey, t), 32);
 }
 
 export function taprootTweakPubkey(pubKey: Bytes, h: Bytes): [Bytes, number] {
   const u = schnorr.utils;
   const t = tapTweak(pubKey, h); // t = int_from_bytes(tagged_hash("TapTweak", pubkey + h))
-  const P = u.lift_x(u.bytesToNumberBE(pubKey)); // P = lift_x(int_from_bytes(pubkey))
-  const Q = P.add(Point.fromPrivateKey(t)); // Q = point_add(P, point_mul(G, t))
-  const parity = Q.hasEvenY() ? 0 : 1; // 0 if has_even_y(Q) else 1
+  const P = u.lift_x(bytesToNumberBE(pubKey)); // P = lift_x(int_from_bytes(pubkey))
+  const Q = P.add(Point.BASE.multiply(t)); // Q = point_add(P, point_mul(G, t))
+  const parity = hasEven(Q.y) ? 0 : 1; // 0 if has_even_y(Q) else 1
   return [u.pointToBytes(Q), parity]; // bytes_from_int(x(Q))
 }
 
@@ -97,7 +100,7 @@ export function taprootTweakPubkey(pubKey: Bytes, h: Bytes): [Bytes, number] {
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
 // Also used by bitcoin-core and bitcoinjs-lib
-export const TAPROOT_UNSPENDABLE_KEY: Bytes = sha256(Point.BASE.toRawBytes(false));
+export const TAPROOT_UNSPENDABLE_KEY: Bytes = sha256(Point.BASE.toBytes(false));
 
 export type BTC_NETWORK = {
   bech32: string;

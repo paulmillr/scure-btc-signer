@@ -1,15 +1,8 @@
-import { mod } from '@noble/curves/abstract/modular.js';
-import {
-  aInRange,
-  bytesToNumberBE,
-  concatBytes,
-  equalBytes,
-  numberToBytesBE,
-} from '@noble/curves/abstract/utils.js';
+import { aInRange, concatBytes, equalBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { abytes, anumber, randomBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
-import { compareBytes } from './utils.ts';
+import { compareBytes, hasEven } from './utils.ts';
 
 /*
 MuSig2. This is not the full protocol: only an implementation of primitives from BIP-327.
@@ -45,20 +38,20 @@ export class InvalidContributionErr extends Error {
 
 // Utils
 const { taggedHash, pointToBytes } = schnorr.utils;
-const Point = secp256k1.ProjectivePoint;
+const Point = secp256k1.Point;
 type Point = typeof Point.BASE;
-const PUBKEY_LEN = 33;
+const Fn = Point.Fn;
+const PUBKEY_LEN = secp256k1.lengths.publicKey!;
 const ZERO = new Uint8Array(PUBKEY_LEN); // Compressed zero point
-const SECP_N = secp256k1.CURVE.n;
 
 // Encoding
 // TODO: re-use in PSBT?
 const compressed = P.apply(P.bytes(33), {
-  decode: (p: Point) => (isZero(p) ? ZERO : p.toRawBytes(true)),
-  encode: (b: Uint8Array) => (equalBytes(b, ZERO) ? Point.ZERO : Point.fromHex(b)),
+  decode: (p: Point) => (isZero(p) ? ZERO : p.toBytes(true)),
+  encode: (b: Uint8Array) => (equalBytes(b, ZERO) ? Point.ZERO : Point.fromBytes(b)),
 });
 const scalar = P.validate(P.U256BE, (n) => {
-  aInRange('n', n, 1n, SECP_N);
+  aInRange('n', n, 1n, Fn.ORDER);
   return n;
 });
 const PubNonce = P.struct({ R1: compressed, R2: compressed });
@@ -81,10 +74,9 @@ function aXonly(lst: boolean[]) {
   });
 }
 
-const modN = (x: bigint) => mod(x, SECP_N);
 const taggedInt = (tag: string, ...messages: Uint8Array[]) =>
-  modN(bytesToNumberBE(taggedHash(tag, ...messages)));
-const evenScalar = (p: Point, n: bigint) => (p.hasEvenY() ? n : modN(-n));
+  Fn.create(Fn.fromBytes(taggedHash(tag, ...messages), true));
+const evenScalar = (p: Point, n: bigint) => (hasEven(p.y) ? n : Fn.neg(n));
 
 // Short utility for compat with reference implementation
 export function IndividualPubkey(seckey: Uint8Array): Uint8Array {
@@ -158,23 +150,22 @@ export function keyAggregate(
   for (let i = 0; i < publicKeys.length; i++) {
     let Pi;
     try {
-      Pi = Point.fromHex(publicKeys[i]);
+      Pi = Point.fromBytes(publicKeys[i]);
     } catch (error) {
       throw new InvalidContributionErr(i, 'pubkey');
     }
     aggPublicKey = aggPublicKey.add(Pi.multiply(keyAggCoeffInternal(publicKeys[i], pk2, L)));
   }
-  let gAcc = 1n;
-  let tweakAcc = 0n;
+  let gAcc = Fn.ONE;
+  let tweakAcc = Fn.ZERO;
   // Apply tweaks
   for (let i = 0; i < tweaks.length; i++) {
-    const g = isXonly[i] && !aggPublicKey.hasEvenY() ? modN(-1n) : 1n;
-    const t = bytesToNumberBE(tweaks[i]);
-    aInRange('tweak', t, 0n, SECP_N);
+    const g = isXonly[i] && !hasEven(aggPublicKey.y) ? Fn.neg(Fn.ONE) : Fn.ONE;
+    const t = Fn.fromBytes(tweaks[i]);
     aggPublicKey = aggPublicKey.multiply(g).add(mulBase(t));
     if (isZero(aggPublicKey)) throw new Error('The result of tweaking cannot be infinity');
-    gAcc = modN(g * gAcc);
-    tweakAcc = modN(t + g * tweakAcc);
+    gAcc = Fn.mul(g, gAcc);
+    tweakAcc = Fn.add(t, Fn.mul(g, tweakAcc));
   }
   return { aggPublicKey, gAcc, tweakAcc };
 }
@@ -237,7 +228,8 @@ export function nonceGen(
 ): Nonces {
   abytes(publicKey, PUBKEY_LEN);
   abytesOptional(secretKey, 32);
-  abytes(aggPublicKey, 0, 32);
+  abytes(aggPublicKey);
+  if (![0, 32].includes(aggPublicKey.length)) throw new Error('wrong aggPublicKey');
   abytesOptional(msg);
   abytes(extraIn);
   abytes(rand, 32);
@@ -342,7 +334,7 @@ export class Session {
    */
   private getSessionKeyAggCoeff(P: Point): bigint {
     const { publicKeys } = this;
-    const pk = P.toRawBytes(true);
+    const pk = P.toBytes(true);
     const found = publicKeys.some((p) => equalBytes(p, pk));
     if (!found) throw new Error("The signer's pubkey must be included in the list of pubkeys");
     return keyAggCoeffInternal(pk, this.secondKey, this.L);
@@ -353,16 +345,16 @@ export class Session {
     publicKey: Uint8Array
   ): boolean {
     const { Q, gAcc, b, R, e } = this;
-    const s = bytesToNumberBE(partialSig);
-    if (s >= SECP_N) return false;
+    const s = Fn.fromBytes(partialSig, true);
+    if (!Fn.isValid(s)) return false;
     const { R1, R2 } = PubNonce.decode(publicNonce);
     const Re_s_ = R1.add(R2.multiply(b));
-    const Re_s = R.hasEvenY() ? Re_s_ : Re_s_.negate();
-    const P = Point.fromHex(publicKey);
+    const Re_s = hasEven(R.y) ? Re_s_ : Re_s_.negate();
+    const P = Point.fromBytes(publicKey);
     const a = this.getSessionKeyAggCoeff(P);
-    const g = modN(evenScalar(Q, 1n) * gAcc);
+    const g = Fn.mul(evenScalar(Q, 1n), gAcc);
     const left = mulBase(s);
-    const right = Re_s.add(P.multiply(modN(e * a * g)));
+    const right = Re_s.add(P.multiply(Fn.mul(e, Fn.mul(a, g))));
     return left.equals(right);
   }
 
@@ -383,20 +375,21 @@ export class Session {
     // zero-out the first 64 bytes of secretNonce so it cannot be reused
     // TODO: this was in reference implementation, but feels very broken. Modifying input arguments is pretty bad.
     secretNonce.fill(0, 0, 64);
-    aInRange('k1', k1_, 0n, SECP_N);
-    aInRange('k2', k2_, 0n, SECP_N);
+    if (!Fn.isValid(k1_)) throw new Error('wrong k1');
+    if (!Fn.isValid(k2_)) throw new Error('wrong k1');
     const k1 = evenScalar(R, k1_);
     const k2 = evenScalar(R, k2_);
-    const d_ = bytesToNumberBE(secret);
-    aInRange('d_', d_, 1n, SECP_N);
+    const d_ = Fn.fromBytes(secret);
+    if (Fn.is0(d_)) throw new Error('wrong d_');
     const P = mulBase(d_);
-    const pk = P.toRawBytes(true);
+    const pk = P.toBytes(true);
     if (!equalBytes(pk, originalPk)) throw new Error('Public key does not match nonceGen argument');
     const a = this.getSessionKeyAggCoeff(P);
     const g = evenScalar(Q, 1n);
-    const d = modN(g * gAcc * d_);
-    const s = modN(k1 + b * k2 + e * a * d);
-    const partialSig = numberToBytesBE(s, 32);
+    const d = Fn.mul(g, Fn.mul(gAcc, d_));
+    /// k1 + (b*k2) + (e*a*d)
+    const s = Fn.add(k1, Fn.add(Fn.mul(b, k2), Fn.mul(e, Fn.mul(a, d))));
+    const partialSig = Fn.toBytes(s);
     // Skip validation in fast-sign mode
     if (!fastSign) {
       const publicNonce = PubNonce.encode({
@@ -447,13 +440,13 @@ export class Session {
     const { Q, tweakAcc, R, e } = this;
     let s = 0n;
     for (let i = 0; i < partialSigs.length; i++) {
-      const si = bytesToNumberBE(partialSigs[i]);
-      if (si >= SECP_N) throw new InvalidContributionErr(i, 'psig');
-      s = modN(s + si);
+      const si = Fn.fromBytes(partialSigs[i], true);
+      if (!Fn.isValid(si)) throw new InvalidContributionErr(i, 'psig');
+      s = Fn.add(s, si);
     }
     const g = evenScalar(Q, 1n);
-    s = modN(s + e * g * tweakAcc);
-    return concatBytes(pointToBytes(R), numberToBytesBE(s, 32));
+    s = Fn.add(s, Fn.mul(e, Fn.mul(g, tweakAcc))); // s + e * g * tweakAcc
+    return concatBytes(pointToBytes(R), Fn.toBytes(s));
   }
 }
 
