@@ -43,7 +43,7 @@
     "lint": "prettier --check src",
     "format": "prettier --write src test/*.test.*",
     "test": "node --experimental-strip-types --no-warnings test/index.js",
-    "test:bun": "bun test/index.ts",
+    "test:bun": "bun test/index.js",
     "test:deno": "deno --allow-env --allow-read test/index.js",
     "test:big": "node test/slow.test.ts",
     "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js"
