@@ -45,10 +45,12 @@ export function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
 export const signSchnorr: typeof schnorr.sign = schnorr.sign;
 export const tagSchnorr: typeof schnorr.utils.taggedHash = schnorr.utils.taggedHash;
 
-export enum PubT {
-  ecdsa,
-  schnorr,
-}
+export const PubT = {
+  ecdsa: 0,
+  schnorr: 1,
+};
+export type PubT = ValueOf<typeof PubT>;
+
 export function validatePubkey(pub: Bytes, type: PubT): Bytes {
   const len = pub.length;
   if (type === PubT.ecdsa) {
@@ -130,3 +132,17 @@ export function compareBytes(a: Bytes, b: Bytes): number {
   for (let i = 0; i < len; i++) if (a[i] != b[i]) return Math.sign(a[i] - b[i]);
   return Math.sign(a.length - b.length);
 }
+
+// Reverses key<->values
+export function reverseObject<T extends Record<string, string | number>>(
+  obj: T
+): { [K in T[keyof T]]: Extract<keyof T, string> } {
+  const res = {} as any;
+  for (const k in obj) {
+    if (res[obj[k]] !== undefined) throw new Error('duplicate key');
+    res[obj[k]] = k;
+  }
+  return res;
+}
+
+export type ValueOf<T> = T[keyof T];

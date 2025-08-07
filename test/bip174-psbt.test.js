@@ -4,6 +4,7 @@ import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../index.js';
 import { default as psbtV } from './fixtures/psbt_vectors.js';
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 
 describe('bip174-psbt', () => {
   for (let i = 0; i < psbtV.length; i++) {
@@ -258,12 +259,12 @@ should('bip174-psbt: PSBT unknown keys', () => {
 
   const unknown = [
     [
-      { type: 0xff, key: new Uint8Array(Buffer.from('unknownKey1')) },
-      new Uint8Array(Buffer.from('unknownValue1')),
+      { type: 0xff, key: new Uint8Array(utf8ToBytes('unknownKey1')) },
+      new Uint8Array(utf8ToBytes('unknownValue1')),
     ],
     [
-      { type: 0xff, key: new Uint8Array(Buffer.from('unknownKey2')) },
-      new Uint8Array(Buffer.from('unknownValue2')),
+      { type: 0xff, key: new Uint8Array(utf8ToBytes('unknownKey2')) },
+      new Uint8Array(utf8ToBytes('unknownValue2')),
     ],
   ];
 

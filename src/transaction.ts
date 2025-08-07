@@ -94,24 +94,26 @@ export interface TxOpts {
  * Internal, exported only for backwards-compat. Use `SigHash` instead.
  * @deprecated
  */
-export enum SignatureHash {
-  DEFAULT,
-  ALL,
-  NONE,
-  SINGLE,
-  ANYONECANPAY = 0x80,
-}
+export const SignatureHash = {
+  DEFAULT: 0,
+  ALL: 1,
+  NONE: 2,
+  SINGLE: 3,
+  ANYONECANPAY: 0x80,
+};
 
-export enum SigHash {
-  DEFAULT = SignatureHash.DEFAULT,
-  ALL = SignatureHash.ALL,
-  NONE = SignatureHash.NONE,
-  SINGLE = SignatureHash.SINGLE,
-  DEFAULT_ANYONECANPAY = SignatureHash.DEFAULT | SignatureHash.ANYONECANPAY,
-  ALL_ANYONECANPAY = SignatureHash.ALL | SignatureHash.ANYONECANPAY,
-  NONE_ANYONECANPAY = SignatureHash.NONE | SignatureHash.ANYONECANPAY,
-  SINGLE_ANYONECANPAY = SignatureHash.SINGLE | SignatureHash.ANYONECANPAY,
-}
+export const SigHash = {
+  DEFAULT: SignatureHash.DEFAULT,
+  ALL: SignatureHash.ALL,
+  NONE: SignatureHash.NONE,
+  SINGLE: SignatureHash.SINGLE,
+  DEFAULT_ANYONECANPAY: SignatureHash.DEFAULT | SignatureHash.ANYONECANPAY,
+  ALL_ANYONECANPAY: SignatureHash.ALL | SignatureHash.ANYONECANPAY,
+  NONE_ANYONECANPAY: SignatureHash.NONE | SignatureHash.ANYONECANPAY,
+  SINGLE_ANYONECANPAY: SignatureHash.SINGLE | SignatureHash.ANYONECANPAY,
+} as const;
+export const SigHashNames = u.reverseObject(SigHash);
+export type SigHash = u.ValueOf<typeof SigHash>;
 
 function getTaprootKeys(
   privKey: Bytes,
@@ -163,7 +165,7 @@ function cleanFinalInput(i: psbt.TransactionInput) {
 const TxHashIdx = P.struct({ txid: P.bytes(32, true), index: P.U32LE });
 
 function validateSigHash(s: SigHash) {
-  if (typeof s !== 'number' || typeof SigHash[s] !== 'string')
+  if (typeof s !== 'number' || typeof SigHashNames[s] !== 'string')
     throw new Error(`Invalid SigHash=${s}`);
   return s;
 }
