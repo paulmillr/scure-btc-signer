@@ -14,7 +14,7 @@ import {
 import * as u from './utils.ts';
 import { type Bytes, NETWORK, concatBytes, equalBytes, isBytes } from './utils.ts';
 
-const EMPTY32 = new Uint8Array(32);
+const EMPTY32: Uint8Array = new Uint8Array(32);
 const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
   amount: 0xffffffffffffffffn,
   script: P.EMPTY,
