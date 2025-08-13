@@ -174,7 +174,7 @@ export function keyAggregate(
  * @param ctx The result of the keyAggregate function.
  * @returns The aggregate public key as a byte array.
  */
-export function keyAggExport(ctx: ReturnType<typeof keyAggregate>) {
+export function keyAggExport(ctx: ReturnType<typeof keyAggregate>): Uint8Array {
   return pointToBytes(ctx.aggPublicKey);
 }
 

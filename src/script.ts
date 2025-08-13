@@ -1,5 +1,5 @@
 import * as P from 'micro-packed';
-import { isBytes, reverseObject, type ValueOf } from './utils.ts';
+import { isBytes, reverseObject, type ValueOf, type Bytes } from './utils.ts';
 
 export const MAX_SCRIPT_BYTE_LENGTH = 520;
 
@@ -203,10 +203,10 @@ export const CompactSize: P.CoderType<bigint> = P.wrap({
 export const CompactSizeLen: P.CoderType<number> = P.apply(CompactSize, P.coders.numberBigint);
 
 // ui8a of size <CompactSize>
-export const VarBytes: P.CoderType<Uint8Array> = P.bytes(CompactSize);
+export const VarBytes: P.CoderType<Bytes> = P.bytes(CompactSize);
 
 // SegWit v0 stack of witness buffers
-export const RawWitness: P.CoderType<Uint8Array[]> = P.array(CompactSizeLen, VarBytes);
+export const RawWitness: P.CoderType<Bytes[]> = P.array(CompactSizeLen, VarBytes);
 
 // Array of size <CompactSize>
 export const BTCArray = <T>(t: P.CoderType<T>): P.CoderType<T[]> => P.array(CompactSize, t);

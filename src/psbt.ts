@@ -14,13 +14,13 @@ import { type Bytes, compareBytes, equalBytes, PubT, validatePubkey } from './ut
 // PSBT BIP174, BIP370, BIP371
 
 // Can be 33 or 64 bytes
-const PubKeyECDSA: P.CoderType<Uint8Array> = P.validate(P.bytes(null), (pub) =>
+const PubKeyECDSA: P.CoderType<Bytes> = P.validate(P.bytes(null), (pub) =>
   validatePubkey(pub, PubT.ecdsa)
 );
-const PubKeySchnorr: P.CoderType<Uint8Array> = P.validate(P.bytes(32), (pub) =>
+const PubKeySchnorr: P.CoderType<Bytes> = P.validate(P.bytes(32), (pub) =>
   validatePubkey(pub, PubT.schnorr)
 );
-const SignatureSchnorr: P.CoderType<Uint8Array> = P.validate(P.bytes(null), (sig) => {
+const SignatureSchnorr: P.CoderType<Bytes> = P.validate(P.bytes(null), (sig) => {
   if (sig.length !== 64 && sig.length !== 65)
     throw new Error('Schnorr signature should be 64 or 65 bytes long');
   return sig;
@@ -61,9 +61,9 @@ const tapTree = P.array(
   })
 );
 
-const BytesInf: P.CoderType<P.Bytes> = P.bytes(null); // Bytes will conflict with Bytes type
-const Bytes20: P.CoderType<P.Bytes> = P.bytes(20);
-const Bytes32: P.CoderType<P.Bytes> = P.bytes(32);
+const BytesInf: P.CoderType<Bytes> = P.bytes(null); // Bytes will conflict with Bytes type
+const Bytes20: P.CoderType<Bytes> = P.bytes(20);
+const Bytes32: P.CoderType<Bytes> = P.bytes(32);
 // versionsRequiringExclusing = !versionsAllowsInclusion (as set)
 // {name: [tag, keyCoder, valueCoder, versionsRequiringInclusion, versionsRequiringExclusing, versionsAllowsInclusion, silentIgnore]}
 // SilentIgnore: we use some v2 fields for v1 representation too, so we just clean them before serialize
@@ -180,7 +180,7 @@ type PSBTKeyMap = Record<string, PSBTKeyMapInfo>;
 const PSBTUnknownKey: P.CoderType<
   P.StructInput<{
     type: number;
-    key: Uint8Array;
+    key: Bytes;
   }>
 > = P.struct({ type: CompactSizeLen, key: P.bytes(null) });
 type PSBTUnknownFields = { unknown?: [P.UnwrapCoder<typeof PSBTUnknownKey>, Bytes][] };

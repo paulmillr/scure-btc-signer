@@ -22,7 +22,7 @@ import { FpIsSquare } from '@noble/curves/abstract/modular.js';
 import { concatBytes, abytes } from '@noble/curves/utils.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { randomBytes } from '@noble/hashes/utils.js';
-import { tagSchnorr } from './utils.ts';
+import { tagSchnorr, type Bytes } from './utils.ts';
 
 const Point = secp256k1.Point;
 const Fp = Point.Fp;
@@ -117,13 +117,13 @@ export const elligatorSwift = {
   },
   // Generate pair (public key, secret key)
   keygen: () => {
-    const privateKey = secp256k1.utils.randomSecretKey();
+    const privateKey: Bytes = secp256k1.utils.randomSecretKey();
     const p = Point.BASE.multiply(Point.Fn.fromBytes(privateKey));
-    const publicKey = elligatorSwift.encode(p.x);
+    const publicKey: Bytes = elligatorSwift.encode(p.x);
     return { privateKey, publicKey };
   },
   // Generates shared secret between a pub key and a priv key
-  getSharedSecret: (privateKeyA: Uint8Array, publicKeyB: Uint8Array) => {
+  getSharedSecret: (privateKeyA: Uint8Array, publicKeyB: Uint8Array): Bytes => {
     const pub = elligatorSwift.decode(publicKeyB);
     const priv = abytes(privateKeyA, 32, 'privKey');
     const point = schnorr.utils.lift_x(Fp.fromBytes(pub));
@@ -136,7 +136,7 @@ export const elligatorSwift = {
     publicKeyTheirs: Uint8Array,
     publicKeyOurs: Uint8Array,
     initiating: boolean
-  ) => {
+  ): Uint8Array => {
     const ours = abytes(publicKeyOurs, undefined, 'publicKeyOurs');
     const theirs = abytes(publicKeyTheirs, undefined, 'publicKeyTheirs');
     const ecdhPoint = elligatorSwift.getSharedSecret(privateKeyOurs, theirs);
