@@ -1,5 +1,5 @@
-import { aInRange, concatBytes, equalBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { aInRange, concatBytes, equalBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { abytes, anumber, randomBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import { compareBytes, hasEven } from './utils.ts';
@@ -237,8 +237,8 @@ export function nonceGen(
   if (secretKey !== undefined) rand = aux(secretKey, rand);
   const msgPrefixed =
     msg !== undefined
-      ? concatBytes(new Uint8Array([1]), numberToBytesBE(msg.length, 8), msg)
-      : new Uint8Array([0]);
+      ? concatBytes(Uint8Array.of(1), numberToBytesBE(msg.length, 8), msg)
+      : Uint8Array.of(0);
   const k1 = nonceHash(rand, publicKey, aggPublicKey, 0, msgPrefixed, extraIn);
   const k2 = nonceHash(rand, publicKey, aggPublicKey, 1, msgPrefixed, extraIn);
   return {
