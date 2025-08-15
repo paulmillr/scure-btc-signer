@@ -1753,7 +1753,7 @@ should('return immutable outputs/inputs', () => {
     txid: hex.decode('75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858'),
     index: 0,
     ...wpkh,
-    finalScriptSig: new Uint8Array(),
+    finalScriptSig: Uint8Array.of(),
     sequence: 1,
   });
   tx.addInput({ sequence: 1 });

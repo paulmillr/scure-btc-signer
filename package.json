@@ -3,12 +3,11 @@
   "version": "1.8.1",
   "description": "Audited & minimal library for Bitcoin. Handle transactions, Schnorr, Taproot, UTXO & PSBT",
   "files": [
-    "esm",
-    "src",
     "*.js",
     "*.d.ts",
     "*.js.map",
-    "*.d.ts.map"
+    "*.d.ts.map",
+    "src"
   ],
   "dependencies": {
     "@noble/curves": "2.0.0-beta.2",
@@ -23,18 +22,6 @@
     "micro-should": "0.5.3",
     "prettier": "3.6.2",
     "typescript": "5.9.2"
-  },
-  "type": "module",
-  "main": "./index.js",
-  "module": "./index.js",
-  "types": "./index.d.ts",
-  "sideEffects": false,
-  "author": "Paul Miller (https://paulmillr.com)",
-  "license": "MIT",
-  "homepage": "https://github.com/paulmillr/scure-btc-signer",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/paulmillr/scure-btc-signer.git"
   },
   "scripts": {
     "build": "tsc",
@@ -64,5 +51,17 @@
     "p2wsh",
     "p2tr"
   ],
-  "funding": "https://paulmillr.com/funding/"
+  "homepage": "https://paulmillr.com/noble/#scure",
+  "funding": "https://paulmillr.com/funding/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/scure-btc-signer.git"
+  },
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "sideEffects": false,
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT"
 }
