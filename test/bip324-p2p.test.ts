@@ -1,18 +1,17 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { concatBytes, hexToBytes, hexToNumber, bytesToHex as toHex } from '@noble/curves/utils.js';
+import { bytesToHex, concatBytes, hexToBytes, hexToNumber } from '@noble/curves/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
 import * as fs from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-// Generic tests for all curves in package
-import { elligatorSwift } from '../p2p.js';
+import { elligatorSwift } from '../src/p2p.ts';
 
 // https://eprint.iacr.org/2022/759
 export const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const parseCSV = (path) => {
-  const data = fs.readFileSync(`${__dirname}/fixtures/${path}`, 'utf8');
+  const data = fs.readFileSync(`${__dirname}/vectors/${path}`, 'utf8');
   const lines = data.split('\n').filter((i) => !!i);
   const rows = lines.map((i) => i.trim().split(','));
   const lengths = new Set(rows.map((i) => i.length));
@@ -33,13 +32,13 @@ describe('ElligatorSwift', () => {
 
       const bytesOurs = hexToBytes(t['in_ellswift_ours']);
       const decoded = elligatorSwift.decode(bytesOurs);
-      deepStrictEqual(toHex(decoded), t['mid_x_ours']);
+      deepStrictEqual(bytesToHex(decoded), t['mid_x_ours']);
 
       const bytesTheirs = hexToBytes(t['in_ellswift_theirs']);
-      deepStrictEqual(toHex(elligatorSwift.decode(bytesTheirs)), t['mid_x_theirs']);
+      deepStrictEqual(bytesToHex(elligatorSwift.decode(bytesTheirs)), t['mid_x_theirs']);
 
       const xShared = elligatorSwift.getSharedSecret(hexToBytes(t['in_priv_ours']), bytesTheirs);
-      deepStrictEqual(toHex(xShared), t['mid_x_shared']);
+      deepStrictEqual(bytesToHex(xShared), t['mid_x_shared']);
 
       const sharedSecret = elligatorSwift.getSharedSecretBip324(
         hexToBytes(t['in_priv_ours']),
@@ -47,7 +46,7 @@ describe('ElligatorSwift', () => {
         hexToBytes(t['in_ellswift_ours']),
         t['in_initiating'] === '1'
       );
-      deepStrictEqual(toHex(sharedSecret), t['mid_shared_secret']);
+      deepStrictEqual(bytesToHex(sharedSecret), t['mid_shared_secret']);
     }
   });
 
@@ -61,7 +60,7 @@ describe('ElligatorSwift', () => {
         const ret = elligatorSwift._inv(x, u, c);
         if (!ret) deepStrictEqual(t[name], '', 'empty case');
         else {
-          deepStrictEqual(toHex(Fp.toBytes(ret)), t[name], 'real case');
+          deepStrictEqual(bytesToHex(Fp.toBytes(ret)), t[name], 'real case');
           deepStrictEqual(
             elligatorSwift.decode(concatBytes(Fp.toBytes(u), Fp.toBytes(ret))),
             Fp.toBytes(x)
@@ -73,7 +72,7 @@ describe('ElligatorSwift', () => {
 
   should('ellswift_decode_test_vectors', () => {
     for (const t of parseCSV('bip324/ellswift_decode_test_vectors.csv')) {
-      deepStrictEqual(toHex(elligatorSwift.decode(hexToBytes(t['ellswift']))), t['x']);
+      deepStrictEqual(bytesToHex(elligatorSwift.decode(hexToBytes(t['ellswift']))), t['x']);
     }
   });
   should('Example', () => {
@@ -102,8 +101,8 @@ describe('ElligatorSwift', () => {
       // pubKey decoding
       for (const k of [alice, bob]) {
         deepStrictEqual(
-          toHex(elligatorSwift.decode(k.publicKey)),
-          toHex(secp256k1.getPublicKey(k.privateKey, true).subarray(1))
+          bytesToHex(elligatorSwift.decode(k.publicKey)),
+          bytesToHex(secp256k1.getPublicKey(k.privateKey, true).subarray(1))
         );
       }
     }

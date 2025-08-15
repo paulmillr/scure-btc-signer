@@ -1,5 +1,5 @@
 import { hex } from '@scure/base';
-import * as btc from '../index.js';
+import * as btc from '../src/index.ts';
 
 const ADDRS = [
   '2MtPBzgKuhnYGEk67u43QtTkJE9rq2xpLnV',

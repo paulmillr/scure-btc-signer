@@ -2,15 +2,15 @@ import { hex } from '@scure/base';
 import { should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../../index.js';
-import { default as p2tr } from './fixtures/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
-import { default as p2tr_bitgo } from './fixtures/bitcoinjs-taproot/p2tr_bitgo.json' with { type: 'json' };
-import { default as p2tr_ns } from './fixtures/bitcoinjs-taproot/p2tr_ns.json' with { type: 'json' };
-import { default as p2ms } from './fixtures/bitcoinjs/p2ms.json' with { type: 'json' };
-import { default as p2pk } from './fixtures/bitcoinjs/p2pk.json' with { type: 'json' };
-import { default as p2pkh } from './fixtures/bitcoinjs/p2pkh.json' with { type: 'json' };
-import { default as p2sh } from './fixtures/bitcoinjs/p2sh.json' with { type: 'json' };
-import { default as p2wpkh } from './fixtures/bitcoinjs/p2wpkh.json' with { type: 'json' };
-import { default as p2wsh } from './fixtures/bitcoinjs/p2wsh.json' with { type: 'json' };
+import { default as p2tr } from './vectors/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
+import { default as p2tr_bitgo } from './vectors/bitcoinjs-taproot/p2tr_bitgo.json' with { type: 'json' };
+import { default as p2tr_ns } from './vectors/bitcoinjs-taproot/p2tr_ns.json' with { type: 'json' };
+import { default as p2ms } from './vectors/bitcoinjs/p2ms.json' with { type: 'json' };
+import { default as p2pk } from './vectors/bitcoinjs/p2pk.json' with { type: 'json' };
+import { default as p2pkh } from './vectors/bitcoinjs/p2pkh.json' with { type: 'json' };
+import { default as p2sh } from './vectors/bitcoinjs/p2sh.json' with { type: 'json' };
+import { default as p2wpkh } from './vectors/bitcoinjs/p2wpkh.json' with { type: 'json' };
+import { default as p2wsh } from './vectors/bitcoinjs/p2wsh.json' with { type: 'json' };
 
 import * as utils from './utils.js';
 

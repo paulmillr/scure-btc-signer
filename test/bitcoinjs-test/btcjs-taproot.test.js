@@ -3,7 +3,7 @@ import * as P from 'micro-packed';
 import { should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../../index.js';
-import { default as tapPsbt } from './fixtures/bitcoinjs-taproot/psbt.json' with { type: 'json' };
+import { default as tapPsbt } from './vectors/bitcoinjs-taproot/psbt.json' with { type: 'json' };
 
 // TODO: move to index.ts as compat layer for bitcoinjs-lib?
 function fromASM(asm) {

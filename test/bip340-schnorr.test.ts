@@ -1,8 +1,8 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { hexToBytes } from '@noble/curves/utils.js';
 import { should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
-import { default as v340 } from './fixtures/bip340.json' with { type: 'json' };
-import { hexToBytes } from '@noble/curves/utils.js';
+import { default as v340 } from './vectors/bip340.json' with { type: 'json' };
 
 // BIP340 (same as in secp256k1, just to be sure)
 for (const v of v340) {

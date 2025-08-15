@@ -2,7 +2,7 @@ import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1
 import * as P from 'micro-packed';
 import { should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
-import * as btc from '../index.js';
+import * as btc from '../src/index.ts';
 
 // Takes 90 sec
 should('big multisig (ours)', () => {

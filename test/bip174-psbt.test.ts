@@ -1,10 +1,10 @@
+import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as btc from '../index.js';
-import { default as psbtV } from './fixtures/psbt_vectors.js';
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import * as btc from '../src/index.ts';
+import { default as psbtV } from './vectors/psbt_vectors.js';
 
 describe('bip174-psbt', () => {
   for (let i = 0; i < psbtV.length; i++) {

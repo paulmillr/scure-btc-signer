@@ -1,8 +1,8 @@
 import { base64, hex } from '@scure/base';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as btc from '../../index.js';
-import { default as rpcPSBT } from './fixtures/rpc_psbt.json' with { type: 'json' };
+import * as btc from '../src/index.ts';
+import { default as rpcPSBT } from './vectors/rpc_psbt.json' with { type: 'json' };
 
 describe('bip174-psbt-extended', () => {
   for (let i = 0; i < rpcPSBT.invalid.length; i++) {

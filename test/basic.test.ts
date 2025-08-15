@@ -4,7 +4,7 @@ import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as btc from '../index.js';
+import * as btc from '../src/index.ts';
 
 const testClone = (tx) => deepStrictEqual(tx.clone(), tx);
 

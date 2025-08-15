@@ -1,6 +1,6 @@
 import { should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as btc from '../index.js';
+import * as btc from '../src/index.ts';
 
 should('Packed CompactSize', () => {
   const CASES = [

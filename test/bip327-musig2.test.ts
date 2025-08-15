@@ -1,17 +1,22 @@
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
-import { bytesToNumberBE, concatBytes, numberToBytesBE } from '@noble/curves/utils.js';
-import { hexToBytes, randomBytes } from '@noble/hashes/utils.js';
+import {
+  bytesToNumberBE,
+  concatBytes,
+  hexToBytes,
+  numberToBytesBE,
+  randomBytes,
+} from '@noble/curves/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as musig2 from '../musig2.js';
-import { default as detSignVectors } from './fixtures/bip327/det_sign_vectors.json' with { type: 'json' };
-import { default as keyAggVectors } from './fixtures/bip327/key_agg_vectors.json' with { type: 'json' };
-import { default as keySortVectors } from './fixtures/bip327/key_sort_vectors.json' with { type: 'json' };
-import { default as nonceAggVectors } from './fixtures/bip327/nonce_agg_vectors.json' with { type: 'json' };
-import { default as nonceGenVectors } from './fixtures/bip327/nonce_gen_vectors.json' with { type: 'json' };
-import { default as sigAggVectors } from './fixtures/bip327/sig_agg_vectors.json' with { type: 'json' };
-import { default as signVerifyVectors } from './fixtures/bip327/sign_verify_vectors.json' with { type: 'json' };
-import { default as tweakVectors } from './fixtures/bip327/tweak_vectors.json' with { type: 'json' };
+import * as musig2 from '../src/musig2.ts';
+import { default as detSignVectors } from './vectors/bip327/det_sign_vectors.json' with { type: 'json' };
+import { default as keyAggVectors } from './vectors/bip327/key_agg_vectors.json' with { type: 'json' };
+import { default as keySortVectors } from './vectors/bip327/key_sort_vectors.json' with { type: 'json' };
+import { default as nonceAggVectors } from './vectors/bip327/nonce_agg_vectors.json' with { type: 'json' };
+import { default as nonceGenVectors } from './vectors/bip327/nonce_gen_vectors.json' with { type: 'json' };
+import { default as sigAggVectors } from './vectors/bip327/sig_agg_vectors.json' with { type: 'json' };
+import { default as signVerifyVectors } from './vectors/bip327/sign_verify_vectors.json' with { type: 'json' };
+import { default as tweakVectors } from './vectors/bip327/tweak_vectors.json' with { type: 'json' };
 const Point = secp256k1.Point;
 
 const assertError = (error, cb) => {

@@ -3,12 +3,12 @@ import * as bip32 from '@scure/bip32';
 import { should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../../index.js';
-import { default as f_address } from './fixtures/bitcoinjs/address.json' with { type: 'json' };
-import { default as psbt } from './fixtures/bitcoinjs/psbt.json' with { type: 'json' };
-import { default as f_script } from './fixtures/bitcoinjs/script.json' with { type: 'json' };
-import { default as f_script_number } from './fixtures/bitcoinjs/script_number.json' with { type: 'json' };
-import { default as f_transaction } from './fixtures/bitcoinjs/transaction.json' with { type: 'json' };
 import * as utils from './utils.js';
+import { default as f_address } from './vectors/bitcoinjs/address.json' with { type: 'json' };
+import { default as psbt } from './vectors/bitcoinjs/psbt.json' with { type: 'json' };
+import { default as f_script } from './vectors/bitcoinjs/script.json' with { type: 'json' };
+import { default as f_script_number } from './vectors/bitcoinjs/script_number.json' with { type: 'json' };
+import { default as f_transaction } from './vectors/bitcoinjs/transaction.json' with { type: 'json' };
 
 should('version is int32le', () => {
   const txHex = 'ffffffff0000ffffffff';
