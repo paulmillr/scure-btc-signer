@@ -41,8 +41,6 @@ _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro
 
 > `deno add jsr:@scure/btc-signer`
 
-> `deno doc jsr:@scure/btc-signer` # command-line documentation
-
 We support all major platforms and runtimes.
 For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
 For React Native, you may need a [polyfill for crypto.getRandomValues](https://github.com/LinusU/react-native-get-random-values).
