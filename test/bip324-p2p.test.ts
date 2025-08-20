@@ -1,6 +1,6 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { bytesToHex, concatBytes, hexToBytes, hexToNumber } from '@noble/curves/utils.js';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as fs from 'node:fs';
 import { dirname } from 'node:path';

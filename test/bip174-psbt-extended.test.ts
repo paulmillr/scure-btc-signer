@@ -1,5 +1,5 @@
 import { base64, hex } from '@scure/base';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { default as rpcPSBT } from './vectors/rpc_psbt.json' with { type: 'json' };

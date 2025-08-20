@@ -1,6 +1,6 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { default as v341 } from './vectors/bip341.json' with { type: 'json' };

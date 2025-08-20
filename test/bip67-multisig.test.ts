@@ -1,5 +1,5 @@
 import { hex } from '@scure/base';
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../src/index.ts';
 

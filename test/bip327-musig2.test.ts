@@ -6,7 +6,7 @@ import {
   numberToBytesBE,
   randomBytes,
 } from '@noble/curves/utils.js';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as musig2 from '../src/musig2.ts';
 import { default as detSignVectors } from './vectors/bip327/det_sign_vectors.json' with { type: 'json' };

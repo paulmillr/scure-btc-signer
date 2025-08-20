@@ -1,6 +1,6 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hexToBytes } from '@noble/curves/utils.js';
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import { default as v340 } from './vectors/bip340.json' with { type: 'json' };
 

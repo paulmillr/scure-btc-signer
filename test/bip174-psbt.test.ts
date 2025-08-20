@@ -1,7 +1,7 @@
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { default as psbtV } from './vectors/psbt_vectors.js';
