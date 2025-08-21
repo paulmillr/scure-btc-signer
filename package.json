@@ -7,7 +7,8 @@
     "*.d.ts",
     "*.js.map",
     "*.d.ts.map",
-    "src"
+    "src",
+    "!_type_test.*"
   ],
   "dependencies": {
     "@noble/curves": "2.0.0-beta.3",
