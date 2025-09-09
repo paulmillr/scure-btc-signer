@@ -1,6 +1,6 @@
 {
   "name": "@scure/btc-signer",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Audited & minimal library for Bitcoin. Handle transactions, Schnorr, Taproot, UTXO & PSBT",
   "files": [
     "*.js",
