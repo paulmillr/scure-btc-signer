@@ -34,6 +34,17 @@
     "test:big": "node test/slow.test.ts",
     "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js"
   },
+  "exports": {
+    ".": "./index.js",
+    "./musig2.js": "./musig2.js",
+    "./p2p.js": "./p2p.js",
+    "./payment.js": "./payment.js",
+    "./psbt.js": "./psbt.js",
+    "./script.js": "./script.js",
+    "./transaction.js": "./transaction.js",
+    "./utils.js": "./utils.js",
+    "./utxo.js": "./utxo.js"
+  },
   "keywords": [
     "bitcoin",
     "btc",
