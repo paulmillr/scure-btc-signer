@@ -353,8 +353,8 @@ export class _Estimator {
       return compareBytes(scripts[a], scripts[b]);
     });
   }
-  private getSatoshi(weigth: number) {
-    return this.opts.feePerByte * BigInt(toVsize(weigth));
+  private getSatoshi(weight: number) {
+    return this.opts.feePerByte * BigInt(toVsize(weight));
   }
 
   // Sort by value instead of amount
