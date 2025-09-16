@@ -767,7 +767,7 @@ export function getAddress(
   type: 'pkh' | 'wpkh' | 'tr',
   privKey: Bytes,
   network: BTC_NETWORK = NETWORK
-): string | undefined {
+): string {
   if (type === 'tr') {
     return p2tr(u.pubSchnorr(privKey), undefined, network).address;
   }
