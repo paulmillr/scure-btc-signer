@@ -902,7 +902,7 @@ deepStrictEqual(tx.fee, 394n);
 ## MuSig2
 
 MuSig2 implementation conforming to [BIP-327](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
-is available in `@scure/btc-signer/musig2.js`. Check out [bip327-musig2.test.js](./test/bip327-musig2.test.js) as well:
+is available in `@scure/btc-signer/musig2.js`. Check out [[bip327-musig2.test.js](./test/bip327-musig2.test.js)](https://github.com/paulmillr/scure-btc-signer/blob/main/test/bip327-musig2.test.ts) as well:
 
 ```ts
 import * as musig2 from '@scure/btc-signer/musig2.js';
