@@ -851,7 +851,8 @@ export function Address(network: BTC_NETWORK = NETWORK) {
     decode(address: string): P.UnwrapCoder<OutScriptType> {
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
       // Bech32
-      if (network.bech32 && address.toLowerCase().startsWith(`${network.bech32}1`)) {
+      const lowered = address.toLowerCase()
+      if (network.bech32 && lowered.startsWith(`${network.bech32}1`) && (address === lowered || address === address.toUpperCase())) {
         let res;
         try {
           res = bech32.decode(address as `${string}1${string}`);
