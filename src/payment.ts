@@ -836,6 +836,21 @@ export function WIF(network: BTC_NETWORK = NETWORK): Coder<Bytes, string> {
   };
 }
 
+function decodeBase58CheckAddress(network: BTC_NETWORK, address: string) {
+  const data = base58check.decode(address);
+  if (data.length !== 21) throw new Error('Invalid base58 address');
+  // Pay To Public Key Hash
+  if (data[0] === network.pubKeyHash) {
+    return { type: 'pkh', hash: data.slice(1) };
+  } else if (data[0] === network.scriptHash) {
+    return {
+      type: 'sh',
+      hash: data.slice(1),
+    };
+  }
+  throw new Error(`Invalid address prefix=${data[0]}`);
+}
+
 // Returns OutType, which can be used to create outscript
 export function Address(network: BTC_NETWORK = NETWORK) {
   return {
@@ -850,9 +865,11 @@ export function Address(network: BTC_NETWORK = NETWORK) {
     },
     decode(address: string): P.UnwrapCoder<OutScriptType> {
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
-      // Bech32
-      const lowered = address.toLowerCase()
-      if (network.bech32 && lowered.startsWith(`${network.bech32}1`) && (address === lowered || address === address.toUpperCase())) {
+      if (network.bech32 && address.startsWith(`${network.bech32}1`)) {
+        try {
+          return decodeBase58CheckAddress(network, address);
+        } catch (_) {}
+
         let res;
         try {
           res = bech32.decode(address as `${string}1${string}`);
@@ -871,18 +888,7 @@ export function Address(network: BTC_NETWORK = NETWORK) {
         else if (version === 1 && data.length === 32) return { type: 'tr', pubkey: data };
         else throw new Error('Unknown witness program');
       }
-      const data = base58check.decode(address);
-      if (data.length !== 21) throw new Error('Invalid base58 address');
-      // Pay To Public Key Hash
-      if (data[0] === network.pubKeyHash) {
-        return { type: 'pkh', hash: data.slice(1) };
-      } else if (data[0] === network.scriptHash) {
-        return {
-          type: 'sh',
-          hash: data.slice(1),
-        };
-      }
-      throw new Error(`Invalid address prefix=${data[0]}`);
+      return decodeBase58CheckAddress(network, address);
     },
   };
 }
