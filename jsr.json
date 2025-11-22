@@ -26,5 +26,6 @@
       "jsr.json"
     ]
   },
+  "allowSlowTypes": true,
   "license": "MIT"
 }
