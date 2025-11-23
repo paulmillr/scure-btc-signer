@@ -1195,7 +1195,7 @@ For this package, there are 4 dependencies; and a few dev dependencies:
 - [noble-curves](https://github.com/paulmillr/noble-curves) provides secp256k1 elliptic curve
 - [scure-base](https://github.com/paulmillr/scure-base) provides base58 and bech32
 - [micro-packed](https://github.com/paulmillr/micro-packed) is responsible for binary encoding
-- micro-bmark, micro-should and jsbt are used for benchmarking / testing / build tooling and developed by the same author
+- jsbt is used for benchmarking / testing / build tooling and developed by the same author
 - prettier, fast-check and typescript are used for code quality / test generation / ts compilation. It's hard to audit their source code thoroughly and fully because of their size
 
 ## Contributing & testing
