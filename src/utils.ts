@@ -19,7 +19,7 @@ export { concatBytes, equalBytes, isBytes, sha256 };
 export const hash160 = (msg: Uint8Array): Uint8Array => ripemd160(sha256(msg));
 export const sha256x2 = (...msgs: Uint8Array[]): Uint8Array => sha256(sha256(concatBytes(...msgs)));
 export const randomPrivateKeyBytes: () => Uint8Array = schnorr.utils.randomSecretKey;
-export const pubSchnorr = schnorr.getPublicKey as (priv: string | Uint8Array) => Uint8Array;
+export const pubSchnorr: (priv: Uint8Array) => Uint8Array = schnorr.getPublicKey;
 export const pubECDSA: (privateKey: Uint8Array, isCompressed?: boolean) => Uint8Array =
   secp.getPublicKey;
 
