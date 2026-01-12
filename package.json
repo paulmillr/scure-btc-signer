@@ -29,7 +29,7 @@
     "format": "prettier --write src test/*.test.*",
     "test": "node --no-warnings test/index.ts",
     "test:bun": "bun test/index.ts",
-    "test:deno": "deno --allow-env --allow-read test/index.js",
+    "test:deno": "deno --allow-env --allow-read test/index.ts",
     "test:node20": "cd test; npx tsc; node compiled/test/index.js",
     "test:slow": "node test/slow.test.ts",
     "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js"
