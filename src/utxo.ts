@@ -408,7 +408,7 @@ export class _Estimator {
       inputsAmount += amount;
       res.add(idx);
       // inputsAmount is enough to cover cost of tx
-      if (!all && targetAmount + fee <= inputsAmount && num >= this.requiredIndices.length)
+      if (!all && targetAmount + fee + (this.opts.alwaysChange ? this.dust : 0n) <= inputsAmount && num >= this.requiredIndices.length)
         return { indices: Array.from(res), fee, weight: totalWeight, total: inputsAmount };
     }
     for (const idx of indices) {
@@ -431,7 +431,7 @@ export class _Estimator {
       inputsAmount += amount;
       res.add(idx);
       // inputsAmount is enough to cover cost of tx
-      if (!all && targetAmount + fee <= inputsAmount)
+      if (!all && targetAmount + fee + (this.opts.alwaysChange ? this.dust : 0n) <= inputsAmount)
         return { indices: Array.from(res), fee, weight: totalWeight, total: inputsAmount };
     }
     if (all) {

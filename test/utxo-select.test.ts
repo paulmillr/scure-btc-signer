@@ -1465,6 +1465,134 @@ describe('UTXO Select', () => {
       { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
     ]);
   });
+  should('No selection if inputs are not cover change output when always change', () => {
+    const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+    const pubKey = secp256k1.getPublicKey(privKey, true);
+    const spend = btc.p2wpkh(pubKey, regtest);
+    const txid = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
+    let utxos = [
+      {
+        ...spend,
+        txid,
+        index: 0,
+        // total fee will be 22200.  22400 - 22200 = 200 is less than dust and so shouldn't be added as change.
+        witnessUtxo: { script: spend.script, amount: 22_400n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+      },
+    ];
+    const outputs = [{ address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n }];
+    let selected = btc.selectUTXO(utxos, outputs, 'default', {
+      alwaysChange: true,
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+      feePerByte: 100n,
+      bip69: true,
+      createTx: true,
+      network: regtest,
+    });
+    deepStrictEqual(selected, undefined);
+    utxos = [
+      {
+        ...spend,
+        txid,
+        index: 0,
+        // if select 1 and 2 inputs, total fee will be 22200.  
+        // 22400 - 22200 = 200 is less than dust and alwaysChange is true, so select more inputs.
+        witnessUtxo: { script: spend.script, amount: 22_400n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 2,
+        // select this input to make up the dust, total fee will be 29000.  
+        // 29545 - 29000 = 545 is less than dust and there are no more inputs, so select failed.
+        witnessUtxo: { script: spend.script, amount: 7_145n },
+      },
+    ];
+    selected = btc.selectUTXO(utxos, outputs, 'default', {
+      alwaysChange: true,
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+      feePerByte: 100n,
+      bip69: true,
+      createTx: true,
+      network: regtest,
+    });
+    deepStrictEqual(selected, undefined);
+  });
+  should('select more inputs to add change output when always change', () => {
+    const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+    const pubKey = secp256k1.getPublicKey(privKey, true);
+    const spend = btc.p2wpkh(pubKey, regtest);
+    const txid = hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2');
+    const utxos = [
+      {
+        ...spend,
+        txid,
+        index: 0,
+        // if select 1 and 2 inputs, total fee will be 22200.  
+        // 22400 - 22200 = 200 is less than dust and alwaysChange is true, so select more inputs.
+        witnessUtxo: { script: spend.script, amount: 22_400n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+      },
+      {
+        ...spend,
+        txid,
+        index: 2,
+        // select this input to make up the dust, total fee will be 29000.  
+        // 29546 - 29000 = 546 is not less than dust and so should be added as change.
+        witnessUtxo: { script: spend.script, amount: 7_146n },
+      },
+    ];
+    const outputs = [{ address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n }];
+    const selected = btc.selectUTXO(utxos, outputs, 'default', {
+      alwaysChange: true,
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+      feePerByte: 100n,
+      bip69: true,
+      createTx: true,
+      network: regtest,
+    });
+    deepStrictEqual(selected.inputs, [
+      {
+        txid,
+        index: 0,
+        witnessUtxo: { script: spend.script, amount: 22_400n },
+        sequence: 4294967295,
+      },
+      {
+        txid,
+        index: 1,
+        witnessUtxo: { script: spend.script, amount: 200_000n },
+        sequence: 4294967295,
+      },
+      {
+        txid,
+        index: 2,
+        witnessUtxo: { script: spend.script, amount: 7_146n },
+        sequence: 4294967295,
+      },
+    ]);
+    // Change output should have been added
+    deepStrictEqual(selected.outputs, [
+      { address: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8', amount: 546n },
+      { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
+    ]);
+  });
   should('GH-122', async () => {
     const P2PKH_SCRIPT = hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac');
     const requiredInput = {
