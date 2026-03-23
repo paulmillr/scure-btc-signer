@@ -16,17 +16,30 @@ Links:
 - https://github.com/bitcoin/bips/blob/master/bip-0327/reference.py
 */
 // Types
-/**
- * Represents a pair of public and secret nonces used in MuSig2 signing.
- */
-export type Nonces = { public: Uint8Array; secret: Uint8Array };
-/**
- * Represents a deterministic nonce, including its public part and the resulting partial signature.
- */
-export type DetNonce = { publicNonce: Uint8Array; partialSig: Uint8Array };
+/** Represents a pair of public and secret nonces used in MuSig2 signing. */
+export type Nonces = {
+  /** Public nonce that gets shared with the other participants. */
+  public: Uint8Array;
+  /** Secret nonce that stays local until partial signing finishes. */
+  secret: Uint8Array;
+};
+/** Represents a deterministic nonce, including its public part and the resulting partial signature. */
+export type DetNonce = {
+  /** Public nonce that the signer shares for this deterministic signing round. */
+  publicNonce: Uint8Array;
+  /** Partial signature produced after combining all participant data. */
+  partialSig: Uint8Array;
+};
 /**
  * Represents an error indicating an invalid contribution from a signer.
  * This allows pointing out which participant is malicious and what specifically is wrong.
+ * @param idx - signer index with the invalid contribution
+ * @param m - error message
+ * @example
+ * Create an error that points to the participant who sent invalid data.
+ * ```ts
+ * new InvalidContributionErr(0, 'pubkey');
+ * ```
  */
 export class InvalidContributionErr extends Error {
   readonly idx: number; // Indice of participant
@@ -37,40 +50,48 @@ export class InvalidContributionErr extends Error {
 }
 
 // Utils
-const { taggedHash, pointToBytes } = schnorr.utils;
-const Point = secp256k1.Point;
+const taggedHash = /* @__PURE__ */ (() => schnorr.utils.taggedHash)();
+const pointToBytes = /* @__PURE__ */ (() => schnorr.utils.pointToBytes)();
+const Point = /* @__PURE__ */ (() => secp256k1.Point)();
 type Point = typeof Point.BASE;
-const Fn = Point.Fn;
-const PUBKEY_LEN = secp256k1.lengths.publicKey!;
-const ZERO = new Uint8Array(PUBKEY_LEN); // Compressed zero point
+const Fn = /* @__PURE__ */ (() => Point.Fn)();
+const PUBKEY_LEN = /* @__PURE__ */ (() => secp256k1.lengths.publicKey!)();
+const ZERO = /* @__PURE__ */ new Uint8Array(PUBKEY_LEN); // Compressed zero point
 
 // Encoding
 // TODO: re-use in PSBT?
-const compressed = P.apply(P.bytes(33), {
-  decode: (p: Point) => (isZero(p) ? ZERO : p.toBytes(true)),
-  encode: (b: Uint8Array) => (equalBytes(b, ZERO) ? Point.ZERO : Point.fromBytes(b)),
-});
-const scalar = P.validate(P.U256BE, (n) => {
-  aInRange('n', n, 1n, Fn.ORDER);
-  return n;
-});
-const PubNonce = P.struct({ R1: compressed, R2: compressed });
-const SecretNonce = P.struct({ k1: scalar, k2: scalar, publicKey: P.bytes(PUBKEY_LEN) });
+const compressed = /* @__PURE__ */ (() =>
+  P.apply(P.bytes(33), {
+    decode: (p: Point) => (isZero(p) ? ZERO : p.toBytes(true)),
+    encode: (b: Uint8Array) => (equalBytes(b, ZERO) ? Point.ZERO : Point.fromBytes(b)),
+  }))();
+const scalar = /* @__PURE__ */ (() =>
+  P.validate(P.U256BE, (n) => {
+    aInRange('n', n, 1n, Fn.ORDER);
+    return n;
+  }))();
+const PubNonce = /* @__PURE__ */ (() => P.struct({ R1: compressed, R2: compressed }))();
+const SecretNonce = /* @__PURE__ */ (() =>
+  P.struct({
+    k1: scalar,
+    k2: scalar,
+    publicKey: P.bytes(PUBKEY_LEN),
+  }))();
 
 function abytesOptional(b: Uint8Array | undefined, ...lengths: number[]) {
   if (b !== undefined) abytes(b, ...lengths);
 }
 
 function abytesArray(lst: Uint8Array[], ...lengths: number[]) {
-  if (!Array.isArray(lst)) throw new Error('expected array');
+  if (!Array.isArray(lst)) throw new TypeError('expected array');
   lst.forEach((i) => abytes(i, ...lengths));
 }
 
 function aXonly(lst: boolean[]) {
-  if (!Array.isArray(lst)) throw new Error('expected array');
+  if (!Array.isArray(lst)) throw new TypeError('expected array');
   lst.forEach((i, j) => {
     if (typeof i !== 'boolean')
-      throw new Error('expected boolean in xOnly array, got' + i + '(' + j + ')');
+      throw new TypeError('expected boolean in xOnly array, got' + i + '(' + j + ')');
   });
 }
 
@@ -79,6 +100,18 @@ const taggedInt = (tag: string, ...messages: Uint8Array[]) =>
 const evenScalar = (p: Point, n: bigint) => (hasEven(p.y) ? n : Fn.neg(n));
 
 // Short utility for compat with reference implementation
+/**
+ * Derives a compressed secp256k1 public key from a private key.
+ * @param seckey - signer private key
+ * @returns Compressed public key bytes.
+ * @example
+ * Turn a signer's secret key into the compressed key format MuSig2 expects.
+ * ```ts
+ * import { schnorr } from '@noble/curves/secp256k1.js';
+ * import { IndividualPubkey } from '@scure/btc-signer/musig2.js';
+ * IndividualPubkey(schnorr.utils.randomSecretKey());
+ * ```
+ */
 export function IndividualPubkey(seckey: Uint8Array): Uint8Array {
   return secp256k1.getPublicKey(seckey, true);
 }
@@ -92,9 +125,19 @@ function isZero(point: Point): boolean {
 
 /**
  * Lexicographically sorts an array of public keys.
- * @param publicKeys An array of public keys (Uint8Array).
+ * @param publicKeys - array of public keys
  * @returns A new array containing the sorted public keys.
- * @throws {Error} If the input is not an array or if any element is not a Uint8Array of the correct length.
+ * @throws On wrong argument types. {@link TypeError}
+ * @example
+ * Sort participant public keys before building the aggregate MuSig2 key.
+ * ```ts
+ * import { IndividualPubkey, sortKeys } from '@scure/btc-signer/musig2.js';
+ * import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * sortKeys([
+ *   IndividualPubkey(randomPrivateKeyBytes()),
+ *   IndividualPubkey(randomPrivateKeyBytes()),
+ * ]);
+ * ```
  */
 export function sortKeys(publicKeys: Uint8Array[]): Uint8Array[] {
   abytesArray(publicKeys, PUBKEY_LEN);
@@ -127,12 +170,24 @@ function keyAggCoeffInternal(
 
 /**
  * Aggregates multiple public keys using the MuSig2 key aggregation algorithm.
- * @param publicKeys An array of individual public keys (Uint8Array).
- * @param tweaks An optional array of tweaks (Uint8Array) to apply to the aggregate public key.
- * @param isXonly An optional array of booleans indicating whether each tweak is an X-only tweak.
+ * @param publicKeys - individual participant public keys
+ * @param tweaks - optional tweaks applied to the aggregate key
+ * @param isXonly - whether each tweak uses x-only semantics
  * @returns An object containing the aggregate public key, accumulated sign, and accumulated tweak.
- * @throws {Error} If the input is invalid, such as non array publicKeys, tweaks and isXonly array length not matching.
- * @throws {InvalidContributionErr} If any of the public keys are invalid and cannot be processed.
+ * @throws If the input is invalid, such as non-array public keys or mismatched tweak metadata. {@link Error}
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On wrong argument ranges or values. {@link RangeError}
+ * @throws If any of the public keys are invalid and cannot be processed. {@link InvalidContributionErr}
+ * @example
+ * Combine all participant public keys into the shared MuSig2 context.
+ * ```ts
+ * import { IndividualPubkey, keyAggregate } from '@scure/btc-signer/musig2.js';
+ * import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * keyAggregate([
+ *   IndividualPubkey(randomPrivateKeyBytes()),
+ *   IndividualPubkey(randomPrivateKeyBytes()),
+ * ]);
+ * ```
  */
 export function keyAggregate(
   publicKeys: Uint8Array[],
@@ -142,7 +197,7 @@ export function keyAggregate(
   abytesArray(publicKeys, PUBKEY_LEN);
   abytesArray(tweaks, 32);
   if (tweaks.length !== isXonly.length)
-    throw new Error('The tweaks and isXonly arrays must have the same length');
+    throw new RangeError('The tweaks and isXonly arrays must have the same length');
   // Aggregate
   const pk2 = getSecondKey(publicKeys);
   const L = keyAggL(publicKeys);
@@ -171,8 +226,19 @@ export function keyAggregate(
 }
 /**
  * Exports the aggregate public key to a byte array.
- * @param ctx The result of the keyAggregate function.
+ * @param ctx - result of {@link keyAggregate}
  * @returns The aggregate public key as a byte array.
+ * @example
+ * Serialize the aggregate key after building the MuSig2 context.
+ * ```ts
+ * import { IndividualPubkey, keyAggregate, keyAggExport } from '@scure/btc-signer/musig2.js';
+ * import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * const ctx = keyAggregate([
+ *   IndividualPubkey(randomPrivateKeyBytes()),
+ *   IndividualPubkey(randomPrivateKeyBytes()),
+ * ]);
+ * keyAggExport(ctx);
+ * ```
  */
 export function keyAggExport(ctx: ReturnType<typeof keyAggregate>): Uint8Array {
   return pointToBytes(ctx.aggPublicKey);
@@ -209,14 +275,23 @@ const nonceHash = (
 
 /**
  * Generates a nonce pair (public and secret) for MuSig2 signing.
- * @param publicKey The individual public key of the signer (Uint8Array).
- * @param secretKey The secret key of the signer (Uint8Array). Optional, included to xor randomness
- * @param aggPublicKey The aggregate public key of all signers (Uint8Array).
- * @param msg The message to be signed (Uint8Array).
- * @param extraIn Extra input for nonce generation (Uint8Array).
- * @param rand Random 32-bytes for generating the nonces (Uint8Array).
+ * @param publicKey - individual public key of the signer
+ * @param secretKey - optional secret key, mixed in to blind the randomness source
+ * @param aggPublicKey - aggregate public key of all signers
+ * @param msg - message to be signed
+ * @param extraIn - extra input mixed into nonce generation
+ * @param rand - random 32-byte seed for the nonce derivation
  * @returns An object containing the public and secret nonces.
- * @throws {Error} If the input is invalid, such as non array publicKey, secretKey, aggPublicKey.
+ * @throws If the input is invalid, such as non-array public keys or malformed nonce inputs. {@link Error}
+ * @throws On wrong argument ranges or values. {@link RangeError}
+ * @example
+ * Generate the signer-local nonce pair before sharing the public nonce with peers.
+ * ```ts
+ * import { IndividualPubkey, nonceGen } from '@scure/btc-signer/musig2.js';
+ * import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * const secretKey = randomPrivateKeyBytes();
+ * nonceGen(IndividualPubkey(secretKey), secretKey);
+ * ```
  */
 export function nonceGen(
   publicKey: Uint8Array,
@@ -229,7 +304,7 @@ export function nonceGen(
   abytes(publicKey, PUBKEY_LEN);
   abytesOptional(secretKey, 32);
   abytes(aggPublicKey);
-  if (![0, 32].includes(aggPublicKey.length)) throw new Error('wrong aggPublicKey');
+  if (![0, 32].includes(aggPublicKey.length)) throw new RangeError('wrong aggPublicKey');
   abytesOptional(msg);
   abytes(extraIn);
   abytes(rand, 32);
@@ -249,10 +324,23 @@ export function nonceGen(
 
 /**
  * Aggregates public nonces from multiple signers into a single aggregate nonce.
- * @param pubNonces An array of public nonces from each signer (Uint8Array). Each pubnonce is assumed to be 66 bytes (two 33‐byte parts).
+ * @param pubNonces - public nonces from each signer
  * @returns The aggregate nonce (Uint8Array).
- * @throws {Error} If the input is not an array or if any element is not a Uint8Array of the correct length.
- * @throws {InvalidContributionErr} If any of the public nonces are invalid and cannot be processed.
+ * @throws If the nonce payloads are malformed or contain infinity points. {@link Error}
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws If any of the public nonces are invalid and cannot be processed. {@link InvalidContributionErr}
+ * @example
+ * Combine all participant public nonces before building the session.
+ * ```ts
+ * import { IndividualPubkey, nonceAggregate, nonceGen } from '@scure/btc-signer/musig2.js';
+ * import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * const alice = randomPrivateKeyBytes();
+ * const bob = randomPrivateKeyBytes();
+ * nonceAggregate([
+ *   nonceGen(IndividualPubkey(alice), alice).public,
+ *   nonceGen(IndividualPubkey(bob), bob).public,
+ * ]);
+ * ```
  */
 export function nonceAggregate(pubNonces: Uint8Array[]): Uint8Array {
   abytesArray(pubNonces, 66);
@@ -274,6 +362,37 @@ export function nonceAggregate(pubNonces: Uint8Array[]): Uint8Array {
 
 // Class allows us re-use pre-computed stuff
 // NOTE: it would be nice to aggregate nonce in construdctor, but there is test that passes already aggregated nonce here.
+/**
+ * MuSig2 session context for partial signing and aggregation.
+ * @param aggNonce - aggregate nonce from all participants combined
+ * @param publicKeys - all participant public keys
+ * @param msg - message to be signed
+ * @param tweaks - optional tweaks applied to the aggregate public key
+ * @param isXonly - whether each tweak uses x-only semantics
+ * @example
+ * Build one session object and reuse it for all partial-signature steps.
+ * ```ts
+ * import {
+ *   IndividualPubkey,
+ *   Session,
+ *   keyAggregate,
+ *   keyAggExport,
+ *   nonceAggregate,
+ *   nonceGen,
+ * } from '@scure/btc-signer/musig2.js';
+ * import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * const alice = randomPrivateKeyBytes();
+ * const bob = randomPrivateKeyBytes();
+ * const publicKeys = [IndividualPubkey(alice), IndividualPubkey(bob)];
+ * const agg = keyAggregate(publicKeys);
+ * const aggNonce = nonceAggregate([
+ *   nonceGen(publicKeys[0], alice, keyAggExport(agg)).public,
+ *   nonceGen(publicKeys[1], bob, keyAggExport(agg)).public,
+ * ]);
+ * const msg = new TextEncoder().encode('hello musig2');
+ * new Session(aggNonce, publicKeys, msg);
+ * ```
+ */
 export class Session {
   private publicKeys: Uint8Array[];
   private Q: Point;
@@ -290,12 +409,12 @@ export class Session {
    * Constructor for the Session class.
    * It precomputes and stores values derived from the aggregate nonce, public keys,
    * message, and optional tweaks, optimizing the signing process.
-   * @param aggNonce The aggregate nonce (Uint8Array) from all participants combined, must be 66 bytes.
-   * @param publicKeys An array of public keys (Uint8Array) from each participant, must be 33 bytes.
-   * @param msg The message (Uint8Array) to be signed.
-   * @param tweaks Optional array of tweaks (Uint8Array) to be applied to the aggregate public key, each must be 32 bytes. Defaults to [].
-   * @param isXonly Optional array of booleans indicating whether each tweak is an X-only tweak. Defaults to [].
-   * @throws {Error} If the input is invalid, such as wrong array sizes or lengths.
+   * @param aggNonce - aggregate nonce from all participants combined
+   * @param publicKeys - participant public keys
+   * @param msg - message to be signed
+   * @param tweaks - tweaks applied to the aggregate public key
+   * @param isXonly - whether each tweak uses x-only semantics
+   * @throws If the input is invalid, such as wrong array sizes or lengths. {@link Error}
    */
   constructor(
     aggNonce: Uint8Array,
@@ -309,7 +428,7 @@ export class Session {
     aXonly(isXonly);
     abytes(msg);
     if (tweaks.length !== isXonly.length)
-      throw new Error('The tweaks and isXonly arrays must have the same length');
+      throw new RangeError('The tweaks and isXonly arrays must have the same length');
     const { aggPublicKey, gAcc, tweakAcc } = keyAggregate(publicKeys, tweaks, isXonly);
     const { R1, R2 } = PubNonce.decode(aggNonce);
     this.publicKeys = publicKeys;
@@ -328,9 +447,9 @@ export class Session {
   /**
    * Calculates the key aggregation coefficient for a given point.
    * @private
-   * @param P The point to calculate the coefficient for.
+   * @param P - point to calculate the coefficient for
    * @returns The key aggregation coefficient as a bigint.
-   * @throws {Error} If the provided public key is not included in the list of pubkeys.
+   * @throws If the provided public key is not included in the list of pubkeys. {@link Error}
    */
   private getSessionKeyAggCoeff(P: Point): bigint {
     const { publicKeys } = this;
@@ -360,16 +479,15 @@ export class Session {
 
   /**
    * Generates a partial signature for a given message, secret nonce, secret key, and session context.
-   * @param secretNonce The secret nonce for this signing session (Uint8Array). MUST be securely erased after use.
-   * @param secret The secret key of the signer (Uint8Array).
-   * @param sessionCtx The session context containing all necessary information for signing.
-   * @param fastSign if set to true, the signature is created without checking validity.
+   * @param secretNonce - secret nonce for this signing session; it is zeroed after use
+   * @param secret - secret key of the signer
+   * @param fastSign - if `true`, skip the self-verification pass
    * @returns The partial signature (Uint8Array).
-   * @throws {Error} If the input is invalid, such as wrong array sizes, invalid nonce or secret key.
+   * @throws If the input is invalid, such as wrong array sizes, invalid nonce, or invalid secret key. {@link Error}
    */
   sign(secretNonce: Uint8Array, secret: Uint8Array, fastSign = false): Uint8Array {
     abytes(secret, 32);
-    if (typeof fastSign !== 'boolean') throw new Error('expected boolean');
+    if (typeof fastSign !== 'boolean') throw new TypeError('expected boolean');
     const { Q, gAcc, b, R, e } = this;
     const { k1: k1_, k2: k2_, publicKey: originalPk } = SecretNonce.decode(secretNonce);
     // zero-out the first 64 bytes of secretNonce so it cannot be reused
@@ -403,15 +521,11 @@ export class Session {
   }
   /**
    * Verifies a partial signature against the aggregate public key and other session parameters.
-   * @param partialSig The partial signature to verify (Uint8Array).
-   * @param pubNonces An array of public nonces from each signer (Uint8Array).
-   * @param pubKeys An array of public keys from each signer (Uint8Array).
-   * @param tweaks An array of tweaks applied to the aggregate public key.
-   * @param isXonly An array of booleans indicating whether each tweak is an X-only tweak.
-   * @param msg The message that was signed (Uint8Array).
-   * @param i The index of the signer whose partial signature is being verified.
-   * @returns True if the partial signature is valid, false otherwise.
-   * @throws {Error} If the input is invalid, such as non array partialSig, pubNonces, pubKeys, tweaks.
+   * @param partialSig - partial signature to verify
+   * @param pubNonces - public nonces from each signer
+   * @param i - index of the signer whose partial signature is being verified
+   * @returns `true` if the partial signature is valid.
+   * @throws If the input is invalid, such as non-array partial signatures or mismatched nonce counts. {@link Error}
    */
   partialSigVerify(partialSig: Uint8Array, pubNonces: Uint8Array[], i: number): boolean {
     const { publicKeys, tweaks, isXonly } = this;
@@ -422,18 +536,17 @@ export class Session {
     aXonly(isXonly);
     anumber(i);
     if (pubNonces.length !== publicKeys.length)
-      throw new Error('The pubNonces and publicKeys arrays must have the same length');
+      throw new RangeError('The pubNonces and publicKeys arrays must have the same length');
     if (tweaks.length !== isXonly.length)
-      throw new Error('The tweaks and isXonly arrays must have the same length');
-    if (i >= pubNonces.length) throw new Error('index outside of pubKeys/pubNonces');
+      throw new RangeError('The tweaks and isXonly arrays must have the same length');
+    if (i >= pubNonces.length) throw new RangeError('index outside of pubKeys/pubNonces');
     return this.partialSigVerifyInternal(partialSig, pubNonces[i], publicKeys[i]);
   }
   /**
    * Aggregates partial signatures from multiple signers into a single final signature.
-   * @param partialSigs An array of partial signatures from each signer (Uint8Array).
-   * @param sessionCtx The session context containing all necessary information for signing.
+   * @param partialSigs - partial signatures from each signer
    * @returns The final aggregate signature (Uint8Array).
-   * @throws {Error} If the input is invalid, such as wrong array sizes, invalid signature.
+   * @throws If the input is invalid, such as wrong array sizes or malformed signatures. {@link Error}
    */
   partialSigAgg(partialSigs: Uint8Array[]): Uint8Array {
     abytesArray(partialSigs, 32);
@@ -469,14 +582,37 @@ const deterministicNonceHash = (
 
 /**
  * Generates a nonce pair and partial signature deterministically for a single signer.
- * @param secret The secret key of the signer (Uint8Array).
- * @param aggOtherNonce The aggregate public nonce of all other signers (Uint8Array).
- * @param publicKeys An array of all signers' public keys (Uint8Array).
- * @param tweaks An array of tweaks to apply to the aggregate public key.
- * @param isXonly An array of booleans indicating whether each tweak is an X-only tweak.
- * @param msg The message to be signed (Uint8Array).
- * @param rand Optional extra randomness (Uint8Array).
+ * @param secret - secret key of the signer
+ * @param aggOtherNonce - aggregate public nonce of the other signers
+ * @param publicKeys - public keys of all signers
+ * @param msg - message to be signed
+ * @param tweaks - tweaks applied to the aggregate public key
+ * @param isXonly - whether each tweak uses x-only semantics
+ * @param rand - optional extra randomness
+ * @param fastSign - whether to skip partial-signature self-verification
  * @returns An object containing the public nonce and partial signature.
+ * @throws If MuSig2 session setup or signing fails. {@link Error}
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On wrong argument ranges or values. {@link RangeError}
+ * @throws If one of the aggregated public keys or nonces is invalid. {@link InvalidContributionErr}
+ * @example
+ * Generate one signer's deterministic nonce and partial signature in one step.
+ * ```ts
+ * import {
+ *   IndividualPubkey,
+ *   deterministicSign,
+ *   keyAggregate,
+ *   keyAggExport,
+ *   nonceGen,
+ * } from '@scure/btc-signer/musig2.js';
+ * import { randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * const alice = randomPrivateKeyBytes();
+ * const bob = randomPrivateKeyBytes();
+ * const publicKeys = [IndividualPubkey(alice), IndividualPubkey(bob)];
+ * const agg = keyAggregate(publicKeys);
+ * const otherNonce = nonceGen(publicKeys[1], bob, keyAggExport(agg)).public;
+ * deterministicSign(alice, otherNonce, publicKeys, new TextEncoder().encode('hello musig2'));
+ * ```
  */
 export function deterministicSign(
   secret: Uint8Array,

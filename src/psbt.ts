@@ -14,62 +14,90 @@ import { type Bytes, compareBytes, equalBytes, PubT, validatePubkey } from './ut
 // PSBT BIP174, BIP370, BIP371
 
 // Can be 33 or 64 bytes
-const PubKeyECDSA: P.CoderType<Bytes> = P.validate(P.bytes(null), (pub) =>
-  validatePubkey(pub, PubT.ecdsa)
-);
-const PubKeySchnorr: P.CoderType<Bytes> = P.validate(P.bytes(32), (pub) =>
-  validatePubkey(pub, PubT.schnorr)
-);
-const SignatureSchnorr: P.CoderType<Bytes> = P.validate(P.bytes(null), (sig) => {
-  if (sig.length !== 64 && sig.length !== 65)
-    throw new Error('Schnorr signature should be 64 or 65 bytes long');
-  return sig;
-});
+const PubKeyECDSA: P.CoderType<Bytes> = /* @__PURE__ */ (() =>
+  P.validate(P.bytes(null), (pub) => validatePubkey(pub, PubT.ecdsa)))();
+const PubKeySchnorr: P.CoderType<Bytes> = /* @__PURE__ */ (() =>
+  P.validate(P.bytes(32), (pub) => validatePubkey(pub, PubT.schnorr)))();
+const SignatureSchnorr: P.CoderType<Bytes> = /* @__PURE__ */ (() =>
+  P.validate(P.bytes(null), (sig) => {
+    if (sig.length !== 64 && sig.length !== 65)
+      throw new Error('Schnorr signature should be 64 or 65 bytes long');
+    return sig;
+  }))();
 
-const BIP32Der = P.struct({
-  fingerprint: P.U32BE,
-  path: P.array(null, P.U32LE),
-});
-const TaprootBIP32Der = P.struct({
-  hashes: P.array(CompactSizeLen, P.bytes(32)),
-  der: BIP32Der,
-});
+const BIP32Der = /* @__PURE__ */ (() =>
+  P.struct({
+    fingerprint: P.U32BE,
+    path: P.array(null, P.U32LE),
+  }))();
+const TaprootBIP32Der = /* @__PURE__ */ (() =>
+  P.struct({
+    hashes: P.array(CompactSizeLen, P.bytes(32)),
+    der: BIP32Der,
+  }))();
 // The 78 byte serialized extended public key as defined by BIP 32.
-const GlobalXPUB = P.bytes(78);
-const tapScriptSigKey = P.struct({ pubKey: PubKeySchnorr, leafHash: P.bytes(32) });
+const GlobalXPUB = /* @__PURE__ */ (() => P.bytes(78))();
+const tapScriptSigKey = /* @__PURE__ */ (() =>
+  P.struct({ pubKey: PubKeySchnorr, leafHash: P.bytes(32) }))();
 
 // Complex structure for PSBT fields
 // <control byte with leaf version and parity bit> <internal key p> <C> <E> <AB>
-const _TaprootControlBlock = P.struct({
-  version: P.U8, // With parity :(
-  internalKey: P.bytes(32),
-  merklePath: P.array(null, P.bytes(32)),
-});
-export const TaprootControlBlock = P.validate(_TaprootControlBlock, (cb) => {
-  if (cb.merklePath.length > 128)
-    throw new Error('TaprootControlBlock: merklePath should be of length 0..128 (inclusive)');
-  return cb;
-});
+const _TaprootControlBlock = /* @__PURE__ */ (() =>
+  P.struct({
+    version: P.U8, // With parity :(
+    internalKey: P.bytes(32),
+    merklePath: P.array(null, P.bytes(32)),
+  }))();
+/**
+ * Taproot control block coder.
+ * @example
+ * Encode the Taproot control block attached to a script-path witness.
+ * ```ts
+ * import { TaprootControlBlock } from '@scure/btc-signer/psbt.js';
+ * import { pubSchnorr, randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * TaprootControlBlock.encode({
+ *   version: 0xc0,
+ *   internalKey: pubSchnorr(randomPrivateKeyBytes()),
+ *   merklePath: [],
+ * });
+ * ```
+ */
+export const TaprootControlBlock = /* @__PURE__ */ (() =>
+  P.validate(_TaprootControlBlock, (cb) => {
+    if (cb.merklePath.length > 128)
+      throw new Error('TaprootControlBlock: merklePath should be of length 0..128 (inclusive)');
+    return cb;
+  }))();
 
 // {<8-bit uint depth> <8-bit uint leaf version> <compact size uint scriptlen> <bytes script>}*
-const tapTree = P.array(
-  null,
-  P.struct({
-    depth: P.U8,
-    version: P.U8,
-    script: VarBytes,
-  })
-);
+const tapTree = /* @__PURE__ */ (() =>
+  P.array(
+    null,
+    P.struct({
+      depth: P.U8,
+      version: P.U8,
+      script: VarBytes,
+    })
+  ))();
 
-const BytesInf: P.CoderType<Bytes> = P.bytes(null); // Bytes will conflict with Bytes type
-const Bytes20: P.CoderType<Bytes> = P.bytes(20);
-const Bytes32: P.CoderType<Bytes> = P.bytes(32);
+const BytesInf: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(null); // Bytes will conflict with Bytes type
+const Bytes20: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(20);
+const Bytes32: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(32);
 // versionsRequiringExclusing = !versionsAllowsInclusion (as set)
 // {name: [tag, keyCoder, valueCoder, versionsRequiringInclusion, versionsRequiringExclusing, versionsAllowsInclusion, silentIgnore]}
 // SilentIgnore: we use some v2 fields for v1 representation too, so we just clean them before serialize
 
 // Tables from BIP-0174 (https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki)
 // prettier-ignore
+/**
+ * PSBT global key definitions.
+ * @example
+ * Keep only the fields that are valid for the target PSBT version before serializing.
+ * ```ts
+ * import { PSBTGlobal, cleanPSBTFields } from '@scure/btc-signer/psbt.js';
+ * cleanPSBTFields(2, PSBTGlobal, { txVersion: 2, inputCount: 1, outputCount: 1 });
+ * ```
+ */
 export const PSBTGlobal = {
   unsignedTx:       [0x00, false,      RawOldTx,          [0], [0],    false],
   xpub:             [0x01, GlobalXPUB, BIP32Der,       [],  [0, 2], false],
@@ -82,6 +110,20 @@ export const PSBTGlobal = {
   proprietary:      [0xfc, BytesInf,   BytesInf,       [],  [0, 2], false],
 } as const;
 // prettier-ignore
+/**
+ * PSBT input key definitions.
+ * @example
+ * Strip input fields that do not belong in the requested PSBT version.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { PSBTInput, cleanPSBTFields } from '@scure/btc-signer/psbt.js';
+ * cleanPSBTFields(2, PSBTInput, {
+ *   txid: hex.decode('0000000000000000000000000000000000000000000000000000000000000001'),
+ *   index: 0,
+ *   witnessUtxo: { amount: 2n, script: new Uint8Array([0x51]) },
+ * });
+ * ```
+ */
 export const PSBTInput = {
   nonWitnessUtxo:         [0x00, false,               RawTx,            [],  [0, 2], false],
   witnessUtxo:            [0x01, false,               RawOutput,        [],  [0, 2], false],
@@ -111,6 +153,16 @@ export const PSBTInput = {
   proprietary:            [0xfc, BytesInf,            BytesInf,         [],  [0, 2], false],
 } as const;
 // All other keys removed when finalizing
+/**
+ * Input fields preserved after finalization.
+ * @example
+ * Use the allowlist when stripping transient signing fields after finalization.
+ * ```ts
+ * import { PSBTInputFinalKeys } from '@scure/btc-signer/psbt.js';
+ * const finalKeys = new Set(PSBTInputFinalKeys);
+ * finalKeys.has('finalScriptWitness');
+ * ```
+ */
 export const PSBTInputFinalKeys: (keyof TransactionInput)[] = [
   'txid',
   'sequence',
@@ -123,6 +175,16 @@ export const PSBTInputFinalKeys: (keyof TransactionInput)[] = [
 ];
 
 // Can be modified even on signed input
+/**
+ * Input fields that may still change after signing starts.
+ * @example
+ * Signed inputs may still update these fields while new signatures are being added.
+ * ```ts
+ * import { PSBTInputUnsignedKeys } from '@scure/btc-signer/psbt.js';
+ * const mutableKeys = new Set(PSBTInputUnsignedKeys);
+ * mutableKeys.has('tapScriptSig');
+ * ```
+ */
 export const PSBTInputUnsignedKeys: (keyof TransactionInput)[] = [
   'partialSig',
   'finalScriptSig',
@@ -132,6 +194,15 @@ export const PSBTInputUnsignedKeys: (keyof TransactionInput)[] = [
 ];
 
 // prettier-ignore
+/**
+ * PSBT output key definitions.
+ * @example
+ * Strip output fields that are not valid for the target PSBT version.
+ * ```ts
+ * import { PSBTOutput, cleanPSBTFields } from '@scure/btc-signer/psbt.js';
+ * cleanPSBTFields(2, PSBTOutput, { amount: 2n, script: new Uint8Array([0x51]) });
+ * ```
+ */
 export const PSBTOutput = {
   redeemScript:       [0x00, false,         BytesInf,        [],  [0, 2], false],
   witnessScript:      [0x01, false,         BytesInf,        [],  [0, 2], false],
@@ -145,17 +216,28 @@ export const PSBTOutput = {
 } as const;
 
 // Can be modified even on signed input
+/**
+ * Output fields that may still change after signing starts.
+ * @example
+ * PSBTv2 outputs are fully committed once signing starts, so the set stays empty.
+ * ```ts
+ * import { PSBTOutputUnsignedKeys } from '@scure/btc-signer/psbt.js';
+ * const mutableKeys = new Set(PSBTOutputUnsignedKeys);
+ * mutableKeys.size; // 0
+ * ```
+ */
 export const PSBTOutputUnsignedKeys: (keyof typeof PSBTOutput)[] = [];
 
-const PSBTKeyPair = P.array(
-  P.NULL,
-  P.struct({
-    //  <key> := <keylen> <keytype> <keydata> WHERE keylen = len(keytype)+len(keydata)
-    key: P.prefix(CompactSizeLen, P.struct({ type: CompactSizeLen, key: P.bytes(null) })),
-    //  <value> := <valuelen> <valuedata>
-    value: P.bytes(CompactSizeLen),
-  })
-);
+const PSBTKeyPair = /* @__PURE__ */ (() =>
+  P.array(
+    P.NULL,
+    P.struct({
+      //  <key> := <keylen> <keytype> <keydata> WHERE keylen = len(keytype)+len(keydata)
+      key: P.prefix(CompactSizeLen, P.struct({ type: CompactSizeLen, key: P.bytes(null) })),
+      //  <value> := <valuelen> <valuedata>
+      value: P.bytes(CompactSizeLen),
+    })
+  ))();
 
 type PSBTKeyCoder = P.CoderType<any> | false;
 
@@ -182,8 +264,9 @@ const PSBTUnknownKey: P.CoderType<
     type: number;
     key: Bytes;
   }>
-> = P.struct({ type: CompactSizeLen, key: P.bytes(null) });
+> = /* @__PURE__ */ (() => P.struct({ type: CompactSizeLen, key: P.bytes(null) }))();
 type PSBTUnknownFields = { unknown?: [P.UnwrapCoder<typeof PSBTUnknownKey>, Bytes][] };
+/** Maps a PSBT key-definition table to the decoded key-map shape. */
 export type PSBTKeyMapKeys<T extends PSBTKeyMap> = {
   -readonly [K in keyof T]?: T[K][1] extends false
     ? P.UnwrapCoder<T[K][2]>
@@ -265,42 +348,61 @@ function PSBTKeyMap<T extends PSBTKeyMap>(psbtEnum: T): P.CoderType<PSBTKeyMapKe
   });
 }
 
-export const PSBTInputCoder = P.validate(PSBTKeyMap(PSBTInput), (i) => {
-  if (i.finalScriptWitness && !i.finalScriptWitness.length)
-    throw new Error('validateInput: empty finalScriptWitness');
-  //if (i.finalScriptSig && !i.finalScriptSig.length) throw new Error('validateInput: empty finalScriptSig');
-  if (i.partialSig && !i.partialSig.length) throw new Error('Empty partialSig');
-  if (i.partialSig) for (const [k] of i.partialSig) validatePubkey(k, PubT.ecdsa);
-  if (i.bip32Derivation) for (const [k] of i.bip32Derivation) validatePubkey(k, PubT.ecdsa);
-  // Locktime = unsigned little endian integer greater than or equal to 500000000 representing
-  if (i.requiredTimeLocktime !== undefined && i.requiredTimeLocktime < 500000000)
-    throw new Error(`validateInput: wrong timeLocktime=${i.requiredTimeLocktime}`);
-  // unsigned little endian integer greater than 0 and less than 500000000
-  if (
-    i.requiredHeightLocktime !== undefined &&
-    (i.requiredHeightLocktime <= 0 || i.requiredHeightLocktime >= 500000000)
-  )
-    throw new Error(`validateInput: wrong heighLocktime=${i.requiredHeightLocktime}`);
-  if (i.tapLeafScript) {
-    // tap leaf version appears here twice: in control block and at the end of script
-    for (const [k, v] of i.tapLeafScript) {
-      if ((k.version & 0b1111_1110) !== v[v.length - 1])
-        throw new Error('validateInput: tapLeafScript version mimatch');
-      if (v[v.length - 1] & 1)
-        throw new Error('validateInput: tapLeafScript version has parity bit!');
+/**
+ * Validated PSBT input coder.
+ * @example
+ * Validate a decoded PSBT input before serializing it back to bytes.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { PSBTInputCoder } from '@scure/btc-signer/psbt.js';
+ * PSBTInputCoder.encode({
+ *   txid: hex.decode('0000000000000000000000000000000000000000000000000000000000000001'),
+ *   index: 0,
+ *   witnessUtxo: { amount: 1n, script: new Uint8Array([0x51]) },
+ * });
+ * ```
+ */
+export const PSBTInputCoder = /* @__PURE__ */ (() =>
+  P.validate(PSBTKeyMap(PSBTInput), (i) => {
+    if (i.finalScriptWitness && !i.finalScriptWitness.length)
+      throw new Error('validateInput: empty finalScriptWitness');
+    //if (i.finalScriptSig && !i.finalScriptSig.length) throw new Error('validateInput: empty finalScriptSig');
+    if (i.partialSig && !i.partialSig.length) throw new Error('Empty partialSig');
+    if (i.partialSig) for (const [k] of i.partialSig) validatePubkey(k, PubT.ecdsa);
+    if (i.bip32Derivation) for (const [k] of i.bip32Derivation) validatePubkey(k, PubT.ecdsa);
+    // Locktime = unsigned little endian integer greater than or equal to 500000000 representing
+    if (i.requiredTimeLocktime !== undefined && i.requiredTimeLocktime < 500000000)
+      throw new Error(`validateInput: wrong timeLocktime=${i.requiredTimeLocktime}`);
+    // unsigned little endian integer greater than 0 and less than 500000000
+    if (
+      i.requiredHeightLocktime !== undefined &&
+      (i.requiredHeightLocktime <= 0 || i.requiredHeightLocktime >= 500000000)
+    )
+      throw new Error(`validateInput: wrong heighLocktime=${i.requiredHeightLocktime}`);
+    if (i.tapLeafScript) {
+      // tap leaf version appears here twice: in control block and at the end of script
+      for (const [k, v] of i.tapLeafScript) {
+        if ((k.version & 0b1111_1110) !== v[v.length - 1])
+          throw new Error('validateInput: tapLeafScript version mimatch');
+        if (v[v.length - 1] & 1)
+          throw new Error('validateInput: tapLeafScript version has parity bit!');
+      }
     }
-  }
-  return i;
-});
+    return i;
+  }))();
 
+/** Replaces selected keys in `T` with widened update shapes from `E`. */
 export type ExtendType<T, E> = {
   [K in keyof T]: K extends keyof E ? E[K] | T[K] : T[K];
 };
+/** Marks selected keys in `T` as required. */
 export type RequireType<T, K extends keyof T> = T & {
   [P in K]-?: T[P];
 };
 
+/** Fully decoded PSBT input. */
 export type TransactionInput = P.UnwrapCoder<typeof PSBTInputCoder>;
+/** PSBT input update shape accepted by mutation helpers. */
 export type TransactionInputUpdate = ExtendType<
   TransactionInput,
   {
@@ -309,55 +411,75 @@ export type TransactionInputUpdate = ExtendType<
   }
 >;
 
-export const PSBTOutputCoder = P.validate(PSBTKeyMap(PSBTOutput), (o) => {
-  if (o.bip32Derivation) for (const [k] of o.bip32Derivation) validatePubkey(k, PubT.ecdsa);
-  return o;
-});
+/**
+ * Validated PSBT output coder.
+ * @example
+ * Validate a decoded PSBT output before serializing it back to bytes.
+ * ```ts
+ * import { PSBTOutputCoder } from '@scure/btc-signer/psbt.js';
+ * PSBTOutputCoder.encode({ amount: 1n, script: new Uint8Array([0x51]) });
+ * ```
+ */
+export const PSBTOutputCoder = /* @__PURE__ */ (() =>
+  P.validate(PSBTKeyMap(PSBTOutput), (o) => {
+    if (o.bip32Derivation) for (const [k] of o.bip32Derivation) validatePubkey(k, PubT.ecdsa);
+    return o;
+  }))();
 
+/** Fully decoded PSBT output. */
 export type TransactionOutput = P.UnwrapCoder<typeof PSBTOutputCoder>;
+/** PSBT output update shape accepted by mutation helpers. */
 export type TransactionOutputUpdate = ExtendType<TransactionOutput, { script?: string }>;
+/** Transaction output fields required for serialization. */
 export type TransactionOutputRequired = {
+  /** Serialized scriptPubKey bytes. */
   script: Bytes;
+  /** Output value in satoshis. */
   amount: bigint;
 };
 
-const PSBTGlobalCoder = P.validate(PSBTKeyMap(PSBTGlobal), (g) => {
-  const version = g.version || 0;
-  if (version === 0) {
-    if (!g.unsignedTx) throw new Error('PSBTv0: missing unsignedTx');
-    for (const inp of g.unsignedTx.inputs)
-      if (inp.finalScriptSig && inp.finalScriptSig.length)
-        throw new Error('PSBTv0: input scriptSig found in unsignedTx');
-  }
-  return g;
-});
+const PSBTGlobalCoder = /* @__PURE__ */ (() =>
+  P.validate(PSBTKeyMap(PSBTGlobal), (g) => {
+    const version = g.version || 0;
+    if (version === 0) {
+      if (!g.unsignedTx) throw new Error('PSBTv0: missing unsignedTx');
+      for (const inp of g.unsignedTx.inputs)
+        if (inp.finalScriptSig && inp.finalScriptSig.length)
+          throw new Error('PSBTv0: input scriptSig found in unsignedTx');
+    }
+    return g;
+  }))();
 
-export const _RawPSBTV0 = P.struct({
-  magic: P.magic(P.string(new Uint8Array([0xff])), 'psbt'),
-  global: PSBTGlobalCoder,
-  inputs: P.array('global/unsignedTx/inputs/length', PSBTInputCoder),
-  outputs: P.array(null, PSBTOutputCoder),
-});
+export const _RawPSBTV0 = /* @__PURE__ */ (() =>
+  P.struct({
+    magic: P.magic(P.string(new Uint8Array([0xff])), 'psbt'),
+    global: PSBTGlobalCoder,
+    inputs: P.array('global/unsignedTx/inputs/length', PSBTInputCoder),
+    outputs: P.array(null, PSBTOutputCoder),
+  }))();
 
-export const _RawPSBTV2 = P.struct({
-  magic: P.magic(P.string(new Uint8Array([0xff])), 'psbt'),
-  global: PSBTGlobalCoder,
-  inputs: P.array('global/inputCount', PSBTInputCoder),
-  outputs: P.array('global/outputCount', PSBTOutputCoder),
-});
+export const _RawPSBTV2 = /* @__PURE__ */ (() =>
+  P.struct({
+    magic: P.magic(P.string(new Uint8Array([0xff])), 'psbt'),
+    global: PSBTGlobalCoder,
+    inputs: P.array('global/inputCount', PSBTInputCoder),
+    outputs: P.array('global/outputCount', PSBTOutputCoder),
+  }))();
 
+/** Raw PSBT coder type. */
 export type PSBTRaw = typeof _RawPSBTV0 | typeof _RawPSBTV2;
 
-export const _DebugPSBT = P.struct({
-  magic: P.magic(P.string(new Uint8Array([0xff])), 'psbt'),
-  items: P.array(
-    null,
-    P.apply(
-      P.array(P.NULL, P.tuple([P.hex(CompactSizeLen), P.bytes(CompactSize)])),
-      P.coders.dict()
-    )
-  ),
-});
+export const _DebugPSBT = /* @__PURE__ */ (() =>
+  P.struct({
+    magic: P.magic(P.string(new Uint8Array([0xff])), 'psbt'),
+    items: P.array(
+      null,
+      P.apply(
+        P.array(P.NULL, P.tuple([P.hex(CompactSizeLen), P.bytes(CompactSize)])),
+        P.coders.dict()
+      )
+    ),
+  }))();
 
 function validatePSBTFields<T extends PSBTKeyMap>(
   version: number,
@@ -377,6 +499,24 @@ function validatePSBTFields<T extends PSBTKeyMap>(
   }
 }
 
+/**
+ * Removes fields that are not valid for the requested PSBT version.
+ * @param version - target PSBT version
+ * @param info - PSBT field definition table
+ * @param lst - decoded PSBT key map
+ * @returns Filtered PSBT key map.
+ * @throws If a field cannot be serialized in the requested PSBT version. {@link Error}
+ * @example
+ * Drop fields that are not allowed in the target PSBT version before encoding.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { PSBTInput, cleanPSBTFields } from '@scure/btc-signer/psbt.js';
+ * cleanPSBTFields(2, PSBTInput, {
+ *   txid: hex.decode('0000000000000000000000000000000000000000000000000000000000000001'),
+ *   index: 0,
+ * });
+ * ```
+ */
 export function cleanPSBTFields<T extends PSBTKeyMap>(
   version: number,
   info: T,
@@ -420,6 +560,30 @@ function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>) {
   return tx;
 }
 
+/**
+ * Merges two PSBT key maps while preserving keyed-field uniqueness.
+ * @param psbtEnum - PSBT field definition table
+ * @param val - new values to merge in
+ * @param cur - existing decoded PSBT key map
+ * @param allowedFields - fields still allowed to change
+ * @param allowUnknown - whether to preserve unknown PSBT fields
+ * @returns Merged PSBT key map.
+ * @throws If keyed PSBT fields conflict or signed fields would be removed. {@link Error}
+ * @example
+ * Merge an updated `witnessUtxo` into an existing decoded input map.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { PSBTInput, mergeKeyMap } from '@scure/btc-signer/psbt.js';
+ * mergeKeyMap(
+ *   PSBTInput,
+ *   { witnessUtxo: { amount: 2n, script: new Uint8Array([0x51]) } },
+ *   {
+ *     txid: hex.decode('0000000000000000000000000000000000000000000000000000000000000001'),
+ *     index: 0,
+ *   }
+ * );
+ * ```
+ */
 export function mergeKeyMap<T extends PSBTKeyMap>(
   psbtEnum: T,
   val: PSBTKeyMapKeys<T>,
@@ -494,5 +658,7 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
   return res;
 }
 
-export const RawPSBTV0 = P.validate(_RawPSBTV0, validatePSBT);
-export const RawPSBTV2 = P.validate(_RawPSBTV2, validatePSBT);
+/** Validated PSBTv0 coder. */
+export const RawPSBTV0 = /* @__PURE__ */ (() => P.validate(_RawPSBTV0, validatePSBT))();
+/** Validated PSBTv2 coder. */
+export const RawPSBTV2 = /* @__PURE__ */ (() => P.validate(_RawPSBTV2, validatePSBT))();

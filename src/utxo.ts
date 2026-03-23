@@ -26,7 +26,9 @@ import {
 } from './utils.ts';
 
 // UTXO Select
+/** Minimal output target accepted by the UTXO selector. */
 export type Output = { address: string; amount: bigint } | { script: Uint8Array; amount: bigint };
+/** Intermediate accumulation result returned by selection heuristics. */
 export type Accumulated =
   | {
       indices: number[];
@@ -169,6 +171,7 @@ export const _cmpBig = (a: bigint, b: bigint): 0 | 1 | -1 => {
   return 0;
 };
 
+/** Options for fee estimation and UTXO selection. */
 export type EstimatorOpts = TxOpts & {
   // NOTE: fees less than 1 satoshi per vbyte is not supported. Please create issue if you have valid use case for that.
   feePerByte: bigint; // satoshi per vbyte
@@ -216,6 +219,7 @@ type SortStrategy = 'Newest' | 'Oldest' | 'Smallest' | 'Biggest';
 type ExactStrategy = `exact${SortStrategy}`;
 type AccumStrategy = `accum${SortStrategy}`;
 
+/** Supported UTXO selection strategies. */
 export type SelectionStrategy =
   | 'all'
   | 'default'
@@ -525,6 +529,35 @@ export class _Estimator {
   }
 }
 
+/**
+ * Selects inputs for the requested outputs using the configured strategy.
+ * @param inputs - candidate inputs that may be selected
+ * @param outputs - desired transaction outputs
+ * @param strategy - selection heuristic to use
+ * @param opts - Fee-estimation and transaction-construction options. See {@link EstimatorOpts}.
+ * @returns Selection result, optionally including a constructed transaction.
+ * @throws If the UTXO set, outputs, or estimator options are invalid. {@link Error}
+ * @example
+ * Estimate fees, pick inputs, and build a transaction for the selected set.
+ * ```ts
+ * import { p2wpkh } from '@scure/btc-signer/payment.js';
+ * import { pubECDSA, randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * import { selectUTXO } from '@scure/btc-signer/utxo.js';
+ * import { hex } from '@scure/base';
+ * const spend = p2wpkh(pubECDSA(randomPrivateKeyBytes()));
+ * const change = p2wpkh(pubECDSA(randomPrivateKeyBytes()));
+ * selectUTXO(
+ *   [{
+ *     txid: hex.decode('0000000000000000000000000000000000000000000000000000000000000001'),
+ *     index: 0,
+ *     witnessUtxo: { amount: 50_000n, script: spend.script },
+ *   }],
+ *   [{ address: spend.address!, amount: 10_000n }],
+ *   'default',
+ *   { feePerByte: 1n, changeAddress: change.address! }
+ * );
+ * ```
+ */
 export function selectUTXO(
   inputs: psbt.TransactionInputUpdate[],
   outputs: Output[],

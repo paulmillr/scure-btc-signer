@@ -147,6 +147,13 @@ describe('BIP327', () => {
     const t = keySortVectors;
     deepStrictEqual(musig2.sortKeys(t.pubkeys.map(hexToBytes)), t.sorted_pubkeys.map(hexToBytes));
   });
+  should('validator constructors', () => {
+    const secretKey = schnorr.utils.randomSecretKey();
+    const publicKey = musig2.IndividualPubkey(secretKey);
+    throws(() => musig2.sortKeys('x' as any), TypeError);
+    throws(() => musig2.keyAggregate([publicKey], [], [true]), RangeError);
+    throws(() => musig2.nonceGen(publicKey, secretKey, new Uint8Array(31)), RangeError);
+  });
   should('key aggregation', () => {
     const pubkeys = keyAggVectors.pubkeys.map(hexToBytes);
     for (const t of keyAggVectors.valid_test_cases) {

@@ -45,6 +45,16 @@ const trySqrt = (x: bigint): bigint | void => {
  * Experimental ElligatorSwift implementation:
  * Schnorr-like x-only ECDH with public keys indistinguishable from uniformly random bytes.
  * Documented in BIP324.
+ * @example
+ * Encode an x-only secp256k1 public key into the 64-byte BIP324 pseudorandom form.
+ * ```ts
+ * import { bytesToNumberBE } from '@noble/curves/utils.js';
+ * import { schnorr } from '@noble/curves/secp256k1.js';
+ * import { elligatorSwift } from '@scure/btc-signer/p2p.js';
+ * const secret = schnorr.utils.randomSecretKey();
+ * const encoded = elligatorSwift.encode(bytesToNumberBE(schnorr.getPublicKey(secret)));
+ * elligatorSwift.decode(encoded);
+ * ```
  */
 export const elligatorSwift = {
   // (internal stuff, exported for tests only): decode(u, _inv(x, u)) = x

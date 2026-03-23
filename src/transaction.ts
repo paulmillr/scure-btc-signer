@@ -14,11 +14,21 @@ import {
 import * as u from './utils.ts';
 import { type Bytes, NETWORK, concatBytes, equalBytes, isBytes } from './utils.ts';
 
-const EMPTY32: Uint8Array = new Uint8Array(32);
+const EMPTY32: Uint8Array = /* @__PURE__ */ new Uint8Array(32);
 const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
   amount: 0xffffffffffffffffn,
   script: P.EMPTY,
 };
+/**
+ * Converts transaction weight units into virtual bytes.
+ * @param weight - transaction weight
+ * @returns Rounded-up virtual size.
+ * @example
+ * Convert transaction weight units into virtual bytes.
+ * ```ts
+ * toVsize(4);
+ * ```
+ */
 export const toVsize = (weight: number): number => Math.ceil(weight / 4);
 
 // @scure/bip32 interface
@@ -31,17 +41,52 @@ interface HDKey {
   sign(hash: Bytes): Bytes;
 }
 
+/** Signing source accepted by transaction signing helpers. */
 export type Signer = Bytes | HDKey;
 
+/** Decimal precision used for BTC string formatting. */
 export const PRECISION = 8;
+/** Default transaction version used for newly created transactions. */
 export const DEFAULT_VERSION = 2;
+/** Default transaction locktime. */
 export const DEFAULT_LOCKTIME = 0;
+/** Default input sequence number. */
 export const DEFAULT_SEQUENCE = 4294967295;
-export const Decimal: P.Coder<bigint, string> = P.coders.decimal(PRECISION);
+/**
+ * Decimal coder for BTC-denominated strings.
+ * @example
+ * Convert between satoshi bigint values and BTC-denominated decimal strings.
+ * ```ts
+ * Decimal.encode(1n);
+ * ```
+ */
+export const Decimal: P.Coder<bigint, string> = /* @__PURE__ */ P.coders.decimal(PRECISION);
 
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
+/**
+ * Returns a fallback only when the value is `undefined`.
+ * @param value - optional value
+ * @param def - fallback value
+ * @returns `value` when defined, otherwise `def`.
+ * @example
+ * Keep zero-like values but replace `undefined` with a fallback.
+ * ```ts
+ * def(undefined, 1);
+ * ```
+ */
 export const def = <T>(value: T | undefined, def: T): T => (value === undefined ? def : value);
 
+/**
+ * Deep-clones plain transaction data structures.
+ * @param obj - value to clone
+ * @returns Deep copy of the input value.
+ * @throws If the value contains an unsupported runtime type. {@link Error}
+ * @example
+ * Clone plain transaction data structures before mutating them.
+ * ```ts
+ * cloneDeep({ a: [new Uint8Array([1])] });
+ * ```
+ */
 export function cloneDeep<T>(obj: T): T {
   if (Array.isArray(obj)) return obj.map((i) => cloneDeep(i)) as unknown as T;
   // slice of nodejs Buffer doesn't copy
@@ -61,58 +106,93 @@ export function cloneDeep<T>(obj: T): T {
 
 // Mostly security features, hardened defaults;
 // but you still can parse other people tx with unspendable outputs and stuff if you want
+/** Transaction construction and parsing options. */
 export interface TxOpts {
+  /** Transaction version to place into new transactions and imported PSBTs. */
   version?: number;
+  /** Global locktime for the transaction. */
   lockTime?: number;
+  /** PSBT version to emit when serializing. */
   PSBTVersion?: number;
   // Flags
   // Allow non-standard transaction version
+  /** Allow transaction versions outside the standard small set. */
   allowUnknownVersion?: boolean;
   // Allow output scripts to be unknown scripts (probably unspendable)
-  /** @deprecated Use `allowUnknownOutputs` */
+  /**
+   * Deprecated alias for {@link allowUnknownOutputs}.
+   * @deprecated Use `allowUnknownOutputs`.
+   */
   allowUnknowOutput?: boolean;
+  /** Allow outputs with scripts this library does not recognize. */
   allowUnknownOutputs?: boolean;
   // Try to sign/finalize unknown input. All bets are off, but there is chance that it will work
-  /** @deprecated Use `allowUnknownInputs` */
+  /**
+   * Deprecated alias for {@link allowUnknownInputs}.
+   * @deprecated Use `allowUnknownInputs`.
+   */
   allowUnknowInput?: boolean;
+  /** Allow signing and finalizing inputs with unknown script shapes. */
   allowUnknownInputs?: boolean;
   // Check input/output scripts for sanity
+  /** Skip redeem-script and witness-script consistency checks. */
   disableScriptCheck?: boolean;
   // There is strange behaviour where tx without outputs encoded with empty output in the end,
   // tx without outputs in BIP174 doesn't have itb
+  /** Match the odd empty-output encoding used by `bip174js`. */
   bip174jsCompat?: boolean;
   // If transaction data comes from untrusted source, then it can be modified in such way that will
   // result paying higher mining fee
+  /** Permit legacy inputs that only provide witness UTXO data. */
   allowLegacyWitnessUtxo?: boolean;
-  lowR?: boolean; // Use lowR signatures
-  customScripts?: CustomScript[]; // UNSAFE: Custom payment scripts
+  /** Grind ECDSA signatures until they use a low-R encoding. */
+  lowR?: boolean;
+  /** UNSAFE: additional custom payment-script codecs and finalizers. */
+  customScripts?: CustomScript[];
   // Allow to add additional unknown keys/values to the "unknown" array member
+  /** Preserve unknown PSBT key/value pairs instead of stripping them. */
   allowUnknown?: boolean;
 }
 
 /**
  * Internal, exported only for backwards-compat. Use `SigHash` instead.
- * @deprecated
+ * @deprecated Use {@link SigHash} instead.
+ * @example
+ * Combine the legacy bit flags when interoperating with older code.
+ * ```ts
+ * SignatureHash.ALL | SignatureHash.ANYONECANPAY;
+ * ```
  */
-export const SignatureHash = {
+export const SignatureHash = /* @__PURE__ */ (() => ({
   DEFAULT: 0,
   ALL: 1,
   NONE: 2,
   SINGLE: 3,
   ANYONECANPAY: 0x80,
-};
+}))();
 
-export const SigHash = {
-  DEFAULT: SignatureHash.DEFAULT,
-  ALL: SignatureHash.ALL,
-  NONE: SignatureHash.NONE,
-  SINGLE: SignatureHash.SINGLE,
-  DEFAULT_ANYONECANPAY: SignatureHash.DEFAULT | SignatureHash.ANYONECANPAY,
-  ALL_ANYONECANPAY: SignatureHash.ALL | SignatureHash.ANYONECANPAY,
-  NONE_ANYONECANPAY: SignatureHash.NONE | SignatureHash.ANYONECANPAY,
-  SINGLE_ANYONECANPAY: SignatureHash.SINGLE | SignatureHash.ANYONECANPAY,
-} as const;
-export const SigHashNames = u.reverseObject(SigHash);
+/**
+ * Common signature hash flag combinations.
+ * @example
+ * Use the predefined signature-hash combinations exported by the library.
+ * ```ts
+ * SigHash.SINGLE_ANYONECANPAY;
+ * ```
+ */
+export const SigHash = /* @__PURE__ */ (() =>
+  ({
+    DEFAULT: SignatureHash.DEFAULT,
+    ALL: SignatureHash.ALL,
+    NONE: SignatureHash.NONE,
+    SINGLE: SignatureHash.SINGLE,
+    DEFAULT_ANYONECANPAY: SignatureHash.DEFAULT | SignatureHash.ANYONECANPAY,
+    ALL_ANYONECANPAY: SignatureHash.ALL | SignatureHash.ANYONECANPAY,
+    NONE_ANYONECANPAY: SignatureHash.NONE | SignatureHash.ANYONECANPAY,
+    SINGLE_ANYONECANPAY: SignatureHash.SINGLE | SignatureHash.ANYONECANPAY,
+  }) as const)();
+/** Reverse lookup table for signature hash flag names. */
+export const SigHashNames = /* @__PURE__ */ (() => u.reverseObject(SigHash))();
+/** Signature-hash flag number accepted by signing helpers. */
 export type SigHash = u.ValueOf<typeof SigHash>;
 
 function getTaprootKeys(
@@ -129,10 +209,15 @@ function getTaprootKeys(
 }
 
 // User facing API with decoders
+/** Minimal transaction input fields required to serialize and sign. */
 export type TransactionInputRequired = {
+  /** Previous transaction id being spent. */
   txid: Bytes;
+  /** Previous output index inside that transaction. */
   index: number;
+  /** Final sequence number that will be serialized for the input. */
   sequence: number;
+  /** Final scriptSig bytes that will be serialized for the input. */
   finalScriptSig: Bytes;
 };
 
@@ -144,6 +229,22 @@ function outputBeforeSign(i: psbt.TransactionOutput): psbt.TransactionOutputRequ
 }
 
 // Force check index/txid/sequence
+/**
+ * Normalizes a PSBT input into the fields needed for signing.
+ * @param i - PSBT input to validate
+ * @returns Input fields required for signing.
+ * @throws If the input is missing `txid` or `index`. {@link Error}
+ * @example
+ * Fill in defaults for the fields the signer expects to see.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { inputBeforeSign } from '@scure/btc-signer/transaction.js';
+ * inputBeforeSign({
+ *   txid: hex.decode('0000000000000000000000000000000000000000000000000000000000000001'),
+ *   index: 0,
+ * });
+ * ```
+ */
 export function inputBeforeSign(i: psbt.TransactionInput): TransactionInputRequired {
   if (i.txid === undefined || i.index === undefined)
     throw new Error('Transaction/input: txid and index required');
@@ -162,7 +263,7 @@ function cleanFinalInput(i: psbt.TransactionInput) {
 }
 
 // (TxHash, Idx)
-const TxHashIdx = P.struct({ txid: P.bytes(32, true), index: P.U32LE });
+const TxHashIdx = /* @__PURE__ */ (() => P.struct({ txid: P.bytes(32, true), index: P.U32LE }))();
 
 function validateSigHash(s: SigHash) {
   if (typeof s !== 'number' || typeof SigHashNames[s] !== 'string')
@@ -275,9 +376,21 @@ function validateInput(i: psbt.TransactionInput): psbt.TransactionInput {
   return i;
 }
 
+/** Canonical PSBT input shape used by the coder layer. */
 export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
 
 // Normalizes input
+/**
+ * Extracts the previous output referenced by an input.
+ * @param input - PSBT input with previous output data
+ * @returns Previous output information.
+ * @throws If the input does not contain usable previous-output information. {@link Error}
+ * @example
+ * Read the previous output from either `witnessUtxo` or `nonWitnessUtxo`.
+ * ```ts
+ * getPrevOut({ witnessUtxo: { amount: 1n, script: new Uint8Array([0x51]) } });
+ * ```
+ */
 export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof RawOutput> {
   if (input.nonWitnessUtxo) {
     if (input.index === undefined) throw new Error('Unknown input index');
@@ -286,6 +399,26 @@ export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof R
   else throw new Error('Cannot find previous output info');
 }
 
+/**
+ * Normalizes a transaction input update into canonical PSBT form.
+ * @param i - input update to normalize
+ * @param cur - existing input value to merge with
+ * @param allowedFields - fields that may still change on signed inputs
+ * @param disableScriptCheck - whether to skip redeem/witness script sanity checks
+ * @param allowUnknown - whether to keep unknown PSBT fields
+ * @returns Normalized PSBT input.
+ * @example
+ * Accept hex txids from callers, then normalize them into canonical PSBT bytes.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { normalizeInput } from '@scure/btc-signer/transaction.js';
+ * normalizeInput({
+ *   txid: '0000000000000000000000000000000000000000000000000000000000000001',
+ *   index: 0,
+ *   witnessUtxo: { amount: 1n, script: new Uint8Array([0x51]) },
+ * });
+ * ```
+ */
 export function normalizeInput(
   i: psbt.TransactionInputUpdate,
   cur?: psbt.TransactionInput,
@@ -321,6 +454,27 @@ export function normalizeInput(
   return res;
 }
 
+/**
+ * Determines how an input should be signed and finalized.
+ * @param input - PSBT input to inspect
+ * @param allowLegacyWitnessUtxo - whether legacy inputs may rely on witness UTXO data only
+ * @returns Input classification including transaction type and sighash defaults.
+ * @throws If the input scripts or previous-output data are inconsistent. {@link Error}
+ * @example
+ * Detect how the signer should treat a SegWit input from its previous output script.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { p2wpkh } from '@scure/btc-signer/payment.js';
+ * import { getInputType } from '@scure/btc-signer/transaction.js';
+ * import { pubECDSA, randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * getInputType({
+ *   witnessUtxo: {
+ *     amount: 1n,
+ *     script: p2wpkh(pubECDSA(randomPrivateKeyBytes())).script,
+ *   },
+ * });
+ * ```
+ */
 export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtxo = false) {
   let txType = 'legacy';
   let defaultSighash = SignatureHash.ALL;
@@ -379,6 +533,27 @@ export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtx
   }
 }
 
+/**
+ * Mutable Bitcoin transaction and PSBT helper.
+ * @param opts - Transaction construction and PSBT serialization options. See {@link TxOpts}.
+ * @example
+ * Create a transaction, add one spend, and export it as PSBT.
+ * ```ts
+ * import { hex } from '@scure/base';
+ * import { p2wpkh } from '@scure/btc-signer/payment.js';
+ * import { Transaction } from '@scure/btc-signer/transaction.js';
+ * import { pubECDSA, randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * const spend = p2wpkh(pubECDSA(randomPrivateKeyBytes()));
+ * const tx = new Transaction();
+ * tx.addInput({
+ *   txid: hex.decode('0000000000000000000000000000000000000000000000000000000000000001'),
+ *   index: 0,
+ *   witnessUtxo: { amount: 2n, script: spend.script },
+ * });
+ * tx.addOutput({ script: spend.script, amount: 1n });
+ * tx.toPSBT();
+ * ```
+ */
 export class Transaction {
   private global: psbt.PSBTKeyMapKeys<typeof psbt.PSBTGlobal> = {};
   private inputs: psbt.TransactionInput[] = []; // use getInput()
@@ -1241,6 +1416,19 @@ export class Transaction {
   }
 }
 
+/**
+ * Merges multiple PSBT blobs into one.
+ * @param psbts - PSBT byte arrays to combine
+ * @returns Combined PSBT bytes.
+ * @throws If the PSBT list is empty or the partial transactions cannot be combined. {@link Error}
+ * @example
+ * Merge separate partially signed PSBTs that share the same unsigned transaction.
+ * ```ts
+ * import { PSBTCombine, Transaction } from '@scure/btc-signer/transaction.js';
+ * const psbt = new Transaction().toPSBT();
+ * PSBTCombine([psbt, psbt]);
+ * ```
+ */
 export function PSBTCombine(psbts: Bytes[]): Bytes {
   if (!psbts || !Array.isArray(psbts) || !psbts.length)
     throw new Error('PSBTCombine: wrong PSBT list');
@@ -1251,6 +1439,17 @@ export function PSBTCombine(psbts: Bytes[]): Bytes {
 
 // Copy-pasted from bip32 derive, maybe do something like 'bip32.parsePath'?
 const HARDENED_OFFSET: number = 0x80000000;
+/**
+ * Parses a BIP32 path string into child indices.
+ * @param path - derivation path such as `m/0'/1`
+ * @returns Array of encoded child indices.
+ * @throws If the derivation path syntax or child indices are invalid. {@link Error}
+ * @example
+ * Parse a BIP32 derivation path into hardened and unhardened indices.
+ * ```ts
+ * bip32Path("m/0'/1");
+ * ```
+ */
 export function bip32Path(path: string): number[] {
   const out: number[] = [];
   if (!/^[mM]'?/.test(path)) throw new Error('Path must start with "m" or "M"');

@@ -107,6 +107,10 @@ import { deepStrictEqual, throws } from 'assert';
 Legacy script, doesn't have an address. Must be wrapped in P2SH / P2WSH / P2SH-P2WSH. Not recommended.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const uncompressed = hex.decode(
   '04ad90e5b6bc86b3ec7fac2c5fbda7423fc8ef0d58df594c773fa05e2c281b2bfe877677c668bd13603944e34f4818ee03cadd81a88542b8b4d5431264180e2c28'
 );
@@ -124,11 +128,16 @@ deepStrictEqual(btc.p2pk(uncompressed), {
 Classic (pre-SegWit) address.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
 deepStrictEqual(btc.p2pkh(PubKey), {
   type: 'pkh',
   address: '134D6gYy8DsR5m4416BnmgASuMBqKvogQh',
   script: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+  hash: hex.decode('168b992bcfc44050310b3a94bd0771136d0b28d1'),
 });
 // P2SH-P2PKH
 deepStrictEqual(btc.p2sh(btc.p2pkh(PubKey)), {
@@ -136,6 +145,7 @@ deepStrictEqual(btc.p2sh(btc.p2pkh(PubKey)), {
   address: '3EPhLJ1FuR2noj6qrTs4YvepCvB6sbShoV',
   script: hex.decode('a9148b530b962725af3bb7c818f197c619db3f71495087'),
   redeemScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+  hash: hex.decode('8b530b962725af3bb7c818f197c619db3f714950'),
 });
 // P2WSH-P2PKH
 deepStrictEqual(btc.p2wsh(btc.p2pkh(PubKey)), {
@@ -143,6 +153,7 @@ deepStrictEqual(btc.p2wsh(btc.p2pkh(PubKey)), {
   address: 'bc1qhxtthndg70cthfasy8y4qlk9h7r3006azn9md0fad5dg9hh76nkqaufnuz',
   script: hex.decode('0020b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
   witnessScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+  hash: hex.decode('b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
 });
 // P2SH-P2WSH-P2PKH
 deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
@@ -151,6 +162,7 @@ deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
   script: hex.decode('a9148a3d36fb710a9c7cae06cfcdf39792ff5773e8f187'),
   redeemScript: hex.decode('0020b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
   witnessScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+  hash: hex.decode('8a3d36fb710a9c7cae06cfcdf39792ff5773e8f1'),
 });
 ```
 
@@ -163,11 +175,16 @@ Uses bech32 address.
 Can't be wrapped in [P2WSH](#p2wsh-witness-script-hash).
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
 deepStrictEqual(btc.p2wpkh(PubKey), {
   type: 'wpkh',
   address: 'bc1qz69ej270c3q9qvgt822t6pm3zdksk2x35j2jlm',
   script: hex.decode('0014168b992bcfc44050310b3a94bd0771136d0b28d1'),
+  hash: hex.decode('168b992bcfc44050310b3a94bd0771136d0b28d1'),
 });
 // P2SH-P2WPKH
 deepStrictEqual(btc.p2sh(btc.p2wpkh(PubKey)), {
@@ -175,6 +192,7 @@ deepStrictEqual(btc.p2sh(btc.p2wpkh(PubKey)), {
   address: '3BCuRViGCTXmQjyJ9zjeRUYrdZTUa38zjC',
   script: hex.decode('a91468602f2db7b7d7cdcd2639ab6bf7f5bfe828e53f87'),
   redeemScript: hex.decode('0014168b992bcfc44050310b3a94bd0771136d0b28d1'),
+  hash: hex.decode('68602f2db7b7d7cdcd2639ab6bf7f5bfe828e53f'),
 });
 ```
 
@@ -185,6 +203,10 @@ Classic (pre-SegWit) script address. Useful for multisig and other advanced use-
 Required tx input fields to make it spendable: `redeemScript`
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
 // Wrap P2PKH in P2SH
 deepStrictEqual(btc.p2sh(btc.p2pkh(PubKey)), {
@@ -192,6 +214,7 @@ deepStrictEqual(btc.p2sh(btc.p2pkh(PubKey)), {
   address: '3EPhLJ1FuR2noj6qrTs4YvepCvB6sbShoV',
   script: hex.decode('a9148b530b962725af3bb7c818f197c619db3f71495087'),
   redeemScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+  hash: hex.decode('8b530b962725af3bb7c818f197c619db3f714950'),
 });
 ```
 
@@ -203,12 +226,17 @@ In SegWit, signature is removed from tx hash calculation.
 Required tx input fields to make it spendable: `witnessScript`
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
 deepStrictEqual(btc.p2wsh(btc.p2pkh(PubKey)), {
   type: 'wsh',
   address: 'bc1qhxtthndg70cthfasy8y4qlk9h7r3006azn9md0fad5dg9hh76nkqaufnuz',
   script: hex.decode('0020b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
   witnessScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+  hash: hex.decode('b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
 });
 ```
 
@@ -219,6 +247,10 @@ Not really script type, but construction of P2WSH inside P2SH.
 Required tx input fields to make it spendable: `redeemScript`, `witnessScript`
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
 deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
   type: 'sh',
@@ -226,6 +258,7 @@ deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(PubKey))), {
   script: hex.decode('a9148a3d36fb710a9c7cae06cfcdf39792ff5773e8f187'),
   redeemScript: hex.decode('0020b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
   witnessScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
+  hash: hex.decode('8a3d36fb710a9c7cae06cfcdf39792ff5773e8f1'),
 });
 ```
 
@@ -236,6 +269,10 @@ Classic / segwit (pre-taproot) M-of-N Multisig. Doesn't have an address, must be
 Duplicate public keys are not accepted to reduce mistakes. Use flag `allowSamePubkeys` to override the behavior, for cases like `2-of-[A,A,B,C]`, which can be signed by `A or (B and C)`.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKeys = [
   hex.decode('030000000000000000000000000000000000000000000000000000000000000001'),
   hex.decode('030000000000000000000000000000000000000000000000000000000000000002'),
@@ -249,6 +286,7 @@ deepStrictEqual(btc.p2sh(btc.p2ms(2, PubKeys)), {
   redeemScript: hex.decode(
     '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
   ),
+  hash: hex.decode('9d91c6de4eacde72a7cc86bff98d1915b3c7818f'),
 });
 // Multisig 2-of-3 wrapped in P2WSH
 deepStrictEqual(btc.p2wsh(btc.p2ms(2, PubKeys)), {
@@ -258,6 +296,7 @@ deepStrictEqual(btc.p2wsh(btc.p2ms(2, PubKeys)), {
   witnessScript: hex.decode(
     '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
   ),
+  hash: hex.decode('74ee2b4ceec10839a489c07d4a538384394681e3dcd88f3ee87a85199908aa5e'),
 });
 // Multisig 2-of-3 wrapped in P2SH-P2WSH
 deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2ms(2, PubKeys))), {
@@ -268,6 +307,7 @@ deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2ms(2, PubKeys))), {
   witnessScript: hex.decode(
     '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
   ),
+  hash: hex.decode('ab70ab84b12b891364b4b2a14ca813cac308b242'),
 });
 // Useful util: wraps P2MS in P2SH or P2WSH
 deepStrictEqual(btc.p2sh(btc.p2ms(2, PubKeys)), btc.multisig(2, PubKeys));
@@ -289,6 +329,10 @@ to sign multi-sig wallets, and there is no BIP/PSBT fields for that yet.
 Required tx input fields to make it spendable: `tapInternalKey`, `tapMerkleRoot`, `tapLeafScript`
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 // Key Path Spend (owned of private key for PubKey can spend)
 deepStrictEqual(btc.p2tr(PubKey), {
@@ -338,6 +382,10 @@ This is fast for cases like 15-of-20, but extremely slow for cases like 5-of-20.
 Duplicate public keys are not accepted to reduce mistakes. Use flag `allowSamePubkeys` to override the behavior, for cases like `2-of-[A,A,B,C]`, which can be signed by `A or (B and C)`.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 const PubKey2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
 const PubKey3 = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
@@ -371,6 +419,10 @@ Duplicate public keys are not accepted to reduce mistakes. Use flag `allowSamePu
 **Experimental**, use at your own risk.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 const PubKey2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
 const PubKey3 = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
@@ -395,6 +447,10 @@ deepStrictEqual(clean(btc.p2tr(undefined, btc.p2tr_ms(2, [PubKey, PubKey2, PubKe
 Specific case of `p2tr_ns(1, [pubkey])`, which is the same as the BTC descriptor: `tr($H,pk(PUBKEY))`
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const PubKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 // P2PK for taproot
 const clean = (x) => ({ type: x.type, address: x.address, script: hex.encode(x.script) });
@@ -410,6 +466,10 @@ deepStrictEqual(clean(btc.p2tr(undefined, [btc.p2tr_pk(PubKey)])), {
 Ephemeral anchors are supported. [Check out docs](https://bitcoinops.org/en/topics/ephemeral-anchors/).
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const p2aScript = hex.decode('51024e73');
 const decoded = btc.OutScript.decode(p2aScript);
 deepStrictEqual(decoded, { type: 'p2a', script: p2aScript });
@@ -428,7 +488,7 @@ If you have use-case where they are needed, create a github issue.
 
 PSBTv2 features tx_modifiable and taproot+bip32 are not supported yet.
 
-```ts
+```text
 // Decode
 Transaction.fromRaw(raw: Bytes, opts: TxOpts = {}); // Raw tx
 Transaction.fromPSBT(psbt: Bytes, opts: TxOpts = {}); // PSBT tx
@@ -448,16 +508,26 @@ Use `getInput` and `inputsLength` to read information about inputs: they return 
 This is necessary to avoid accidental modification of internal structures without calling methods (addInput/updateInput) that will verify correctness.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual, throws } from 'node:assert';
+
+const tx = new btc.Transaction();
+type Bytes = Uint8Array | string;
+type RawTransactionBytesOrHex = Uint8Array | string;
+type DerivationPath = { fingerprint: number; path: number[] };
+type TapScriptSigKey = { pubKey: Bytes; leafHash: Bytes };
+type TapLeafScriptKey = { version: number; internalKey: Bytes; merklePath: Bytes[] };
 type TransactionInput = {
   txid?: Bytes,
   index?: number,
-  nonWitnessUtxo?: <RawTransactionBytesOrHex>,
-  witnessUtxo?: {script?: Bytes; amount: bigint},
+  nonWitnessUtxo?: RawTransactionBytesOrHex,
+  witnessUtxo?: { script?: Bytes; amount: bigint },
   partialSig?: [Bytes, Bytes][]; // [PubKey, Signature]
-  sighashType?: P.U32LE,
+  sighashType?: number,
   redeemScript?: Bytes,
   witnessScript?: Bytes,
-  bip32Derivation?: [Bytes, {fingerprint: number; path: number[]}]; // [PubKey, DeriviationPath]
+  bip32Derivation?: [Bytes, DerivationPath | undefined][]; // [PubKey, DeriviationPath]
   finalScriptSig?: Bytes,
   finalScriptWitness?: Bytes[],
   porCommitment?: Bytes,
@@ -465,15 +535,15 @@ type TransactionInput = {
   requiredTimeLocktime?: number,
   requiredHeightLocktime?: number,
   tapKeySig?: Bytes,
-  tapScriptSig?: [Bytes, Bytes][]; // [PubKeySchnorr, LeafHash]
+  tapScriptSig?: [TapScriptSigKey, Bytes][]; // [PubKeySchnorr, LeafHash]
   // [ControlBlock, ScriptWithVersion]
-  tapLeafScript?: [{version: number; internalKey: Bytes; merklePath: Bytes[]}, Bytes];
+  tapLeafScript?: [TapLeafScriptKey, Bytes][];
   tapInternalKey?: Bytes,
   tapMerkleRoot?: Bytes,
 };
 
-tx.addInput(input: TransactionInput): number;
-tx.updateInput(idx: number, input: TransactionInput);
+// tx.addInput(input: TransactionInput): number;
+// tx.updateInput(idx: number, input: TransactionInput);
 
 // Input
 tx.addInput({ txid: new Uint8Array(32), index: 0 });
@@ -494,7 +564,7 @@ tx.addInput({
   txid: '0000000000000000000000000000000000000000000000000000000000000000',
   index: 0,
 });
-deepStrictEqual(tx.inputs[2], {
+deepStrictEqual(tx.inputs[1], {
   txid: new Uint8Array(32),
   index: 0,
   sequence: btc.DEFAULT_SEQUENCE,
@@ -542,9 +612,11 @@ for (let i = 0; i < tx.inputsLength; i++) {
 
 ### Outputs
 
-`addOutputAddress` uses bigint amounts, which means satoshis - NOT btc. If you need btc representation, use Decimal:
+`addOutputAddress` uses bigint amounts, which means satoshis, not BTC. If you need BTC representation, use `Decimal`:
 
 ```ts
+import * as btc from '@scure/btc-signer';
+
 const amountSatoshi = btc.Decimal.decode('1.5'); // 1.5 btc in satoshi
 ```
 
@@ -552,23 +624,33 @@ Use `getOutput` and `outputsLength` to read outputs information. This methods re
 This is necessary to avoid accidental modification of internal structures without calling methods (addOutput/updateOutput) that will verify correctness.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual, throws } from 'node:assert';
+
+const tx = new btc.Transaction();
+type Bytes = Uint8Array | string;
+type DerivationPath = { fingerprint: number; path: number[] };
 type TransactionOutput = {
   script?: Bytes,
   amount?: bigint,
   redeemScript?: Bytes,
   witnessScript?: Bytes,
-  bip32Derivation?: [Bytes, {fingerprint: number; path: number[]}]; // [PubKey, DeriviationPath]
+  bip32Derivation?: [Bytes, DerivationPath | undefined][]; // [PubKey, DeriviationPath]
   tapInternalKey?: Bytes,
 };
 
-tx.addOutput(o: TransactionOutput): number;
-tx.updateOutput(idx: number, output: TransactionOutput);
-tx.addOutputAddress(address: string, amount: bigint, network = NETWORK): number;
+// tx.addOutput(o: TransactionOutput): number;
+// tx.updateOutput(idx: number, output: TransactionOutput);
+// tx.addOutputAddress(address: string, amount: bigint, network = NETWORK): number;
 
-const compressed = hex.decode(
-  '030000000000000000000000000000000000000000000000000000000000000001'
-);
-const script = btc.p2pkh(compressed).script;
+const pubKey = hex.decode('030000000000000000000000000000000000000000000000000000000000000001');
+const bip1 = [pubKey, { fingerprint: 5, path: [1, 2, 3] }];
+const pubKey2 = hex.decode('030000000000000000000000000000000000000000000000000000000000000002');
+const bip2 = [pubKey2, { fingerprint: 6, path: [4, 5, 6] }];
+const pubKey3 = hex.decode('030000000000000000000000000000000000000000000000000000000000000003');
+const bip3 = [pubKey3, { fingerprint: 7, path: [7, 8, 9] }];
+const script = btc.p2pkh(pubKey).script;
 tx.addOutput({ script, amount: 100n });
 deepStrictEqual(tx.outputs[0], {
   script,
@@ -616,15 +698,45 @@ for (let i = 0; i < tx.outputsLength; i++) {
 ### Basic transaction sign
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { pubECDSA } from '@scure/btc-signer/utils.js';
+import { deepStrictEqual } from 'node:assert';
+
 const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
-const txP2WPKH = new btc.Transaction();
+const pubKey = pubECDSA(privKey);
+const TX_TEST_OUTPUTS = [
+  ['1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP', 10n],
+  ['3H3Kc7aSPP4THLX68k4mQMyf1gvL6AtmDm', 50n],
+  ['bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq', 93n],
+] as const;
+const TX_TEST_INPUTS = [
+  {
+    txid: hex.decode('c061c23190ed3370ad5206769651eaf6fac6d87d85b5db34e30a74e0c4a6da3e'),
+    index: 0,
+    amount: 550n,
+  },
+  {
+    txid: hex.decode('a21965903c938af35e7280ae5779b9fea4f7f01ac256b8a2a53b1b19a4e89a0d'),
+    index: 0,
+    amount: 600n,
+  },
+  {
+    txid: hex.decode('fae21e319ca827df32462afc3225c17719338a8e8d3e3b3ddeb0c2387da3a4c7'),
+    index: 0,
+    amount: 600n,
+  },
+];
+const RAW_TX_HEX =
+  '01000000033edaa6c4e0740ae334dbb5857dd8c6faf6ea5196760652ad7033ed9031c261c00000000000ffffffff0d9ae8a4191b3ba5a2b856c21af0f7a4feb97957ae80725ef38a933c906519a20000000000ffffffffc7a4a37d38c2b0de3d3b3e8d8e8a331977c12532fc2a4632df27a89c311ee2fa0000000000ffffffff030a000000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac320000000000000017a914a860f76561c85551594c18eecceffaee8c4822d7875d00000000000000160014e8df018c7e326cc253faac7e46cdc51e68542c4200000000';
+const txP2WPKH = new btc.Transaction({ version: 1 });
 for (const inp of TX_TEST_INPUTS) {
   txP2WPKH.addInput({
     txid: inp.txid,
     index: inp.index,
     witnessUtxo: {
       amount: inp.amount,
-      script: btc.p2wpkh(secp256k1.getPublicKey(privKey, true)).script,
+      script: btc.p2wpkh(pubKey).script,
     },
   });
 }
@@ -632,16 +744,23 @@ for (const [address, amount] of TX_TEST_OUTPUTS) txP2WPKH.addOutputAddress(addre
 deepStrictEqual(hex.encode(txP2WPKH.unsignedTx), RAW_TX_HEX);
 txP2WPKH.sign(privKey);
 txP2WPKH.finalize();
-deepStrictEqual(txP2WPKH.id, 'cbb94443b19861df0824914fa654212facc071854e0df6f7388b482a6394526d');
+deepStrictEqual(txP2WPKH.id, 'e4db0a196f378a6648deb221a2771fde577892479a2d52abbe8cf3d31d2f140f');
 deepStrictEqual(
   txP2WPKH.hex,
-  '010000000001033edaa6c4e0740ae334dbb5857dd8c6faf6ea5196760652ad7033ed9031c261c00000000000ffffffff0d9ae8a4191b3ba5a2b856c21af0f7a4feb97957ae80725ef38a933c906519a20000000000ffffffffc7a4a37d38c2b0de3d3b3e8d8e8a331977c12532fc2a4632df27a89c311ee2fa0000000000ffffffff03e8030000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac881300000000000017a914a860f76561c85551594c18eecceffaee8c4822d7876b24000000000000160014e8df018c7e326cc253faac7e46cdc51e68542c4202473044022024e7b1a6ae19a95c69c192745db09cc54385a80cc7684570cfbf2da84cbbfa0802205ad55efb2019a1aa6edc03cf243989ea428c4d216699cbae2cfaf3c26ddef5650121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0247304402204415ef16f341e888ca2483b767b47fcf22977b6d673c3f7c6cae2f6b4bc2ac08022055be98747345b02a6f40edcc2f80390dcef4efe57b38c1bb7d16bdbca710abfd0121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f02473044022069769fb5c97a7dd9401dbd3f6d32a38fe82bc8934c49c7c4cd3b39c6d120080c02202c181604203dc45c10e5290ded103195fae117d7fb0db19cdc411e73a76da6cb0121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f00000000'
+  '010000000001033edaa6c4e0740ae334dbb5857dd8c6faf6ea5196760652ad7033ed9031c261c00000000000ffffffff0d9ae8a4191b3ba5a2b856c21af0f7a4feb97957ae80725ef38a933c906519a20000000000ffffffffc7a4a37d38c2b0de3d3b3e8d8e8a331977c12532fc2a4632df27a89c311ee2fa0000000000ffffffff030a000000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac320000000000000017a914a860f76561c85551594c18eecceffaee8c4822d7875d00000000000000160014e8df018c7e326cc253faac7e46cdc51e68542c4202483045022100d04801283249fc9a80f71d8fe8d9f6dc0e84afc0e59df2733f04ff659e095a8802206ce71c598d8f75b7cb2102b252b7bd04c6228c0826da0ed27104f8cca829869d0121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f02473044022026ef492099b86572a965b28d11a40bf9b1e9fe5a2aeab22cbca1b354988910e30220416508f564e67932cb1c38bef7a3c3f0a95470fc81c6cb359a9268a49f6449850121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0247304402202cf37bbcf2c098e48ffc204d0ab688465b43642546d2e0414f5b8e4bdfae9420022006ccfb2415c7a941b6d5c07651fd80b9656bdea5fe793530cf2c604920c72d100121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f00000000'
 );
 ```
 
 ### BIP174 PSBT multi-sig example
 
+> `npm install @scure/base @scure/bip32`
+
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import * as bip32 from '@scure/bip32';
+import { deepStrictEqual } from 'node:assert';
+
 const testnet = {
   wif: 0xef,
   bip32: {
@@ -828,8 +947,14 @@ a lot of outputs close to dust.
 #### Example
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { pubECDSA } from '@scure/btc-signer/utils.js';
+import { deepStrictEqual } from 'node:assert';
+
 const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
-const pubKey = secp256k1.getPublicKey(privKey, true);
+const pubKey = pubECDSA(privKey);
+const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
 const spend = btc.p2wpkh(pubKey, regtest);
 const utxo = [
   {
@@ -874,7 +999,8 @@ const selected = btc.selectUTXO(utxo, outputs, 'default', {
   createTx: true, // create tx with selected inputs/outputs
   network: regtest,
 });
-// NOTE: 'selected' will 'undefined' if there is not enough funds
+// selectUTXO returns undefined if there is not enough funds.
+if (!selected) throw new Error('expected enough funds');
 deepStrictEqual(selected.fee, 394n); // estimated fee
 deepStrictEqual(selected.change, true); // change address used
 deepStrictEqual(selected.outputs, [
@@ -904,18 +1030,23 @@ deepStrictEqual(tx.fee, 394n);
 MuSig2 implementation conforming to [BIP-327](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
 is available in `@scure/btc-signer/musig2.js`. Check out [bip327-musig2.test.ts](./test/bip327-musig2.test.ts) as well:
 
+> `npm install @noble/curves`
+
 ```ts
+import * as btc from '@scure/btc-signer';
 import * as musig2 from '@scure/btc-signer/musig2.js';
+import { schnorr } from '@noble/curves/secp256k1.js';
+import { deepStrictEqual } from 'node:assert';
 // MuSig2 Multi-signature for Alice, Bob, and Carol
 // 1. Key Generation (for each signer: Alice, Bob, Carol)
 // - Alice's key generation
-const aliceSecretKey = randomBytes(32); // Alice generates a random 32-byte secret key
+const aliceSecretKey = btc.utils.randomPrivateKeyBytes(); // Alice generates a random 32-byte secret key
 const alicePublicKey = musig2.IndividualPubkey(aliceSecretKey); // Alice derives her individual public key from her secret key
 // - Bob's key generation
-const bobSecretKey = randomBytes(32); // Bob generates a random 32-byte secret key
+const bobSecretKey = btc.utils.randomPrivateKeyBytes(); // Bob generates a random 32-byte secret key
 const bobPublicKey = musig2.IndividualPubkey(bobSecretKey); // Bob derives his individual public key from his secret key
 // - Carol's key generation
-const carolSecretKey = randomBytes(32); // Carol generates a random 32-byte secret key
+const carolSecretKey = btc.utils.randomPrivateKeyBytes(); // Carol generates a random 32-byte secret key
 const carolPublicKey = musig2.IndividualPubkey(carolSecretKey); // Carol derives her individual public key from her secret key
 
 // 2. Key Aggregation (All signers participate by sharing public keys)
@@ -953,9 +1084,7 @@ const partialSignatures = [alicePartialSignature, bobPartialSignature, carolPart
 const finalSignature = session.partialSigAgg(partialSignatures); // Aggregate partial signatures to create the final signature
 
 // 7. Signature Verification (Anyone can verify the final signature)
-// Verify the final signature
-import { schnorr } from '@noble/curves/secp256k1';
-schnorr.verify(finalSignature, msg, aggregatePublicKey);
+deepStrictEqual(schnorr.verify(finalSignature, msg, aggregatePublicKey), true);
 ```
 
 ## Ordinals and custom scripts
@@ -1011,6 +1140,8 @@ for (const k of [alice, bob]) {
 
 ## Utils
 
+> `npm install @scure/base`
+
 ### secp256k1 keys
 
 ```ts
@@ -1027,11 +1158,15 @@ const pub = pubSchnorr(priv);
 Returns common addresses from privateKey
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 deepStrictEqual(btc.getAddress('pkh', privKey), '1C6Rc3w25VHud3dLDamutaqfKWqhrLRTaD'); // P2PKH (legacy address)
 deepStrictEqual(btc.getAddress('wpkh', privKey), 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw'); // SegWit V0 address
 deepStrictEqual(
-  btc.getAddress('tr', priv),
+  btc.getAddress('tr', privKey),
   'bc1p33wm0auhr9kkahzd6l0kqj85af4cswn276hsxg6zpz85xe2r0y8syx4e5t'
 ); // TapRoot KeyPathSpend
 ```
@@ -1041,6 +1176,10 @@ deepStrictEqual(
 Encoding/decoding of WIF privateKeys. Only compressed keys are supported for now.
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 deepStrictEqual(btc.WIF().encode(privKey), 'KwFfNUhSDaASSAwtG7ssQM1uVX8RgX5GHWnnLfhfiQDigjioWXHH');
 deepStrictEqual(
@@ -1054,29 +1193,33 @@ deepStrictEqual(
 Encoding/decoding bitcoin scripts
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 deepStrictEqual(
   btc.Script.decode(
     hex.decode(
       '5221030000000000000000000000000000000000000000000000000000000000000001210300000000000000000000000000000000000000000000000000000000000000022103000000000000000000000000000000000000000000000000000000000000000353ae'
     )
-  ).map((i) => (P.isBytes(i) ? hex.encode(i) : i)),
+  ).map((i) => (btc.utils.isBytes(i) ? hex.encode(i) : i)),
   [
-    'OP_2',
+    2,
     '030000000000000000000000000000000000000000000000000000000000000001',
     '030000000000000000000000000000000000000000000000000000000000000002',
     '030000000000000000000000000000000000000000000000000000000000000003',
-    'OP_3',
+    3,
     'CHECKMULTISIG',
   ]
 );
 deepStrictEqual(
   hex.encode(
     btc.Script.encode([
-      'OP_2',
+      2,
       hex.decode('030000000000000000000000000000000000000000000000000000000000000001'),
       hex.decode('030000000000000000000000000000000000000000000000000000000000000002'),
       hex.decode('030000000000000000000000000000000000000000000000000000000000000003'),
-      'OP_3',
+      3,
       'CHECKMULTISIG',
     ])
   ),
@@ -1089,6 +1232,10 @@ deepStrictEqual(
 Encoding / decoding of output scripts
 
 ```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+import { deepStrictEqual } from 'node:assert';
+
 deepStrictEqual(
   btc.OutScript.decode(
     hex.decode(

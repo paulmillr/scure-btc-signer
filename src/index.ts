@@ -27,14 +27,22 @@ export { getInputType, Transaction } from './transaction.ts';
 export { NETWORK, TAPROOT_UNSPENDABLE_KEY, TEST_NETWORK } from './utils.ts';
 export { selectUTXO } from './utxo.ts';
 
-export const utils = {
+/**
+ * Small collection of commonly used utility exports.
+ * @example
+ * Reach for the grouped helpers when you want the common byte and Taproot utilities.
+ * ```ts
+ * utils.compareBytes(new Uint8Array([1]), new Uint8Array([2]));
+ * ```
+ */
+export const utils = /* @__PURE__ */ (() => ({
   isBytes,
   concatBytes,
   compareBytes,
   pubSchnorr,
   randomPrivateKeyBytes,
   taprootTweakPubkey,
-};
+}))();
 
 export {
   _sortPubkeys,

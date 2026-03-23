@@ -1,6 +1,7 @@
 import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
+import * as btcUtils from '../src/utils.ts';
 
 should('Packed CompactSize', () => {
   const CASES = [
@@ -49,6 +50,13 @@ should('cmp', () => {
       ret,
       `l=${l} r=${r} ret=${ret}`
     );
+  throws(() => btc.utils.compareBytes('x' as any, new Uint8Array()), TypeError);
+});
+
+should('utils validator constructors', () => {
+  throws(() => btcUtils.validatePubkey(new Uint8Array(32), btcUtils.PubT.ecdsa), RangeError);
+  throws(() => btcUtils.validatePubkey(new Uint8Array(33), btcUtils.PubT.schnorr), RangeError);
+  throws(() => btcUtils.validatePubkey(new Uint8Array(33), 99 as any), TypeError);
 });
 
 should('cmpBig', () => {
