@@ -22,19 +22,31 @@ import { FpIsSquare } from '@noble/curves/abstract/modular.js';
 import { concatBytes, abytes } from '@noble/curves/utils.js';
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
 import { randomBytes } from '@noble/hashes/utils.js';
-import { tagSchnorr, type Bytes } from './utils.ts';
+import { tagSchnorr, type Bytes, type TArg, type TRet } from './utils.ts';
 
+// BIP324's EllSwift formulas use full secp256k1 points for priv*G and x-only ECDH
+// before exporting x coordinates or x-only bytes.
 const Point = secp256k1.Point;
+// BIP324 defines XSwiftEC over integers modulo secp256k1's field prime p, so the
+// EllSwift u/t/x arithmetic and 32-byte field encodings in this file all go through Point.Fp.
 const Fp = Point.Fp;
+// EllSwift private scalars use secp256k1's subgroup order n, not the field prime p used
+// by Point.Fp; Point.Fn is the generic scalar field object, not a secret-key validator.
 const Fn = Point.Fn;
 const _1n = BigInt(1);
 const _2n = BigInt(2);
 
+// BIP324's XSwiftEC uses c = sqrt(-3) mod p and chooses the square root that is
+// itself a square, which is what Fp.sqrt(Fp.create(-3)) returns here.
 const MINUS_3_SQRT = Fp.sqrt(Fp.create(BigInt(-3)));
 const _3n = BigInt(3);
 const _4n = BigInt(4);
 const _7n = BigInt(7);
+// This is the "lift_x(x) succeeds" predicate for field-normalized x values.
+// Raw x >= p would need the full BIP340 range check before reducing modulo p.
 const isValidX = (x: bigint) => FpIsSquare(Fp, Fp.add(Fp.mul(Fp.mul(x, x), x), _7n));
+// BIP324's "return None if the square root does not exist" branches are modeled with
+// undefined here; current callers only pass field-normalized values from Fp arithmetic.
 const trySqrt = (x: bigint): bigint | void => {
   try {
     return Fp.sqrt(x);
@@ -56,8 +68,9 @@ const trySqrt = (x: bigint): bigint | void => {
  * elligatorSwift.decode(encoded);
  * ```
  */
-export const elligatorSwift = {
+export const elligatorSwift = /* @__PURE__ */ Object.freeze({
   // (internal stuff, exported for tests only): decode(u, _inv(x, u)) = x
+  // Returns the case-selected BIP324 XSwiftECInv representative, or undefined for None.
   _inv: (x: bigint, u: bigint, ellCase: number): bigint | void => {
     if (!Number.isSafeInteger(ellCase) || ellCase < 0 || ellCase > 7)
       throw new Error(`elligatorSwift._inv: wrong case=${ellCase}`);
@@ -89,7 +102,13 @@ export const elligatorSwift = {
     return Fp.mul(w0, Fp.add(Fp.div(Fp.mul(u, t0), _2n), v));
   },
   // Encode public key (point or x coordinate bigint) into 64-byte pseudorandom encoding
-  encode: (x: bigint): Uint8Array => {
+  // BIP324 samples encodings for x(P), so callers must pass a curve X coordinate in 0..p-1;
+  // without an explicit guard, the field helpers below interpret out-of-range x modulo p.
+  encode: (x: bigint): TRet<Uint8Array> => {
+    // BIP324 XSwiftEC uses field elements in `0..p-1`, and ellswift_create passes `XElligatorSwift(x(P))`,
+    // so encode() must reject out-of-range x instead of silently reducing a different bigint modulo p.
+    if (!Fp.isValid(x))
+      throw new RangeError('elligatorSwift.encode: expected x coordinate in range 0..p-1');
     // 200k test cycles per keygen: avg=4 max=48
     // seems too much, but same as for reference implementation
     while (true) {
@@ -98,12 +117,14 @@ export const elligatorSwift = {
       const ellCase = randomBytes(1)[0] & 7; // [0..8)
       const t = elligatorSwift._inv(x, u, ellCase);
       if (!t) continue;
-      return concatBytes(Fp.toBytes(u), Fp.toBytes(t));
+      return concatBytes(Fp.toBytes(u), Fp.toBytes(t)) as TRet<Uint8Array>;
     }
   },
   // Decode elligatorSwift point to xonly
-  decode: (data: Uint8Array): Uint8Array => {
+  decode: (data: TArg<Uint8Array>): TRet<Uint8Array> => {
     const _data = abytes(data, 64, 'data');
+    // BIP324 interprets both 32-byte halves as integers modulo p before the
+    // XSwiftEC remaps below, so arbitrary 64-byte inputs are valid here.
     let u = Fp.create(Fp.fromBytes(_data.subarray(0, 32), true));
     let t = Fp.create(Fp.fromBytes(_data.subarray(32, 64), true));
     if (Fp.is0(u)) u = Fp.create(_1n);
@@ -118,39 +139,44 @@ export const elligatorSwift = {
     const y = Fp.div(Fp.add(x, t), Fp.mul(MINUS_3_SQRT, u));
     // try different cases
     let res = Fp.add(u, Fp.mul(Fp.mul(y, y), _4n)); // u + 4 * Y ** 2,
-    if (isValidX(res)) return Fp.toBytes(res);
+    if (isValidX(res)) return Fp.toBytes(res) as TRet<Uint8Array>;
     res = Fp.div(Fp.sub(Fp.div(Fp.neg(x), y), u), _2n); // (-X / Y - u) / 2
-    if (isValidX(res)) return Fp.toBytes(res);
+    if (isValidX(res)) return Fp.toBytes(res) as TRet<Uint8Array>;
     res = Fp.div(Fp.sub(Fp.div(x, y), u), _2n); // (X / Y - u) / 2
-    if (isValidX(res)) return Fp.toBytes(res);
+    if (isValidX(res)) return Fp.toBytes(res) as TRet<Uint8Array>;
     throw new Error('elligatorSwift: cannot decode public key');
   },
   // Generate pair (public key, secret key)
   keygen: () => {
+    // Use a subgroup-valid secp256k1 secret key, then ElligatorSwift-encode x(priv*G).
     const privateKey: Bytes = secp256k1.utils.randomSecretKey();
     const p = Point.BASE.multiply(Point.Fn.fromBytes(privateKey));
     const publicKey: Bytes = elligatorSwift.encode(p.x);
     return { privateKey, publicKey };
   },
   // Generates shared secret between a pub key and a priv key
-  getSharedSecret: (privateKeyA: Uint8Array, publicKeyB: Uint8Array): Bytes => {
+  getSharedSecret: (privateKeyA: TArg<Uint8Array>, publicKeyB: TArg<Uint8Array>): TRet<Bytes> => {
+    // decode() accepts arbitrary 64-byte ElligatorSwift encodings, but the private scalar
+    // here still follows the usual secp256k1 subgroup-secret domain (1..n-1).
     const pub = elligatorSwift.decode(publicKeyB);
     const priv = abytes(privateKeyA, 32, 'privKey');
     const point = schnorr.utils.lift_x(Fp.fromBytes(pub));
     const d = Fn.fromBytes(priv);
-    return Fp.toBytes(point.multiply(d).x);
+    return Fp.toBytes(point.multiply(d).x) as TRet<Bytes>;
   },
   // BIP324 shared secret
   getSharedSecretBip324: (
-    privateKeyOurs: Uint8Array,
-    publicKeyTheirs: Uint8Array,
-    publicKeyOurs: Uint8Array,
+    privateKeyOurs: TArg<Uint8Array>,
+    publicKeyTheirs: TArg<Uint8Array>,
+    publicKeyOurs: TArg<Uint8Array>,
     initiating: boolean
-  ): Uint8Array => {
-    const ours = abytes(publicKeyOurs, undefined, 'publicKeyOurs');
-    const theirs = abytes(publicKeyTheirs, undefined, 'publicKeyTheirs');
+  ): TRet<Uint8Array> => {
+    // BIP324 Shared secret computation hashes "the exactly 64-byte public keys'
+    // encodings sent over the wire", so both ElligatorSwift inputs must be 64 bytes here.
+    const ours = abytes(publicKeyOurs, 64, 'publicKeyOurs');
+    const theirs = abytes(publicKeyTheirs, 64, 'publicKeyTheirs');
     const ecdhPoint = elligatorSwift.getSharedSecret(privateKeyOurs, theirs);
     const pubs = initiating ? [ours, theirs] : [theirs, ours];
-    return tagSchnorr('bip324_ellswift_xonly_ecdh', ...pubs, ecdhPoint);
+    return tagSchnorr('bip324_ellswift_xonly_ecdh', ...pubs, ecdhPoint) as TRet<Uint8Array>;
   },
-};
+});

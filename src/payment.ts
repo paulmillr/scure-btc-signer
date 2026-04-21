@@ -1,9 +1,11 @@
 import { bech32, bech32m, type Coder, createBase58check, hex } from '@scure/base';
+import { anumber } from '@noble/hashes/utils.js';
+import { abytes } from '@noble/curves/utils.js';
 import * as P from 'micro-packed';
 import { TaprootControlBlock, type TransactionInput } from './psbt.ts';
-import { OpToNum, Script, type ScriptType, VarBytes } from './script.ts';
+import { MAX_SCRIPT_BYTE_LENGTH, OpToNum, Script, type ScriptType, VarBytes } from './script.ts';
 import * as u from './utils.ts';
-import { type BTC_NETWORK, type Bytes, NETWORK } from './utils.ts';
+import { type BTC_NETWORK, type Bytes, NETWORK, type TArg, type TRet } from './utils.ts';
 
 // We need following items:
 // - encode/decode output script
@@ -29,14 +31,17 @@ export type P2Ret = {
 // Pay to Anchor (P2A)
 type OutP2AType = { type: 'p2a'; script: Bytes };
 const OutP2A: Coder<OptScript, OutP2AType | undefined> = {
-  encode(from: ScriptType): OutP2AType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutP2AType | undefined> {
+    // BIP433 defines P2A as the exact OP_1 <0x4e73> scriptPubKey.
     if (from.length !== 2 || from[0] !== 1 || !u.isBytes(from[1]) || hex.encode(from[1]) !== '4e73')
       return;
-    return { type: 'p2a', script: Script.encode(from) };
+    return { type: 'p2a', script: Script.encode(from) } as TRet<OutP2AType | undefined>;
   },
-  decode: (to: OutP2AType): OptScript => {
+  decode: (to: TArg<OutP2AType>): TRet<OptScript> => {
     if (to.type !== 'p2a') return;
-    return [1, hex.decode('4e73')];
+    // The decoded object keeps `script` for caller convenience, but the `p2a`
+    // tag always canonicalizes back to the fixed BIP433 script.
+    return [1, hex.decode('4e73')] as TRet<OptScript>;
   },
 };
 
@@ -45,7 +50,8 @@ type OutPKType = { type: 'pk'; pubkey: Bytes };
 /** Optional parsed script result used by output-script coders. */
 export type OptScript = ScriptType | undefined;
 
-function isValidPubkey(pub: Bytes, type: u.PubT): boolean {
+function isValidPubkey(pub: TArg<Bytes>, type: u.PubT): boolean {
+  // Payment coders use a boolean guard here and normalize validatePubkey failures to false.
   try {
     u.validatePubkey(pub, type);
     return true;
@@ -55,7 +61,9 @@ function isValidPubkey(pub: Bytes, type: u.PubT): boolean {
 }
 
 const OutPK: Coder<OptScript, OutPKType | undefined> = {
-  encode(from: ScriptType): OutPKType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutPKType | undefined> {
+    // BIP380/BIP381 `pk(KEY)` only admits SEC1 ECDSA pubkeys here; x-only
+    // 32-byte CHECKSIG scripts are left for the later tapscript coders.
     if (
       from.length !== 2 ||
       !u.isBytes(from[0]) ||
@@ -63,61 +71,87 @@ const OutPK: Coder<OptScript, OutPKType | undefined> = {
       from[1] !== 'CHECKSIG'
     )
       return;
-    return { type: 'pk', pubkey: from[0] };
+    return { type: 'pk', pubkey: from[0] } as TRet<OutPKType | undefined>;
   },
-  decode: (to: OutPKType): OptScript => (to.type === 'pk' ? [to.pubkey, 'CHECKSIG'] : undefined),
+  decode: (to: TArg<OutPKType>): TRet<OptScript> => {
+    if (to.type !== 'pk') return;
+    // OutScript validates `pk.pubkey` before this branch emits the canonical
+    // `<pubkey> CHECKSIG` script.
+    return [to.pubkey, 'CHECKSIG'] as TRet<OptScript>;
+  },
 };
 
 // Public Key Hash (P2PKH)
 type OutPKHType = { type: 'pkh'; hash: Bytes };
 const OutPKH: Coder<OptScript, OutPKHType | undefined> = {
-  encode(from: ScriptType): OutPKHType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutPKHType | undefined> {
     if (from.length !== 5 || from[0] !== 'DUP' || from[1] !== 'HASH160' || !u.isBytes(from[2]))
       return;
+    // OutScript validates that the pushed HASH160 is exactly 20 bytes.
+    // This child matcher only recognizes the canonical P2PKH opcode skeleton.
     if (from[3] !== 'EQUALVERIFY' || from[4] !== 'CHECKSIG') return;
-    return { type: 'pkh', hash: from[2] };
+    return { type: 'pkh', hash: from[2] } as TRet<OutPKHType | undefined>;
   },
-  decode: (to: OutPKHType): OptScript =>
-    to.type === 'pkh' ? ['DUP', 'HASH160', to.hash, 'EQUALVERIFY', 'CHECKSIG'] : undefined,
+  // OutScript validates `pkh.hash` before this branch emits the canonical
+  // `DUP HASH160 <hash> EQUALVERIFY CHECKSIG` script.
+  decode: (to: TArg<OutPKHType>): TRet<OptScript> =>
+    (to.type === 'pkh'
+      ? ['DUP', 'HASH160', to.hash, 'EQUALVERIFY', 'CHECKSIG']
+      : undefined) as TRet<OptScript>,
 };
 // Script Hash (P2SH)
 type OutSHType = { type: 'sh'; hash: Bytes };
 const OutSH: Coder<OptScript, OutSHType | undefined> = {
-  encode(from: ScriptType): OutSHType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutSHType | undefined> {
     if (from.length !== 3 || from[0] !== 'HASH160' || !u.isBytes(from[1]) || from[2] !== 'EQUAL')
       return;
-    return { type: 'sh', hash: from[1] };
+    // OutScript validates that the pushed HASH160 is exactly 20 bytes.
+    // This child matcher only recognizes the canonical P2SH opcode skeleton.
+    return { type: 'sh', hash: from[1] } as TRet<OutSHType | undefined>;
   },
-  decode: (to: OutSHType): OptScript =>
-    to.type === 'sh' ? ['HASH160', to.hash, 'EQUAL'] : undefined,
+  // OutScript validates `sh.hash` before this branch emits the canonical
+  // `HASH160 <hash> EQUAL` script.
+  decode: (to: TArg<OutSHType>): TRet<OptScript> =>
+    (to.type === 'sh' ? ['HASH160', to.hash, 'EQUAL'] : undefined) as TRet<OptScript>,
 };
 
 // Witness Script Hash (P2WSH)
 type OutWSHType = { type: 'wsh'; hash: Bytes };
 const OutWSH: Coder<OptScript, OutWSHType | undefined> = {
-  encode(from: ScriptType): OutWSHType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutWSHType | undefined> {
     if (from.length !== 2 || from[0] !== 0 || !u.isBytes(from[1])) return;
+    // BIP382 `wsh()` is specifically the version-0 32-byte witness program.
+    // Other witness versions stay with the later coders.
     if (from[1].length !== 32) return;
-    return { type: 'wsh', hash: from[1] };
+    return { type: 'wsh', hash: from[1] } as TRet<OutWSHType | undefined>;
   },
-  decode: (to: OutWSHType): OptScript => (to.type === 'wsh' ? [0, to.hash] : undefined),
+  // OutScript validates `wsh.hash` before this branch emits the canonical
+  // version-0 32-byte witness program.
+  decode: (to: TArg<OutWSHType>): TRet<OptScript> =>
+    (to.type === 'wsh' ? [0, to.hash] : undefined) as TRet<OptScript>,
 };
 
 // Witness Public Key Hash (P2WPKH)
 type OutWPKHType = { type: 'wpkh'; hash: Bytes };
 const OutWPKH: Coder<OptScript, OutWPKHType | undefined> = {
-  encode(from: ScriptType): OutWPKHType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutWPKHType | undefined> {
     if (from.length !== 2 || from[0] !== 0 || !u.isBytes(from[1])) return;
+    // BIP382 `wpkh()` is specifically the version-0 20-byte witness program.
+    // Compressed-key restrictions are enforced upstream, and other witness
+    // versions stay with the later coders.
     if (from[1].length !== 20) return;
-    return { type: 'wpkh', hash: from[1] };
+    return { type: 'wpkh', hash: from[1] } as TRet<OutWPKHType | undefined>;
   },
-  decode: (to: OutWPKHType): OptScript => (to.type === 'wpkh' ? [0, to.hash] : undefined),
+  // OutScript validates `wpkh.hash` before this branch emits the canonical
+  // version-0 20-byte witness program.
+  decode: (to: TArg<OutWPKHType>): TRet<OptScript> =>
+    (to.type === 'wpkh' ? [0, to.hash] : undefined) as TRet<OptScript>,
 };
 
 // Multisig (P2MS)
 type OutMSType = { type: 'ms'; pubkeys: Bytes[]; m: number };
 const OutMS: Coder<OptScript, OutMSType | undefined> = {
-  encode(from: ScriptType): OutMSType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutMSType | undefined> {
     const last = from.length - 1;
     if (from[last] !== 'CHECKMULTISIG') return;
     const m = from[0];
@@ -126,26 +160,40 @@ const OutMS: Coder<OptScript, OutMSType | undefined> = {
     const pubkeys = from.slice(1, -2);
     if (n !== pubkeys.length) return;
     for (const pub of pubkeys) if (!u.isBytes(pub)) return;
-    return { type: 'ms', m, pubkeys: pubkeys as Bytes[] }; // we don't need n, since it is the same as pubkeys
+    // OutScript validates pubkey encodings and `0 < m <= n <= 16`.
+    // This child matcher only recognizes the canonical CHECKMULTISIG skeleton.
+    // We don't need n here because it is the same as pubkeys.length.
+    return { type: 'ms', m, pubkeys: pubkeys as Bytes[] } as TRet<OutMSType | undefined>;
   },
   // checkmultisig(n, ..pubkeys, m)
-  decode: (to: OutMSType): OptScript =>
-    to.type === 'ms' ? [to.m, ...to.pubkeys, to.pubkeys.length, 'CHECKMULTISIG'] : undefined,
+  decode: (to: TArg<OutMSType>): TRet<OptScript> =>
+    // OutScript validates multisig pubkeys and `0 < m <= n <= 16`.
+    // This branch only emits the canonical `m <pubkeys...> n CHECKMULTISIG`
+    // script.
+    (to.type === 'ms'
+      ? [to.m, ...to.pubkeys, to.pubkeys.length, 'CHECKMULTISIG']
+      : undefined) as TRet<OptScript>,
 };
 // Taproot (P2TR)
 type OutTRType = { type: 'tr'; pubkey: Bytes };
 const OutTR: Coder<OptScript, OutTRType | undefined> = {
-  encode(from: ScriptType): OutTRType | undefined {
-    if (from.length !== 2 || from[0] !== 1 || !u.isBytes(from[1])) return;
-    return { type: 'tr', pubkey: from[1] };
+  encode(from: TArg<ScriptType>): TRet<OutTRType | undefined> {
+    // BIP141 witness programs are `OP_0..OP_16` followed by a direct 2..40-byte push.
+    // BIP341 assigns native taproot meaning only to version 1 with a 32-byte x-only program;
+    // other OP_1 program lengths remain reserved future witness programs and should fall through.
+    if (from.length !== 2 || from[0] !== 1 || !u.isBytes(from[1]) || from[1].length !== 32) return;
+    return { type: 'tr', pubkey: from[1] } as TRet<OutTRType | undefined>;
   },
-  decode: (to: OutTRType): OptScript => (to.type === 'tr' ? [1, to.pubkey] : undefined),
+  // OutScript validates `tr.pubkey` before this branch emits the canonical
+  // version-1 32-byte witness program.
+  decode: (to: TArg<OutTRType>): TRet<OptScript> =>
+    (to.type === 'tr' ? [1, to.pubkey] : undefined) as TRet<OptScript>,
 };
 
 // Taproot N-of-N multisig (P2TR_NS)
 type OutTRNSType = { type: 'tr_ns'; pubkeys: Bytes[] };
 const OutTRNS: Coder<OptScript, OutTRNSType | undefined> = {
-  encode(from: ScriptType): OutTRNSType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutTRNSType | undefined> {
     const last = from.length - 1;
     if (from[last] !== 'CHECKSIG') return;
     const pubkeys = [];
@@ -156,24 +204,32 @@ const OutTRNS: Coder<OptScript, OutTRNSType | undefined> = {
         if (elm !== 'CHECKSIGVERIFY' || i === last - 1) return;
         continue;
       }
-      if (!u.isBytes(elm)) return;
+      // Require actual Schnorr pubkeys here so near-miss `<bytes> CHECKSIG`
+      // scripts fall through to OutUnknown instead of failing later.
+      if (!u.isBytes(elm) || !isValidPubkey(elm, u.PubT.schnorr)) return;
       pubkeys.push(elm);
     }
-    return { type: 'tr_ns', pubkeys };
+    // BIP342 "Using a k-of-k script for every combination" documents the shape
+    // `<pubkey_1> CHECKSIGVERIFY ... <pubkey_n> CHECKSIG`; this matcher only
+    // classifies that embedded-pubkey form, so bare CHECKSIG stays unknown.
+    if (!pubkeys.length) return;
+    return { type: 'tr_ns', pubkeys } as TRet<OutTRNSType | undefined>;
   },
-  decode: (to: OutTRNSType): OptScript => {
+  decode: (to: TArg<OutTRNSType>): TRet<OptScript> => {
     if (to.type !== 'tr_ns') return;
     const out: ScriptType = [];
     for (let i = 0; i < to.pubkeys.length - 1; i++) out.push(to.pubkeys[i], 'CHECKSIGVERIFY');
+    // This branch assumes at least one Schnorr pubkey; [] would otherwise emit
+    // `[undefined, CHECKSIG]` and only fail later in Script.encode.
     out.push(to.pubkeys[to.pubkeys.length - 1], 'CHECKSIG');
-    return out;
+    return out as TRet<OptScript>;
   },
 };
 
 // Taproot M-of-N Multisig (P2TR_MS)
 type OutTRMSType = { type: 'tr_ms'; pubkeys: Bytes[]; m: number };
 const OutTRMS: Coder<OptScript, OutTRMSType | undefined> = {
-  encode(from: ScriptType): OutTRMSType | undefined {
+  encode(from: TArg<ScriptType>): TRet<OutTRMSType | undefined> {
     const last = from.length - 1;
     if (from[last] !== 'NUMEQUAL' || from[1] !== 'CHECKSIG') return;
     const pubkeys = [];
@@ -181,37 +237,48 @@ const OutTRMS: Coder<OptScript, OutTRMSType | undefined> = {
     if (typeof m !== 'number') return;
     for (let i = 0; i < last - 1; i++) {
       const elm = from[i];
+      // Structural mismatches should fall through to OutUnknown instead of
+      // throwing from the tr_ms matcher.
       if (i & 1) {
-        if (elm !== (i === 1 ? 'CHECKSIG' : 'CHECKSIGADD'))
-          throw new Error('OutScript.encode/tr_ms: wrong element');
+        if (elm !== (i === 1 ? 'CHECKSIG' : 'CHECKSIGADD')) return;
         continue;
       }
-      if (!u.isBytes(elm)) throw new Error('OutScript.encode/tr_ms: wrong key element');
+      if (!u.isBytes(elm)) return;
       pubkeys.push(elm);
     }
-    return { type: 'tr_ms', pubkeys, m };
+    return { type: 'tr_ms', pubkeys, m } as TRet<OutTRMSType | undefined>;
   },
-  decode: (to: OutTRMSType): OptScript => {
+  decode: (to: TArg<OutTRMSType>): TRet<OptScript> => {
     if (to.type !== 'tr_ms') return;
     const out: ScriptType = [to.pubkeys[0], 'CHECKSIG'];
     for (let i = 1; i < to.pubkeys.length; i++) out.push(to.pubkeys[i], 'CHECKSIGADD');
+    // This branch assumes `m` was already validated as an integer ScriptNum;
+    // fractional JS numbers would otherwise serialize as a different threshold.
     out.push(to.m, 'NUMEQUAL');
-    return out;
+    return out as TRet<OptScript>;
   },
 };
 
 // Unknown output type
 type OutUnknownType = { type: 'unknown'; script: Bytes };
 const OutUnknown: Coder<OptScript, OutUnknownType | undefined> = {
-  encode(from: ScriptType): OutUnknownType | undefined {
-    return { type: 'unknown', script: Script.encode(from) };
+  encode(from: TArg<ScriptType>): TRet<OutUnknownType | undefined> {
+    // This is the catch-all fallback for scripts no structured coder recognized,
+    // so earlier matchers must return `undefined` instead of throwing on mismatch.
+    // Because this reserializes the parsed Script AST, unknown scripts preserve
+    // semantics but not original non-minimal push spellings.
+    return { type: 'unknown', script: Script.encode(from) } as TRet<OutUnknownType | undefined>;
   },
-  decode: (to: OutUnknownType): OptScript =>
-    to.type === 'unknown' ? Script.decode(to.script) : undefined,
+  decode: (to: TArg<OutUnknownType>): TRet<OptScript> =>
+    // This reparses `unknown.script` through the semantic Script codec, so raw
+    // bytes must still be syntactically parseable and may canonicalize on re-encode.
+    (to.type === 'unknown' ? Script.decode(to.script) : undefined) as TRet<OptScript>,
 };
 // /Payments
 
 const OutScripts = /* @__PURE__ */ (() => [
+  // Order is semantic: specific structured coders run first and the catch-all
+  // unknown fallback must stay last.
   OutP2A,
   OutPK,
   OutPKH,
@@ -229,12 +296,15 @@ const OutScripts = /* @__PURE__ */ (() => [
 // - removeOutScript
 // - We can do that as log we modify array in-place
 // - Actually is very hard, since there is sign/finalize logic
+// Raw composition of semantic Script parsing with the ordered output-script
+// matcher; OutScript adds the higher-level validation layer on top.
 const _OutScript = /* @__PURE__ */ (() => P.apply(Script, P.coders.match(OutScripts)))();
 
 /*
  * UNSAFE: Custom scripts: mostly ordinals, be very careful when crafting new scripts
  * Only taproot supported for now.
- * NOTE: we can use same to move finalization logic from Transaction, but it will significantly change audited code.
+ * NOTE: we can use same to move finalization logic from Transaction,
+ * but it will significantly change audited code.
  */
 
 type FinalizeSignature = [{ pubKey: Bytes; leafHash: Bytes }, Bytes];
@@ -260,63 +330,97 @@ export type CustomScript = Coder<OptScript, CustomScriptOut | undefined> & {
  * OutScript.decode(pay.script);
  * ```
  */
-export const OutScript: P.CoderType<
-  NonNullable<
-    | OutP2AType
-    | OutPKType
-    | OutPKHType
-    | OutSHType
-    | OutWSHType
-    | OutWPKHType
-    | OutMSType
-    | OutTRType
-    | OutTRNSType
-    | OutTRMSType
-    | OutUnknownType
-    | undefined
+export const OutScript: TRet<
+  P.CoderType<
+    NonNullable<
+      | OutP2AType
+      | OutPKType
+      | OutPKHType
+      | OutSHType
+      | OutWSHType
+      | OutWPKHType
+      | OutMSType
+      | OutTRType
+      | OutTRNSType
+      | OutTRMSType
+      | OutUnknownType
+      | undefined
+    >
   >
 > = /* @__PURE__ */ (() =>
-  P.validate(_OutScript, (i) => {
-    if (i.type === 'pk' && !isValidPubkey(i.pubkey, u.PubT.ecdsa))
-      throw new Error('OutScript/pk: wrong key');
-    if (
-      (i.type === 'pkh' || i.type === 'sh' || i.type === 'wpkh') &&
-      (!u.isBytes(i.hash) || i.hash.length !== 20)
-    )
-      throw new Error(`OutScript/${i.type}: wrong hash`);
-    if (i.type === 'wsh' && (!u.isBytes(i.hash) || i.hash.length !== 32))
-      throw new Error(`OutScript/wsh: wrong hash`);
-    if (i.type === 'tr' && (!u.isBytes(i.pubkey) || !isValidPubkey(i.pubkey, u.PubT.schnorr)))
-      throw new Error('OutScript/tr: wrong taproot public key');
-    if (i.type === 'ms' || i.type === 'tr_ns' || i.type === 'tr_ms')
-      if (!Array.isArray(i.pubkeys)) throw new Error('OutScript/multisig: wrong pubkeys array');
-    if (i.type === 'ms') {
-      const n = i.pubkeys.length;
-      for (const p of i.pubkeys)
-        if (!isValidPubkey(p, u.PubT.ecdsa)) throw new Error('OutScript/multisig: wrong pubkey');
-      if (i.m <= 0 || n > 16 || i.m > n) throw new Error('OutScript/multisig: invalid params');
-    }
-    if (i.type === 'tr_ns' || i.type === 'tr_ms') {
-      for (const p of i.pubkeys)
-        if (!isValidPubkey(p, u.PubT.schnorr)) throw new Error(`OutScript/${i.type}: wrong pubkey`);
-    }
-    if (i.type === 'tr_ms') {
-      const n = i.pubkeys.length;
-      if (i.m <= 0 || n > 999 || i.m > n) throw new Error('OutScript/tr_ms: invalid params');
-    }
-    return i;
-  }))();
+  Object.freeze(
+    P.validate(_OutScript, (i) => {
+      if (i.type === 'pk' && !isValidPubkey(i.pubkey, u.PubT.ecdsa))
+        throw new Error('OutScript/pk: wrong key');
+      if (
+        (i.type === 'pkh' || i.type === 'sh' || i.type === 'wpkh') &&
+        (!u.isBytes(i.hash) || i.hash.length !== 20)
+      )
+        throw new Error(`OutScript/${i.type}: wrong hash`);
+      if (i.type === 'wsh' && (!u.isBytes(i.hash) || i.hash.length !== 32))
+        throw new Error(`OutScript/wsh: wrong hash`);
+      if (i.type === 'tr' && (!u.isBytes(i.pubkey) || !isValidPubkey(i.pubkey, u.PubT.schnorr)))
+        throw new Error('OutScript/tr: wrong taproot public key');
+      if (i.type === 'ms' || i.type === 'tr_ns' || i.type === 'tr_ms')
+        if (!Array.isArray(i.pubkeys)) throw new Error('OutScript/multisig: wrong pubkeys array');
+      if (i.type === 'ms') {
+        const n = i.pubkeys.length;
+        for (const p of i.pubkeys)
+          if (!isValidPubkey(p, u.PubT.ecdsa)) throw new Error('OutScript/multisig: wrong pubkey');
+        // Range checks are not enough here: non-integer JS numbers like 1.5 would
+        // otherwise slip through and serialize as a different ScriptNum threshold.
+        anumber(i.m, 'm');
+        if (i.m <= 0 || n > 16 || i.m > n) throw new Error('OutScript/multisig: invalid params');
+      }
+      if (i.type === 'tr_ns' || i.type === 'tr_ms') {
+        for (const p of i.pubkeys)
+          if (!isValidPubkey(p, u.PubT.schnorr))
+            throw new Error(`OutScript/${i.type}: wrong pubkey`);
+      }
+      if (i.type === 'tr_ms') {
+        const n = i.pubkeys.length;
+        // BIP 342 keeps the 1000-element stack limit. This CHECKSIG/CHECKSIGADD form
+        // momentarily has n witness items plus one pushed pubkey on the stack, so n must stay <= 999.
+        anumber(i.m, 'm');
+        if (i.m <= 0 || n > 999 || i.m > n) throw new Error('OutScript/tr_ms: invalid params');
+      }
+      return i;
+    })
+  ))() as TRet<
+  P.CoderType<
+    NonNullable<
+      | OutP2AType
+      | OutPKType
+      | OutPKHType
+      | OutSHType
+      | OutWSHType
+      | OutWPKHType
+      | OutMSType
+      | OutTRType
+      | OutTRNSType
+      | OutTRMSType
+      | OutUnknownType
+      | undefined
+    >
+  >
+>;
 /** Type of the output-script coder. */
 export type OutScriptType = typeof OutScript;
+// TRet-wrapping OutScript changes decode() to the normalized descriptor surface, but the local
+// checkScript/Address caches still need an explicit alias that can carry the decode-side `undefined`.
+type OutScriptValue = ReturnType<OutScriptType['decode']> | undefined;
 
 // Basic sanity check for scripts
-function checkWSH(s: OutWSHType, witnessScript: Bytes) {
+function checkWSH(s: TArg<OutWSHType>, witnessScript: TArg<Bytes>) {
   if (!u.equalBytes(s.hash, u.sha256(witnessScript)))
     throw new Error('checkScript: wsh wrong witnessScript hash');
+  // BIP141 only requires the witnessScript hash match; the type-based rejects
+  // below are an extra descriptor sanity layer for BIP382 invalid-descriptor
+  // bullets `wpkh() nested in wsh()` and `wsh() nested in wsh()`.
   const w = OutScript.decode(witnessScript);
   if (w.type === 'tr' || w.type === 'tr_ns' || w.type === 'tr_ms')
     throw new Error(`checkScript: P2${w.type} cannot be wrapped in P2SH`);
-  if (w.type === 'wpkh' || w.type === 'sh')
+  if (w.type === 'wpkh' || w.type === 'wsh' || w.type === 'sh')
     throw new Error(`checkScript: P2${w.type} cannot be wrapped in P2WSH`);
 }
 
@@ -337,32 +441,51 @@ function checkWSH(s: OutWSHType, witnessScript: Bytes) {
  * checkScript(wrapped.script, wrapped.redeemScript);
  * ```
  */
-export function checkScript(script?: Bytes, redeemScript?: Bytes, witnessScript?: Bytes): void {
+export function checkScript(
+  script?: TArg<Bytes>,
+  redeemScript?: TArg<Bytes>,
+  witnessScript?: TArg<Bytes>
+): void {
+  let hasWsh = false;
+  let r: OutScriptValue = undefined;
   if (script) {
     const s = OutScript.decode(script);
+    // BIP174 Data Signers Check For bullets: provided redeemScript must match
+    // the scriptPubKey, and provided witnessScript must match the scriptPubKey
+    // or redeemScript instead of being silently ignored as stray metadata.
     // ms||pk maybe work, but there will be no address, hard to spend
     if (s.type === 'tr_ns' || s.type === 'tr_ms' || s.type === 'ms' || s.type == 'pk')
       throw new Error(`checkScript: non-wrapped ${s.type}`);
-    if (s.type === 'sh' && redeemScript) {
+    if (redeemScript) {
+      if (s.type !== 'sh') throw new Error('checkScript: redeemScript without P2SH');
       if (!u.equalBytes(s.hash, u.hash160(redeemScript)))
         throw new Error('checkScript: sh wrong redeemScript hash');
-      const r = OutScript.decode(redeemScript);
-      if (r.type === 'tr' || r.type === 'tr_ns' || r.type === 'tr_ms')
+      r = OutScript.decode(redeemScript) as OutScriptValue;
+      if (r?.type === 'tr' || r?.type === 'tr_ns' || r?.type === 'tr_ms')
         throw new Error(`checkScript: P2${r.type} cannot be wrapped in P2SH`);
       // Not sure if this unspendable, but we cannot represent this via PSBT
-      if (r.type === 'sh') throw new Error('checkScript: P2SH cannot be wrapped in P2SH');
+      if (r?.type === 'sh') throw new Error('checkScript: P2SH cannot be wrapped in P2SH');
     }
-    if (s.type === 'wsh' && witnessScript) checkWSH(s, witnessScript);
+    if (s.type === 'wsh') {
+      hasWsh = true;
+      if (witnessScript) checkWSH(s, witnessScript);
+    }
   }
   if (redeemScript) {
-    const r = OutScript.decode(redeemScript);
-    if (r.type === 'wsh' && witnessScript) checkWSH(r, witnessScript);
+    if (r === undefined) r = OutScript.decode(redeemScript) as OutScriptValue;
+    if (r?.type === 'wsh') {
+      hasWsh = true;
+      if (witnessScript) checkWSH(r as TArg<OutWSHType>, witnessScript);
+    }
   }
+  if (witnessScript && !hasWsh) throw new Error('checkScript: witnessScript without P2WSH');
 }
 
-function uniqPubkey(pubkeys: Bytes[]) {
+function uniqPubkey(pubkeys: TArg<Bytes[]>) {
   const map: Record<string, boolean> = {};
   for (const pub of pubkeys) {
+    // Exact-byte duplicate filter only: BIP383 valid vectors still permit the
+    // same point to appear in compressed and uncompressed SEC1 form in multi().
     const key = hex.encode(pub);
     if (map[key]) throw new Error(`Multisig: non-uniq pubkey: ${pubkeys.map(hex.encode)}`);
     map[key] = true;
@@ -377,7 +500,7 @@ export type P2PK = {
   /** Payment-script tag for pay-to-public-key outputs. */
   type: 'pk';
   /** Serialized `pubkey CHECKSIG` script. */
-  script: Bytes;
+  script: TRet<Bytes>;
 };
 /**
  * Builds a pay-to-public-key script.
@@ -393,10 +516,16 @@ export type P2PK = {
  * p2pk(hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'));
  * ```
  */
-export const p2pk = (pubkey: Bytes, _network: BTC_NETWORK = NETWORK): Extends<P2PK, P2Ret> => {
+export const p2pk = (
+  pubkey: TArg<Bytes>,
+  _network: BTC_NETWORK = NETWORK
+): TRet<Extends<P2PK, P2Ret>> => {
   // network is unused
   if (!isValidPubkey(pubkey, u.PubT.ecdsa)) throw new Error('P2PK: invalid publicKey');
-  return { type: 'pk', script: OutScript.encode({ type: 'pk', pubkey }) } as const satisfies P2Ret;
+  return {
+    type: 'pk',
+    script: OutScript.encode({ type: 'pk', pubkey }),
+  } as const as TRet<Extends<P2PK, P2Ret>>;
 };
 
 /** Pay-to-public-key-hash output descriptor. */
@@ -404,15 +533,15 @@ export type P2PKH = {
   /** Payment-script tag for pay-to-public-key-hash outputs. */
   type: 'pkh';
   /** Serialized P2PKH script. */
-  script: Bytes;
+  script: TRet<Bytes>;
   /** Base58Check address for the descriptor. */
   address: string;
   /** HASH160 committed by the script. */
-  hash: Bytes;
+  hash: TRet<Bytes>;
 };
 /**
  * Builds a P2PKH output from a public key.
- * @param publicKey - ECDSA public key bytes
+ * @param publicKey - compressed or uncompressed ECDSA public key bytes; HASH160 commits to the exact encoding
  * @param network - address network parameters
  * @returns P2PKH descriptor.
  * @throws If the public key cannot be encoded as a P2PKH output. {@link Error}
@@ -424,7 +553,10 @@ export type P2PKH = {
  * p2pkh(hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'));
  * ```
  */
-export const p2pkh = (publicKey: Bytes, network: BTC_NETWORK = NETWORK): Extends<P2PKH, P2Ret> => {
+export const p2pkh = (
+  publicKey: TArg<Bytes>,
+  network: BTC_NETWORK = NETWORK
+): TRet<Extends<P2PKH, P2Ret>> => {
   if (!isValidPubkey(publicKey, u.PubT.ecdsa)) throw new Error('P2PKH: invalid publicKey');
   const hash = u.hash160(publicKey);
   return {
@@ -432,7 +564,7 @@ export const p2pkh = (publicKey: Bytes, network: BTC_NETWORK = NETWORK): Extends
     script: OutScript.encode({ type: 'pkh', hash }),
     address: Address(network).encode({ type: 'pkh', hash }),
     hash,
-  } as const satisfies P2Ret;
+  } as const as TRet<Extends<P2PKH, P2Ret>>;
 };
 
 /** Shared fields for pay-to-script-hash outputs. */
@@ -440,16 +572,16 @@ export type P2SHBase = {
   /** Payment-script tag for pay-to-script-hash outputs. */
   type: 'sh';
   /** Child script wrapped by the P2SH output. */
-  redeemScript: Bytes;
+  redeemScript: TRet<Bytes>;
   /** Serialized P2SH script. */
-  script: Bytes;
+  script: TRet<Bytes>;
   /** Base58Check address for the descriptor. */
   address: string;
   /** HASH160 committed by the script. */
-  hash: Bytes;
+  hash: TRet<Bytes>;
 };
 /** P2SH descriptor with an embedded witness script. */
-export type P2SHWithWitness = P2SHBase & { witnessScript: Bytes };
+export type P2SHWithWitness = P2SHBase & { witnessScript: TRet<Bytes> };
 /** P2SH descriptor without an embedded witness script. */
 export type P2SHWithoutWitness = Omit<P2SHBase, 'witnessScript'>;
 /** Conditional P2SH return type for wrapped scripts. */
@@ -471,32 +603,41 @@ export type P2SHReturn<T extends P2Ret> = T extends { witnessScript: Bytes }
  * ```
  */
 export const p2sh = <T extends P2Ret>(
-  child: T,
+  child: TArg<T>,
   network: BTC_NETWORK = NETWORK
-): Extends<P2SHReturn<T>, P2Ret> => {
+): TRet<Extends<P2SHReturn<T>, P2Ret>> => {
   // It is already tested inside noble-hashes and checkScript
-  const cs = child.script;
-  if (!u.isBytes(cs)) throw new Error(`Wrong script: ${typeof child.script}, expected Uint8Array`);
+  // BIP16 redeemScripts are pushed by scriptSig, so anything over the 520-byte pushed-element
+  // limit would be fundable by HASH160 but unspendable once wrapped in P2SH.
+  const c = child as T;
+  const cs = c.script;
+  if (!u.isBytes(cs)) throw new Error(`Wrong script: ${typeof c.script}, expected Uint8Array`);
+  if (cs.length > MAX_SCRIPT_BYTE_LENGTH)
+    throw new Error(
+      `P2SH: redeemScript exceeds ${MAX_SCRIPT_BYTE_LENGTH}-byte push limit: len=${cs.length}`
+    );
   const hash = u.hash160(cs);
-  const script = OutScript.encode({ type: 'sh', hash });
-  checkScript(script, cs, child.witnessScript);
-  if (child.witnessScript) {
+  const out = { type: 'sh', hash } as const;
+  const script = OutScript.encode(out);
+  const address = Address(network).encode(out);
+  checkScript(script, cs, c.witnessScript);
+  if (c.witnessScript) {
     return {
       type: 'sh',
       redeemScript: cs,
-      script: OutScript.encode({ type: 'sh', hash }),
-      address: Address(network).encode({ type: 'sh', hash }),
+      script,
+      address,
       hash,
-      witnessScript: child.witnessScript,
-    } as Extends<P2SHReturn<T>, P2Ret> satisfies P2Ret;
+      witnessScript: c.witnessScript,
+    } as unknown as TRet<Extends<P2SHReturn<T>, P2Ret>>;
   } else {
     return {
       type: 'sh',
       redeemScript: cs,
-      script: OutScript.encode({ type: 'sh', hash }),
-      address: Address(network).encode({ type: 'sh', hash }),
+      script,
+      address,
       hash,
-    } as Extends<P2SHReturn<T>, P2Ret> satisfies P2Ret;
+    } as unknown as TRet<Extends<P2SHReturn<T>, P2Ret>>;
   }
 };
 
@@ -505,13 +646,13 @@ export type P2WSH = {
   /** Payment-script tag for pay-to-witness-script-hash outputs. */
   type: 'wsh';
   /** Child script committed by the witness program. */
-  witnessScript: Bytes;
+  witnessScript: TRet<Bytes>;
   /** Serialized P2WSH script. */
-  script: Bytes;
+  script: TRet<Bytes>;
   /** Bech32 address for the descriptor. */
   address: string;
   /** SHA256 committed by the witness program. */
-  hash: Bytes;
+  hash: TRet<Bytes>;
 };
 /**
  * Wraps a child script inside native SegWit P2WSH.
@@ -527,19 +668,25 @@ export type P2WSH = {
  * p2wsh(p2pk(hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798')));
  * ```
  */
-export const p2wsh = (child: P2Ret, network: BTC_NETWORK = NETWORK): Extends<P2WSH, P2Ret> => {
+export const p2wsh = (
+  child: TArg<P2Ret>,
+  network: BTC_NETWORK = NETWORK
+): TRet<Extends<P2WSH, P2Ret>> => {
   const cs = child.script;
   if (!u.isBytes(cs)) throw new Error(`Wrong script: ${typeof cs}, expected Uint8Array`);
+  // BIP141 P2WSH says the witness "must consist of ... a serialized script (witnessScript)"
+  // and that witnessScript is limited to 10,000 bytes, so larger wrapped scripts must reject.
+  if (cs.length > 10000) throw new Error('P2WSH: witnessScript exceeds 10,000 bytes');
   const hash = u.sha256(cs);
   const script = OutScript.encode({ type: 'wsh', hash });
   checkScript(script, undefined, cs);
   return {
     type: 'wsh',
     witnessScript: cs,
-    script: OutScript.encode({ type: 'wsh', hash }),
+    script,
     address: Address(network).encode({ type: 'wsh', hash }),
     hash,
-  } as const satisfies P2Ret;
+  } as const as TRet<Extends<P2WSH, P2Ret>>;
 };
 
 /** Pay-to-witness-public-key-hash descriptor. */
@@ -547,11 +694,11 @@ export type P2WPKH = {
   /** Payment-script tag for pay-to-witness-public-key-hash outputs. */
   type: 'wpkh';
   /** Serialized P2WPKH script. */
-  script: Bytes;
+  script: TRet<Bytes>;
   /** Bech32 address for the descriptor. */
   address: string;
   /** HASH160 committed by the witness program. */
-  hash: Bytes;
+  hash: TRet<Bytes>;
 };
 /**
  * Builds a native SegWit P2WPKH output from a public key.
@@ -568,10 +715,11 @@ export type P2WPKH = {
  * ```
  */
 export const p2wpkh = (
-  publicKey: Bytes,
+  publicKey: TArg<Bytes>,
   network: BTC_NETWORK = NETWORK
-): Extends<P2WPKH, P2Ret> => {
+): TRet<Extends<P2WPKH, P2Ret>> => {
   if (!isValidPubkey(publicKey, u.PubT.ecdsa)) throw new Error('P2WPKH: invalid publicKey');
+  // BIP 143 default policy: version-0 witness programs MUST use 33-byte compressed ECDSA keys.
   if (publicKey.length === 65) throw new Error('P2WPKH: uncompressed public key');
   const hash = u.hash160(publicKey);
   return {
@@ -579,7 +727,7 @@ export const p2wpkh = (
     script: OutScript.encode({ type: 'wpkh', hash }),
     address: Address(network).encode({ type: 'wpkh', hash }),
     hash,
-  } as const satisfies P2Ret;
+  } as const as TRet<Extends<P2WPKH, P2Ret>>;
 };
 
 /** Bare multisig output descriptor. */
@@ -587,7 +735,7 @@ export type P2MS = {
   /** Payment-script tag for bare multisig outputs. */
   type: 'ms';
   /** Serialized bare multisig script. */
-  script: Bytes;
+  script: TRet<Bytes>;
 };
 /**
  * Builds a bare multisig script.
@@ -606,14 +754,16 @@ export type P2MS = {
  */
 export const p2ms = (
   m: number,
-  pubkeys: Bytes[],
+  pubkeys: TArg<Bytes[]>,
   allowSamePubkeys = false
-): Extends<P2MS, P2Ret> => {
+): TRet<Extends<P2MS, P2Ret>> => {
+  // BIP 11 only standardized bare multisig up to 3 keys; this helper still permits up to 16
+  // because the same script shape is commonly wrapped by p2sh()/p2wsh() instead of used bare.
   if (!allowSamePubkeys) uniqPubkey(pubkeys);
   return {
     type: 'ms',
     script: OutScript.encode({ type: 'ms', pubkeys, m }),
-  } as const satisfies P2Ret;
+  } as const as TRet<Extends<P2MS, P2Ret>>;
 };
 
 /** Internal taproot hash tree without merkle paths. */
@@ -621,10 +771,10 @@ export type HashedTree =
   | { type: 'leaf'; version?: number; script: Bytes; hash: Bytes }
   | { type: 'branch'; left: HashedTree; right: HashedTree; hash: Bytes };
 function checkTaprootScript(
-  script: Bytes,
-  internalPubKey: Bytes,
+  script: TArg<Bytes>,
+  internalPubKey: TArg<Bytes>,
   allowUnknownOutputs = false,
-  customScripts?: CustomScript[]
+  customScripts?: TArg<CustomScript[]>
 ) {
   const out = OutScript.decode(script);
   if (out.type === 'unknown') {
@@ -704,6 +854,7 @@ type _TaprootTreeInternal = {
  * Converts a flat list of weighted leaves into a binary taproot tree.
  * @param taprootList - weighted leaves to arrange
  * @returns Binary taproot script tree.
+ * @throws If the list is empty and cannot describe any tree. {@link Error}
  * @example
  * Start from a flat weighted list, then let the helper build the binary tree shape.
  * ```ts
@@ -715,7 +866,11 @@ type _TaprootTreeInternal = {
  * ]);
  * ```
  */
-export function taprootListToTree(taprootList: TaprootScriptList): TaprootScriptTree {
+export function taprootListToTree(taprootList: TArg<TaprootScriptList>): TRet<TaprootScriptTree> {
+  // Empty flat lists cannot represent a taproot script tree; omit the tree entirely for
+  // key-path-only outputs instead of passing [] here, otherwise this helper would return
+  // undefined and downstream taproot tree walkers would fail much later on a non-tree value.
+  if (!taprootList.length) throw new Error('taprootListToTree: empty tree');
   // Clone input in order to not corrupt it
   const lst = Array.from(taprootList) as _TaprootTreeInternal[];
   // We have at least 2 elements => can create branch
@@ -734,7 +889,7 @@ export function taprootListToTree(taprootList: TaprootScriptList): TaprootScript
   }
   // At this point there is always 1 element in lst
   const last = lst[0];
-  return (last?.childs || last) as TaprootScriptTree;
+  return (last?.childs || last) as TRet<TaprootScriptTree>;
 }
 
 /** Taproot leaf with its merkle path. */
@@ -762,36 +917,42 @@ export type HashedTreeWithPath =
       path: Bytes[];
     };
 
-function taprootAddPath(tree: HashedTree, path: Bytes[] = []): HashedTreeWithPath {
+function taprootAddPath(
+  tree: TArg<HashedTree>,
+  path: TArg<Bytes[]> = []
+): TRet<HashedTreeWithPath> {
   if (!tree) throw new Error(`taprootAddPath: empty tree`);
-  if (tree.type === 'leaf') return { ...tree, path };
+  if (tree.type === 'leaf') return { ...tree, path } as TRet<HashedTreeWithPath>;
   if (tree.type !== 'branch') throw new Error(`taprootAddPath: wrong type=${tree}`);
   return {
     ...tree,
     path,
-    // Left element has right hash in path and otherwise
+    // BIP 341 control blocks serialize sibling hashes from leaf to root, so prepend the
+    // current sibling before descending into the child subtree.
     left: taprootAddPath(tree.left, [tree.right.hash, ...path]),
     right: taprootAddPath(tree.right, [tree.left.hash, ...path]),
-  };
+  } as TRet<HashedTreeWithPath>;
 }
-function taprootWalkTree(tree: HashedTreeWithPath): TaprootLeaf[] {
+function taprootWalkTree(tree: TArg<HashedTreeWithPath>): TRet<TaprootLeaf[]> {
   if (!tree) throw new Error(`taprootAddPath: empty tree`);
-  if (tree.type === 'leaf') return [tree];
+  if (tree.type === 'leaf') return [tree] as TRet<TaprootLeaf[]>;
   if (tree.type !== 'branch') throw new Error(`taprootWalkTree: wrong type=${tree}`);
-  return [...taprootWalkTree(tree.left), ...taprootWalkTree(tree.right)];
+  // Keep a stable left-to-right DFS leaf order when flattening the annotated tree.
+  return [...taprootWalkTree(tree.left), ...taprootWalkTree(tree.right)] as TRet<TaprootLeaf[]>;
 }
 
 function taprootHashTree(
-  tree: TaprootScriptTree,
-  internalPubKey: Bytes,
+  tree: TArg<TaprootScriptTree>,
+  internalPubKey: TArg<Bytes>,
   allowUnknownOutputs = false,
-  customScripts?: CustomScript[]
-): HashedTree {
+  customScripts?: TArg<CustomScript[]>
+): TRet<HashedTree> {
   if (!tree) throw new Error('taprootHashTree: empty tree');
   if (Array.isArray(tree) && tree.length === 1) tree = tree[0];
   // Terminal node (leaf)
   if (!Array.isArray(tree)) {
-    const { leafVersion: version, script: leafScript } = tree;
+    const version = tree.leafVersion;
+    const { script: leafScript } = tree;
     // Earliest tree walk where we can validate tapScripts
     if (tree.tapLeafScript || (tree.tapMerkleRoot && !u.equalBytes(tree.tapMerkleRoot, P.EMPTY)))
       throw new Error('P2TR: tapRoot leafScript cannot have tree');
@@ -802,8 +963,8 @@ function taprootHashTree(
       type: 'leaf',
       version,
       script,
-      hash: tapLeafHash(script, version),
-    };
+      hash: tapLeafHash(script, tapLeafVersion(version)),
+    } as TRet<HashedTree>;
   }
   // If tree / branch is not binary tree, convert it
   if (tree.length !== 2) tree = taprootListToTree(tree as TaprootNode[]) as TaprootNode[];
@@ -812,27 +973,44 @@ function taprootHashTree(
   // Both nodes should exist
   const left = taprootHashTree(tree[0], internalPubKey, allowUnknownOutputs, customScripts);
   const right = taprootHashTree(tree[1], internalPubKey, allowUnknownOutputs, customScripts);
-  // We cannot swap left/right here, since it will change structure of tree
+  // BIP 341 sorts TapBranch child hashes lexicographically for hashing, but the original
+  // left/right structure still determines the control-block sibling paths for each leaf.
   let [lH, rH] = [left.hash, right.hash];
   if (u.compareBytes(rH, lH) === -1) [lH, rH] = [rH, lH];
-  return { type: 'branch', left, right, hash: u.tagSchnorr('TapBranch', lH, rH) };
+  return {
+    type: 'branch',
+    left,
+    right,
+    hash: u.tagSchnorr('TapBranch', lH, rH),
+  } as TRet<HashedTree>;
 }
 
-/** Default tapleaf version used by taproot script-path outputs. */
+/** Default tapleaf version used by taproot script-path outputs before adding the parity bit. */
 export const TAP_LEAF_VERSION = 0xc0;
+const tapLeafVersion = (version: number | undefined): number => {
+  if (version === undefined) return TAP_LEAF_VERSION;
+  anumber(version, 'leafVersion');
+  // BIP341 script-path validation defines the effective leaf version as `v = c[0] & 0xfe`
+  // and says it cannot be odd or `0x50`; tapleaf hashes also serialize this as one byte.
+  if (version > 0xfe || version === 0x50 || !!(version & 1))
+    throw new Error(`P2TR: invalid leafVersion=${version}`);
+  return version;
+};
 /**
  * Computes the tagged hash of a tapleaf script.
  * @param script - tapleaf script bytes
- * @param version - tapleaf version byte
+ * @param version - base even tapleaf version byte (for tapscript, `0xc0`)
  * @returns Tapleaf hash.
+ * @throws If the tapleaf version is not a valid even one-byte version.
+ * {@link Error}
  * @example
  * Hash a finalized tapscript leaf before placing it into a Merkle tree.
  * ```ts
  * tapLeafHash(new Uint8Array([0x51]));
  * ```
  */
-export const tapLeafHash = (script: Bytes, version: number = TAP_LEAF_VERSION): Bytes =>
-  u.tagSchnorr('TapLeaf', new Uint8Array([version]), VarBytes.encode(script));
+export const tapLeafHash = (script: TArg<Bytes>, version: number = TAP_LEAF_VERSION): TRet<Bytes> =>
+  u.tagSchnorr('TapLeaf', new Uint8Array([tapLeafVersion(version)]), VarBytes.encode(script));
 
 // Works as key OR tree.
 // If we only have tree, need to add unspendable key, otherwise
@@ -860,26 +1038,26 @@ export type P2TRRet<T> = T extends TaprootScriptTree ? P2TR_TREE : P2TR;
  * ```
  */
 export function p2tr(
-  internalPubKey: Bytes | string,
+  internalPubKey: TArg<Bytes | string>,
   tree?: undefined,
   network?: BTC_NETWORK,
   allowUnknownOutputs?: boolean,
-  customScripts?: CustomScript[]
-): Extends<P2TR, P2Ret>;
+  customScripts?: TArg<CustomScript[]>
+): TRet<Extends<P2TR, P2Ret>>;
 export function p2tr(
-  internalPubKey: Bytes | string | undefined,
-  tree: TaprootScriptTree,
+  internalPubKey: TArg<Bytes | string | undefined>,
+  tree: TArg<TaprootScriptTree>,
   network?: BTC_NETWORK,
   allowUnknownOutputs?: boolean,
-  customScripts?: CustomScript[]
-): Extends<P2TR_TREE, P2Ret>;
+  customScripts?: TArg<CustomScript[]>
+): TRet<Extends<P2TR_TREE, P2Ret>>;
 export function p2tr(
-  internalPubKey?: Bytes | string,
-  tree?: TaprootScriptTree,
+  internalPubKey?: TArg<Bytes | string>,
+  tree?: TArg<TaprootScriptTree>,
   network: BTC_NETWORK = NETWORK,
   allowUnknownOutputs = false,
-  customScripts?: CustomScript[]
-): Extends<P2TR & Partial<P2TR_TREE>, P2Ret> {
+  customScripts?: TArg<CustomScript[]>
+): TRet<Extends<P2TR & Partial<P2TR_TREE>, P2Ret>> {
   // Unspendable
   if (!internalPubKey && !tree) throw new Error('p2tr: should have pubKey or scriptTree (or both)');
   const pubKey =
@@ -893,14 +1071,19 @@ export function p2tr(
     );
     const tapMerkleRoot = hashedTree.hash;
     const [tweakedPubkey, parity] = u.taprootTweakPubkey(pubKey, tapMerkleRoot);
-    const leaves = taprootWalkTree(hashedTree).map((l) => ({
-      ...l,
-      controlBlock: TaprootControlBlock.encode({
-        version: (l.version || TAP_LEAF_VERSION) + parity,
-        internalKey: pubKey,
-        merklePath: l.path,
-      }),
-    }));
+    const leaves = taprootWalkTree(hashedTree).map((l) => {
+      const version = tapLeafVersion(l.version);
+      return {
+        ...l,
+        // Leaf versions are stored as the base even byte; only the control block adds the
+        // output-key parity bit required by BIP 341 script-path spending.
+        controlBlock: TaprootControlBlock.encode({
+          version: version + parity,
+          internalKey: pubKey,
+          merklePath: l.path,
+        }),
+      };
+    });
     return {
       type: 'tr',
       script: OutScript.encode({ type: 'tr', pubkey: tweakedPubkey }),
@@ -912,11 +1095,13 @@ export function p2tr(
       leaves,
       tapLeafScript: leaves.map((l) => [
         TaprootControlBlock.decode(l.controlBlock),
-        u.concatBytes(l.script, new Uint8Array([l.version || TAP_LEAF_VERSION])),
+        u.concatBytes(l.script, new Uint8Array([tapLeafVersion(l.version)])),
       ]),
       tapMerkleRoot,
-    } as const satisfies P2TR_TREE;
+    } as const as TRet<Extends<P2TR_TREE, P2Ret>>;
   } else {
+    // BIP 341 / BIP 86: key-only Taproot still tweaks with the empty Merkle root so the
+    // output commits to an unspendable script path instead of leaving the key untweaked.
     const tweakedPubkey = u.taprootTweakPubkey(pubKey, P.EMPTY)[0];
     return {
       type: 'tr',
@@ -926,7 +1111,7 @@ export function p2tr(
       tweakedPubkey,
       // PSBT stuff
       tapInternalKey: pubKey,
-    } as const satisfies P2TR;
+    } as const as TRet<Extends<P2TR, P2Ret>>;
   }
 }
 
@@ -947,12 +1132,15 @@ export function combinations<T>(m: number, list: T[]): T[][] {
   const res: T[][] = [];
   if (!Array.isArray(list)) throw new Error('combinations: lst arg should be array');
   const n = list.length;
-  if (m > n) throw new Error('combinations: m > lst.length, no combinations possible');
+  anumber(m, 'm');
+  if (m < 1 || m > n) throw new Error('combinations: m must satisfy 1 <= m <= lst.length');
   /*
   Basically works as M nested loops like:
   for (;idx[0]<lst.length;idx[0]++) for (idx[1]=idx[0]+1;idx[1]<lst.length;idx[1]++)
   but since we cannot create nested loops dynamically, we unroll it to a single loop
   */
+  // This unrolled-loop implementation assumes an integer 1 <= m <= n; zero, negative, and
+  // fractional m values need an explicit guard before entering the loop.
   const idx = Array.from({ length: m }, (_, i) => i);
   const last = idx.length - 1;
   main: for (;;) {
@@ -976,13 +1164,14 @@ export function combinations<T>(m: number, list: T[]): T[][] {
 /**
  * M-of-N multi-leaf wallet via p2tr_ns. If m == n, single script is emitted.
  * Takes O(n^2) if m != n. 99-of-100 is ok, 5-of-100 is not.
+ * It materializes C(n, m) leaves, so middle-of-the-range thresholds blow up combinatorially.
  * `2-of-[A,B,C] => [A,B] | [A,C] | [B,C]`
  */
 export type P2TR_NS = {
   /** Payment-script tag for taproot `CHECKSIGVERIFY` leaf scripts. */
   type: 'tr_ns';
   /** Serialized tapscript leaf. */
-  script: Bytes;
+  script: TRet<Bytes>;
 };
 /**
  * Builds the leaf set for an M-of-N `CHECKSIGVERIFY` taproot policy.
@@ -1001,23 +1190,25 @@ export type P2TR_NS = {
  */
 export const p2tr_ns = (
   m: number,
-  pubkeys: Bytes[],
+  pubkeys: TArg<Bytes[]>,
   allowSamePubkeys = false
-): Extends<P2TR_NS, P2Ret>[] => {
+): TRet<Extends<P2TR_NS, P2Ret>[]> => {
   if (!allowSamePubkeys) uniqPubkey(pubkeys);
   return combinations(m, pubkeys).map(
     (i) =>
       ({
         type: 'tr_ns',
         script: OutScript.encode({ type: 'tr_ns', pubkeys: i }),
-      }) as const
-  ) satisfies P2Ret[];
+      }) as const as TRet<Extends<P2TR_NS, P2Ret>>
+  ) as TRet<Extends<P2TR_NS, P2Ret>[]>;
 };
 // Taproot public key (case of p2tr_ns)
 /** Single-key taproot leaf descriptor. */
 export type P2TR_PK = P2TR_NS;
 /**
  * Builds a single-key taproot leaf script.
+ * BIP 341 design guidance: if this is the most likely single-key spend path, prefer
+ * using that key as the `p2tr()` internal key instead of forcing it into a script leaf.
  * @param pubkey - Schnorr public key
  * @returns Taproot single-key leaf descriptor.
  * @throws If the taproot single-key leaf cannot be encoded. {@link Error}
@@ -1029,15 +1220,15 @@ export type P2TR_PK = P2TR_NS;
  * p2tr_pk(hex.decode('f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9'));
  * ```
  */
-export const p2tr_pk = (pubkey: Bytes): Extends<P2TR_PK, P2Ret> =>
-  p2tr_ns(1, [pubkey], undefined)[0] satisfies P2Ret;
+export const p2tr_pk = (pubkey: TArg<Bytes>): TRet<Extends<P2TR_PK, P2Ret>> =>
+  p2tr_ns(1, [pubkey], undefined)[0];
 
 /** Taproot `CHECKSIGADD` multisig leaf descriptor. */
 export type P2TR_MS = {
   /** Payment-script tag for taproot `CHECKSIGADD` leaf scripts. */
   type: 'tr_ms';
   /** Serialized tapscript leaf. */
-  script: Bytes;
+  script: TRet<Bytes>;
 };
 /**
  * Builds a `CHECKSIGADD` taproot multisig leaf.
@@ -1056,14 +1247,14 @@ export type P2TR_MS = {
  */
 export function p2tr_ms(
   m: number,
-  pubkeys: Bytes[],
+  pubkeys: TArg<Bytes[]>,
   allowSamePubkeys = false
-): Extends<P2TR_MS, P2Ret> {
+): TRet<Extends<P2TR_MS, P2Ret>> {
   if (!allowSamePubkeys) uniqPubkey(pubkeys);
   return {
     type: 'tr_ms',
     script: OutScript.encode({ type: 'tr_ms', pubkeys, m }),
-  } as const satisfies P2Ret;
+  } as const as TRet<Extends<P2TR_MS, P2Ret>>;
 }
 
 // Simple pubkey address, without complex scripts
@@ -1084,19 +1275,24 @@ export function p2tr_ms(
  */
 export function getAddress(
   type: 'pkh' | 'wpkh' | 'tr',
-  privKey: Bytes,
+  privKey: TArg<Bytes>,
   network: BTC_NETWORK = NETWORK
 ): string {
   if (type === 'tr') {
     return p2tr(u.pubSchnorr(privKey), undefined, network).address;
   }
+  // This convenience wrapper always uses the compressed ECDSA public key; derive
+  // `pubECDSA(privKey, false)` and call `p2pkh(...)` directly for legacy uncompressed P2PKH.
   const pubKey = u.pubECDSA(privKey);
   if (type === 'pkh') return p2pkh(pubKey, network).address;
   if (type === 'wpkh') return p2wpkh(pubKey, network).address;
   throw new Error(`getAddress: unknown type=${type}`);
 }
 
-export const _sortPubkeys = (pubkeys: Bytes[]): Bytes[] => Array.from(pubkeys).sort(u.compareBytes);
+// BIP67 defines canonical multisig ordering only for compressed pubkeys; this helper still sorts
+// raw bytes generically, and higher-level callers may accept uncompressed participants for compat.
+export const _sortPubkeys = (pubkeys: TArg<Bytes[]>): TRet<Bytes[]> =>
+  Array.from(pubkeys).sort(u.compareBytes) as TRet<Bytes[]>;
 
 /**
  * Builds a classic M-of-N multisig output, wrapped in P2SH or P2WSH.
@@ -1122,13 +1318,17 @@ export const _sortPubkeys = (pubkeys: Bytes[]): Bytes[] => Array.from(pubkeys).s
  */
 export function multisig(
   m: number,
-  pubkeys: Bytes[],
+  pubkeys: TArg<Bytes[]>,
   sorted = false,
   witness = false,
   network: BTC_NETWORK = NETWORK
-): P2Ret {
+): TRet<P2Ret> {
+  // BIP 143 default policy: version-0 witness programs should use compressed ECDSA pubkeys only;
+  // witness multisig callers must avoid uncompressed keys because p2ms accepts generic ECDSA encodings.
+  // BIP 16 caps spendable compressed-key P2SH multisig at 15 pubkeys because larger redeem scripts
+  // exceed the 520-byte push limit; use witness=true for larger classic multisig sets.
   const ms = p2ms(m, sorted ? _sortPubkeys(pubkeys) : pubkeys);
-  return witness ? p2wsh(ms, network) : p2sh(ms, network);
+  return (witness ? p2wsh(ms, network) : p2sh(ms, network)) as TRet<P2Ret>;
 }
 
 /**
@@ -1153,29 +1353,33 @@ export function multisig(
  */
 export function sortedMultisig(
   m: number,
-  pubkeys: Bytes[],
+  pubkeys: TArg<Bytes[]>,
   witness = false,
   network: BTC_NETWORK = NETWORK
-): P2Ret {
-  return multisig(m, pubkeys, true, witness, network);
+): TRet<P2Ret> {
+  // BIP67 canonical multisig is compressed-only, but this wrapper intentionally keeps the generic
+  // sorted-multisig behavior and still allows uncompressed participant keys for compatibility.
+  return multisig(m, pubkeys, true, witness, network) as TRet<P2Ret>;
 }
 
 const base58check = /* @__PURE__ */ createBase58check(u.sha256);
 
-function validateWitness(version: number, data: Bytes) {
+function validateWitness(version: number, data: TArg<Bytes>) {
   if (data.length < 2 || data.length > 40) throw new Error('Witness: invalid length');
   if (version > 16) throw new Error('Witness: invalid version');
   if (version === 0 && !(data.length === 20 || data.length === 32))
     throw new Error('Witness: invalid length for version');
 }
 
-function programToWitness(version: number, data: Bytes, network = NETWORK) {
+function programToWitness(version: number, data: TArg<Bytes>, network = NETWORK) {
   validateWitness(version, data);
+  // BIP 350 keeps segwit v0 on Bech32, while witness versions 1+ switch to Bech32m.
   const coder = version === 0 ? bech32 : bech32m;
   return coder.encode(network.bech32, [version].concat(coder.toWords(data)));
 }
 
-function formatKey(hashed: Bytes, prefix: number[]): string {
+function formatKey(hashed: TArg<Bytes>, prefix: number[]): string {
+  // Legacy Base58Check paths all serialize [version-byte || payload] before checksumming.
   return base58check.encode(u.concatBytes(Uint8Array.from(prefix), hashed));
 }
 
@@ -1190,20 +1394,23 @@ function formatKey(hashed: Bytes, prefix: number[]): string {
  * coder.encode(new Uint8Array(32).fill(1));
  * ```
  */
-export function WIF(network: BTC_NETWORK = NETWORK): Coder<Bytes, string> {
+export function WIF(network: BTC_NETWORK = NETWORK): TRet<Coder<Bytes, string>> {
   return {
-    encode(privKey: Bytes) {
+    encode(privKey: TArg<Bytes>) {
+      // Compressed WIF is exactly 32 private-key bytes plus the 0x01 suffix; shorter or longer
+      // inputs must be rejected instead of being silently padded or truncated by subarray().
+      abytes(privKey, 32, 'privKey');
       const compressed = u.concatBytes(privKey, new Uint8Array([0x01]));
       return formatKey(compressed.subarray(0, 33), [network.wif]);
     },
-    decode(wif: string) {
+    decode(wif: string): TRet<Bytes> {
       let parsed = base58check.decode(wif);
       if (parsed[0] !== network.wif) throw new Error('Wrong WIF prefix');
       parsed = parsed.subarray(1);
       // Check what it is. Compressed flag?
       if (parsed.length !== 33) throw new Error('Wrong WIF length');
       if (parsed[32] !== 0x01) throw new Error('Wrong WIF postfix');
-      return parsed.subarray(0, -1);
+      return parsed.subarray(0, -1) as TRet<Bytes>;
     },
   };
 }
@@ -1224,7 +1431,7 @@ export function WIF(network: BTC_NETWORK = NETWORK): Coder<Bytes, string> {
  */
 export function Address(network: BTC_NETWORK = NETWORK) {
   return {
-    encode(from: P.UnwrapCoder<OutScriptType>): string {
+    encode(from: Exclude<OutScriptValue, undefined>): string {
       const { type } = from;
       if (type === 'wpkh') return programToWitness(0, from.hash, network);
       else if (type === 'wsh') return programToWitness(0, from.hash, network);
@@ -1233,7 +1440,7 @@ export function Address(network: BTC_NETWORK = NETWORK) {
       else if (type === 'sh') return formatKey(from.hash, [network.scriptHash]);
       throw new Error(`Unknown address type=${type}`);
     },
-    decode(address: string): P.UnwrapCoder<OutScriptType> {
+    decode(address: string): OutScriptValue {
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
       // Bech32
       if (network.bech32 && address.toLowerCase().startsWith(`${network.bech32}1`)) {
@@ -1250,21 +1457,26 @@ export function Address(network: BTC_NETWORK = NETWORK) {
         const [version, ...program] = res.words;
         const data = bech32.fromWords(program);
         validateWitness(version, data);
-        if (version === 0 && data.length === 32) return { type: 'wsh', hash: data };
-        else if (version === 0 && data.length === 20) return { type: 'wpkh', hash: data };
-        else if (version === 1 && data.length === 32) return { type: 'tr', pubkey: data };
+        if (version === 0 && data.length === 32)
+          return { type: 'wsh', hash: data } as OutScriptValue;
+        else if (version === 0 && data.length === 20)
+          return { type: 'wpkh', hash: data } as OutScriptValue;
+        else if (version === 1 && data.length === 32)
+          return { type: 'tr', pubkey: data } as OutScriptValue;
+        // Future witness versions can still be valid addresses, but this helper
+        // only returns typed descriptors for recognized v0 and taproot templates.
         else throw new Error('Unknown witness program');
       }
       const data = base58check.decode(address);
       if (data.length !== 21) throw new Error('Invalid base58 address');
       // Pay To Public Key Hash
       if (data[0] === network.pubKeyHash) {
-        return { type: 'pkh', hash: data.slice(1) };
+        return { type: 'pkh', hash: data.slice(1) } as OutScriptValue;
       } else if (data[0] === network.scriptHash) {
         return {
           type: 'sh',
           hash: data.slice(1),
-        };
+        } as OutScriptValue;
       }
       throw new Error(`Invalid address prefix=${data[0]}`);
     },

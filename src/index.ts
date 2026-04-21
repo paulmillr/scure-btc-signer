@@ -1,4 +1,5 @@
 /*! scure-btc-signer - MIT License (c) 2022 Paul Miller (paulmillr.com) */
+import type { TArg, TRet } from './utils.ts';
 import {
   compareBytes,
   concatBytes,
@@ -25,6 +26,7 @@ export {
 export type { ScriptType } from './script.ts';
 export { getInputType, Transaction } from './transaction.ts';
 export { NETWORK, TAPROOT_UNSPENDABLE_KEY, TEST_NETWORK } from './utils.ts';
+export type { TArg, TRet } from './utils.ts';
 export { selectUTXO } from './utxo.ts';
 
 /**
@@ -35,14 +37,25 @@ export { selectUTXO } from './utxo.ts';
  * utils.compareBytes(new Uint8Array([1]), new Uint8Array([2]));
  * ```
  */
-export const utils = /* @__PURE__ */ (() => ({
-  isBytes,
-  concatBytes,
-  compareBytes,
-  pubSchnorr,
-  randomPrivateKeyBytes,
-  taprootTweakPubkey,
-}))();
+// Convenience subset; import from `./utils.ts` when you need the full helper surface.
+export const utils: TRet<
+  Readonly<{
+    isBytes: (a: unknown) => a is Uint8Array;
+    concatBytes: (...arrays: TArg<Uint8Array[]>) => TRet<Uint8Array>;
+    compareBytes: typeof compareBytes;
+    pubSchnorr: (priv: TArg<Uint8Array>) => TRet<Uint8Array>;
+    randomPrivateKeyBytes: () => TRet<Uint8Array>;
+    taprootTweakPubkey: typeof taprootTweakPubkey;
+  }>
+> = /* @__PURE__ */ (() =>
+  Object.freeze({
+    isBytes,
+    concatBytes,
+    compareBytes,
+    pubSchnorr,
+    randomPrivateKeyBytes,
+    taprootTweakPubkey,
+  }))();
 
 export {
   _sortPubkeys,
@@ -53,9 +66,11 @@ export {
   sortedMultisig,
   taprootListToTree,
   WIF,
-} from './payment.ts'; // remove
+} from './payment.ts';
 // remove
 export type { CustomScript, OptScript } from './payment.ts';
-export { _DebugPSBT, TaprootControlBlock } from './psbt.ts'; // remove
-export { bip32Path, Decimal, DEFAULT_SEQUENCE, PSBTCombine, SigHash } from './transaction.ts'; // remove
+// remove
+export { _DebugPSBT, TaprootControlBlock } from './psbt.ts';
+// remove
+export { bip32Path, Decimal, DEFAULT_SEQUENCE, PSBTCombine, SigHash } from './transaction.ts';
 export { _cmpBig, _Estimator } from './utxo.ts';

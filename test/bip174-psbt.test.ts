@@ -267,24 +267,32 @@ should('bip174-psbt: PSBT unknown keys', () => {
       new Uint8Array(utf8ToBytes('unknownValue2')),
     ],
   ];
+  const unknownNext = [
+    [
+      { type: 0xfd, key: new Uint8Array(utf8ToBytes('unknownKey3')) },
+      new Uint8Array(utf8ToBytes('unknownValue3')),
+    ],
+  ];
 
   // input unknown key
   psbtWithoutAllowUnknown.updateInput(0, { unknown });
   psbtWithAllowUnknown.updateInput(0, { unknown });
+  psbtWithAllowUnknown.updateInput(0, { unknown: unknownNext });
 
   // output unknown key
   psbtWithoutAllowUnknown.updateOutput(0, { unknown });
   psbtWithAllowUnknown.updateOutput(0, { unknown });
+  psbtWithAllowUnknown.updateOutput(0, { unknown: unknownNext });
   // verify the unknown key is preserved only if the flag is set
-  deepStrictEqual(psbtWithAllowUnknown.outputs[0].unknown, unknown);
-  deepStrictEqual(psbtWithAllowUnknown.inputs[0].unknown, unknown);
+  deepStrictEqual(psbtWithAllowUnknown.outputs[0].unknown, unknown.concat(unknownNext));
+  deepStrictEqual(psbtWithAllowUnknown.inputs[0].unknown, unknown.concat(unknownNext));
   deepStrictEqual(psbtWithoutAllowUnknown.outputs[0].unknown, undefined);
   deepStrictEqual(psbtWithoutAllowUnknown.inputs[0].unknown, undefined);
 
   // verify the unknown key is preserved with serialization
   const psbt2 = btc.Transaction.fromPSBT(psbtWithAllowUnknown.toPSBT());
-  deepStrictEqual(psbt2.outputs[0].unknown, unknown);
-  deepStrictEqual(psbt2.inputs[0].unknown, unknown);
+  deepStrictEqual(psbt2.outputs[0].unknown, unknown.concat(unknownNext));
+  deepStrictEqual(psbt2.inputs[0].unknown, unknown.concat(unknownNext));
 });
 
 should.runWhen(import.meta.url);

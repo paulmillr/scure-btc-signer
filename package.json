@@ -11,14 +11,14 @@
     "!_type_test.*"
   ],
   "dependencies": {
-    "@noble/curves": "~2.0.0",
-    "@noble/hashes": "~2.0.0",
+    "@noble/curves": "~2.2.0",
+    "@noble/hashes": "~2.2.0",
     "@scure/base": "~2.0.0",
-    "micro-packed": "~0.8.0"
+    "micro-packed": "0.8.0"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.5.0",
-    "@scure/bip32": "~2.0.0",
+    "@scure/bip32": "2.0.0",
     "prettier": "3.6.2",
     "typescript": "6.0.2"
   },
@@ -26,7 +26,7 @@
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}",
     "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
-    "check": "npm run check:readme && npm run check:treeshake && npm run check:jsdoc",
+    "check": "npx --no @paulmillr/jsbt check package.json",
     "check:readme": "npx --no @paulmillr/jsbt readme package.json",
     "check:treeshake": "npx --no @paulmillr/jsbt treeshake package.json test/build/out-treeshake",
     "check:jsdoc": "npx --no @paulmillr/jsbt tsdoc package.json",

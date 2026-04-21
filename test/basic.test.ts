@@ -1,12 +1,31 @@
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { base64, hex } from '@scure/base';
+import { HDKey } from '@scure/bip32/index.js';
+import { base64, createBase58check, hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
+import { checkScript, tapLeafHash } from '../src/payment.ts';
+import { _RawPSBTV0, PSBTInputCoder, PSBTOutputCoder, RawPSBTV2 } from '../src/psbt.ts';
+import { RawOldTx } from '../src/script.ts';
+import { cloneDeep, DEFAULT_SEQUENCE, getPrevOut, inputBeforeSign } from '../src/transaction.ts';
+import { sha256x2 } from '../src/utils.ts';
+import psbtV from './vectors/psbt_vectors.js';
 
 const testClone = (tx) => deepStrictEqual(tx.clone(), tx);
+const base58check = createBase58check(sha256);
+// Bundled PSBT envelope from test/vectors/psbt_vectors.js case `PSBT with `PSBT_GLOBAL_XPUB``.
+const PSBT_GLOBAL_XPUB_HEX = psbtV.find((v) => v.name === 'PSBT with `PSBT_GLOBAL_XPUB`')!.hex;
+const XPub = P.struct({
+  version: P.U32BE,
+  depth: P.U8,
+  parentFingerprint: P.U32BE,
+  childNumber: P.U32BE,
+  chainCode: P.bytes(32),
+  publicKey: P.bytes(33),
+});
+const xpubPSBT = () => _RawPSBTV0.decode(hex.decode(PSBT_GLOBAL_XPUB_HEX));
 
 should('BTC: parseAddress', () => {
   const CASES = [
@@ -34,6 +53,442 @@ should('BTC: Bech32 addresses', () => {
   deepStrictEqual(btc.getAddress('wpkh', priv), 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw');
   const pub = secp256k1.getPublicKey(priv, true);
   deepStrictEqual(btc.p2wpkh(pub).address, 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw');
+});
+
+should('WIF.encode rejects non-32-byte private keys', () => {
+  throws(() => btc.WIF().encode(new Uint8Array(31)));
+  throws(() => btc.WIF().encode(new Uint8Array(33)));
+});
+
+should('BTC: bip32Path depth limit', () => {
+  throws(() => btc.bip32Path('m' + '/0'.repeat(256)));
+});
+
+should('cloneDeep unsupported symbol type', () => {
+  let err: Error | undefined;
+  throws(
+    () => cloneDeep(Symbol('x') as never),
+    (e) => {
+      err = e as Error;
+      return true;
+    }
+  );
+  deepStrictEqual(err?.message, 'cloneDeep: unknown type=symbol');
+});
+
+should('getPrevOut rejects out-of-range nonWitnessUtxo indexes', () => {
+  const prev = btc.RawTx.decode(
+    btc.RawTx.encode({
+      version: 2,
+      lockTime: 0,
+      segwitFlag: false,
+      inputs: [
+        {
+          txid: new Uint8Array(32).fill(9),
+          index: 0,
+          finalScriptSig: P.EMPTY,
+          sequence: 0xffffffff,
+        },
+      ],
+      outputs: [{ amount: 5n, script: Uint8Array.of(0x51) }],
+    })
+  );
+  deepStrictEqual(getPrevOut({ nonWitnessUtxo: prev, index: 0 }), prev.outputs[0]);
+  throws(() => getPrevOut({ nonWitnessUtxo: prev, index: 3 }), /index/i);
+});
+
+should('RawTx rejects superfluous witness serialization', () => {
+  throws(
+    () =>
+      btc.RawTx.encode({
+        version: 2,
+        lockTime: 0,
+        segwitFlag: true,
+        inputs: [
+          {
+            txid: new Uint8Array(32),
+            index: 0,
+            finalScriptSig: new Uint8Array(),
+            sequence: 0xffffffff,
+          },
+        ],
+        outputs: [{ amount: 1n, script: Uint8Array.of(0x51) }],
+        witnesses: [[]],
+      }),
+    /witness|Segwit|segwit|empty/
+  );
+  throws(
+    () =>
+      btc.RawTx.decode(
+        hex.decode(
+          '0100000000010113ae35a2063ba413c3a1bb9b3820c76291e40e83bd3f23c8ff83333f0c64d623000000004a00483045022100e332e8367d5fee22c205ce1bf4e01e39f1a8decb3ba20d1336770cf38b8ee72d022076b5f83b3ee15390133b7ebf526ec189eb73cc6ee0a726f70b939bc51fa18d8001ffffffff0180969800000000001976a914b1ae3ceac136e4bdb733663e7a1e2f0961198a1788ac0000000000'
+        )
+      ),
+    /witness|Segwit|segwit|empty/
+  );
+});
+
+should('validateInput keeps accepting a matching non-final nonWitnessUtxo in toPSBT', () => {
+  const nonWitnessUtxo = btc.RawTx.decode(
+    btc.RawTx.encode({
+      version: 2,
+      lockTime: 0,
+      segwitFlag: false,
+      inputs: [
+        {
+          txid: new Uint8Array(32).fill(9),
+          index: 0,
+          finalScriptSig: P.EMPTY,
+          sequence: 0xffffffff,
+        },
+      ],
+      outputs: [{ amount: 5n, script: Uint8Array.of(0x51) }],
+    })
+  );
+  const prevTx = btc.Transaction.fromRaw(btc.RawTx.encode(nonWitnessUtxo), {
+    allowUnknownOutputs: true,
+  });
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput(
+    {
+      nonWitnessUtxo,
+      txid: hex.decode(prevTx.id),
+      index: 0,
+    },
+    true
+  );
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n }, true);
+  deepStrictEqual(typeof tx.toPSBT(0), 'object');
+});
+
+should(
+  'validateInput keeps the historical display-order txid convention for nonWitnessUtxo checks',
+  () => {
+    const nonWitnessUtxo = btc.RawTx.decode(
+      btc.RawTx.encode({
+        version: 2,
+        lockTime: 0,
+        segwitFlag: false,
+        inputs: [
+          {
+            txid: new Uint8Array(32).fill(9),
+            index: 0,
+            finalScriptSig: P.EMPTY,
+            sequence: 0xffffffff,
+          },
+        ],
+        outputs: [{ amount: 5n, script: Uint8Array.of(0x51) }],
+      })
+    );
+    const prevTx = btc.Transaction.fromRaw(btc.RawTx.encode(nonWitnessUtxo), {
+      allowUnknownOutputs: true,
+    });
+    const tx = new btc.Transaction({ allowUnknownOutputs: true });
+    tx.addInput(
+      {
+        nonWitnessUtxo,
+        txid: hex.decode(prevTx.hash),
+        index: 0,
+      },
+      true
+    );
+    tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n }, true);
+    throws(() => tx.toPSBT(0), /wrong txid/);
+  }
+);
+
+should('validateInput rejects mismatched txid even when nonWitnessUtxo parses as non-final', () => {
+  const nonWitnessUtxo = btc.RawTx.decode(
+    btc.RawTx.encode({
+      version: 2,
+      lockTime: 0,
+      segwitFlag: false,
+      inputs: [
+        {
+          txid: new Uint8Array(32).fill(9),
+          index: 0,
+          finalScriptSig: P.EMPTY,
+          sequence: 0xffffffff,
+        },
+      ],
+      outputs: [{ amount: 5n, script: Uint8Array.of(0x51) }],
+    })
+  );
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({ nonWitnessUtxo, txid: new Uint8Array(32).fill(1), index: 0 }, true);
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n }, true);
+  throws(() => tx.toPSBT(0), /wrong txid/);
+});
+
+should(
+  'PSBTv2 PREVIOUS_TXID uses standard byte order on the wire and display-order bytes internally',
+  () => {
+    const display = '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858';
+    const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
+    const spend = btc.p2wpkh(pub);
+
+    const tx = new btc.Transaction();
+    tx.addInput({
+      txid: hex.decode(display),
+      index: 0,
+      witnessUtxo: { script: spend.script, amount: 2n },
+    });
+    tx.addOutput({ script: spend.script, amount: 1n });
+    const psbt = tx.toPSBT(2);
+    deepStrictEqual(
+      hex.encode(psbt),
+      '70736274ff01020402000000010401010105010101fb04020000000001011f020000000000000016001479b000887626b294a914501a4cd226b58b235983010e2058e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd75010f0400000000011004ffffffff000103080100000000000000010416001479b000887626b294a914501a4cd226b58b23598300'
+    );
+    deepStrictEqual(hex.encode(RawPSBTV2.decode(psbt).inputs[0].txid), display);
+    const imported = btc.Transaction.fromPSBT(psbt);
+    deepStrictEqual(hex.encode(imported.getInput(0).txid), display);
+  }
+);
+
+should('legacy sighash preserves non-minimal push bytes when removing CODESEPARATOR', () => {
+  const tx = new btc.Transaction({ allowUnknownInputs: true, allowUnknownOutputs: true });
+  (tx as any).inputs = [
+    { txid: new Uint8Array(32), index: 0, finalScriptSig: new Uint8Array(), sequence: 0xffffffff },
+  ];
+  (tx as any).outputs = [{ amount: 1n, script: new Uint8Array([0x51]) }];
+  const original = hex.decode('4c0101ab51ac');
+  const stripped = hex.decode('4c010151ac');
+  const expected = sha256x2(
+    RawOldTx.encode({
+      version: tx.version,
+      inputs: [
+        { txid: new Uint8Array(32), index: 0, finalScriptSig: stripped, sequence: 0xffffffff },
+      ],
+      outputs: [{ amount: 1n, script: new Uint8Array([0x51]) }],
+      lockTime: tx.lockTime,
+    }),
+    P.I32LE.encode(btc.SigHash.ALL)
+  );
+  deepStrictEqual(
+    hex.encode((tx as any).preimageLegacy(0, original, btc.SigHash.ALL)),
+    hex.encode(expected)
+  );
+});
+
+should('preimageWitnessV0 rejects invalid input indexes', () => {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { amount: 2n, script: Uint8Array.of(0x51) },
+  });
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n });
+  throws(
+    () => tx.preimageWitnessV0(1, Uint8Array.of(0x51), btc.SigHash.ALL, 2n),
+    /Invalid input idx=1/
+  );
+  throws(
+    () => tx.preimageWitnessV0(-1, Uint8Array.of(0x51), btc.SigHash.ALL, 2n),
+    /Invalid input idx=-1/
+  );
+});
+
+should('preimageWitnessV1 rejects invalid input indexes', () => {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { amount: 2n, script: Uint8Array.of(0x51) },
+  });
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n });
+  throws(
+    () => tx.preimageWitnessV1(1, [Uint8Array.of(0x51)], btc.SigHash.ALL, [2n]),
+    /Invalid input idx=1/
+  );
+  throws(
+    () => tx.preimageWitnessV1(-1, [Uint8Array.of(0x51)], btc.SigHash.ALL, [2n]),
+    /Invalid input idx=-1/
+  );
+});
+
+should('inputBeforeSign', () => {
+  const txid = new Uint8Array(32).fill(1);
+  deepStrictEqual(inputBeforeSign({ txid, index: 3 }), {
+    txid,
+    index: 3,
+    sequence: 0xffffffff,
+    finalScriptSig: new Uint8Array(),
+  });
+  throws(() =>
+    inputBeforeSign({
+      txid: 'zz' as any,
+      index: '2' as any,
+      sequence: '3' as any,
+      finalScriptSig: 'ab' as any,
+    })
+  );
+});
+
+should('SigHash omits invalid DEFAULT_ANYONECANPAY alias', () => {
+  deepStrictEqual('DEFAULT_ANYONECANPAY' in btc.SigHash, false);
+});
+
+should('taproot signing rejects undefined SIGHASH_DEFAULT|ANYONECANPAY (0x80)', () => {
+  const priv = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
+  const pub = btc.utils.pubSchnorr(priv);
+  const tr = btc.p2tr(pub);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: tr.script, amount: 2n },
+    ...tr,
+    sighashType: 0x80,
+  });
+  tx.addOutput({ script: tr.script, amount: 1n });
+  throws(() => tx.signIdx(priv, 0, [0x80]), /SigHash|sighash|hash_type|0x80/i);
+});
+
+should('PSBTv2 rejects negative output amounts', () => {
+  const script = new Uint8Array([0x51]);
+  throws(() => new btc.Transaction().addOutput({ script, amount: -1n }));
+  const psbt = hex.decode(
+    '70736274ff01020402000000010401000105010101fb040200000000010308ffffffffffffffff0104015100'
+  );
+  throws(() => btc.Transaction.fromPSBT(psbt));
+});
+
+should('GlobalXPUB', () => {
+  const badKey = new Uint8Array(33);
+  badKey[0] = 0x02;
+  // Exact BIP32 invalid public vectors plus one malformed `ser_P(K)` mutation of the bundled PSBT xpub.
+  const invalid = [
+    (raw) => [[{ ...raw.global.xpub[0][0], publicKey: badKey }, raw.global.xpub[0][1]]],
+    () => [
+      [
+        XPub.decode(
+          base58check.decode(
+            'xpub661no6RGEX3uJkY4bNnPcw4URcQTrSibUZ4NqJEw5eBkv7ovTwgiT91XX27VbEXGENhYRCf7hyEbWrR3FewATdCEebj6znwMfQkhRYHRLpJ'
+          )
+        ),
+        { fingerprint: 0x12345678, path: [] },
+      ],
+    ],
+    () => [
+      [
+        XPub.decode(
+          base58check.decode(
+            'xpub661MyMwAuDcm6CRQ5N4qiHKrJ39Xe1R1NyfouMKTTWcguwVcfrZJaNvhpebzGerh7gucBvzEQWRugZDuDXjNDRmXzSZe4c7mnTK97pTvGS8'
+          )
+        ),
+        { fingerprint: 0x12345678, path: [] },
+      ],
+    ],
+    (raw) => [
+      [
+        raw.global.xpub[0][0],
+        { ...raw.global.xpub[0][1], path: raw.global.xpub[0][1].path.slice(0, 1) },
+      ],
+    ],
+  ];
+  for (const mk of invalid) {
+    const raw = xpubPSBT();
+    raw.global.xpub = mk(raw);
+    throws(() => _RawPSBTV0.encode(raw));
+  }
+  // Exact BIP32 valid public vectors for chain `m`, `m/0H/1/2H/2/1000000000`, and `m/0H`.
+  const valid = [
+    [
+      'xpub661MyMwAqRbcFtXgS5sYJABqqG9YLmC4Q1Rdap9gSE8NqtwybGhePY2gZ29ESFjqJoCu1Rupje8YtGqsefD265TMg7usUDFdp6W1EGMcet8',
+      [],
+    ],
+    [
+      'xpub6H1LXWLaKsWFhvm6RVpEL9P4KfRZSW7abD2ttkWP3SSQvnyA8FSVqNTEcYFgJS2UaFcxupHiYkro49S8yGasTvXEYBVPamhGW6cFJodrTHy',
+      [0x80000000, 1, 0x80000002, 2, 1000000000],
+    ],
+    [
+      'xpub68NZiKmJWnxxS6aaHmn81bvJeTESw724CRDs6HbuccFQN9Ku14VQrADWgqbhhTHBaohPX4CjNLf9fq9MYo6oDaPPLPxSb7gwQN3ih19Zm4Y',
+      [0x80000000],
+    ],
+  ];
+  for (const [xpub, path] of valid) {
+    const raw = xpubPSBT();
+    const key = XPub.decode(base58check.decode(xpub));
+    raw.global.xpub = [[key, { fingerprint: 0x12345678, path }]];
+    deepStrictEqual(_RawPSBTV0.decode(_RawPSBTV0.encode(raw)).global.xpub, [
+      [key, { fingerprint: 0x12345678, path }],
+    ]);
+  }
+});
+
+should('PSBTInputCoder rejects tapBip32Derivation entries with invalid x-only pubkeys', () => {
+  throws(() =>
+    PSBTInputCoder.encode({
+      tapBip32Derivation: [
+        [
+          new Uint8Array(32),
+          {
+            hashes: [],
+            der: { fingerprint: 0, path: [] },
+          },
+        ],
+      ],
+    })
+  );
+});
+
+should('PSBTInputCoder rejects duplicate keyed entries in one map', () => {
+  const pk = hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  throws(() =>
+    PSBTInputCoder.encode({
+      partialSig: [
+        [pk, Uint8Array.of(1)],
+        [pk, Uint8Array.of(2)],
+      ],
+    })
+  );
+  const raw = hex.decode(
+    '2202' + hex.encode(pk) + '0101' + '2202' + hex.encode(pk) + '0102' + '00'
+  );
+  throws(() => PSBTInputCoder.decode(raw));
+});
+
+should('PSBTOutputCoder rejects duplicate keyed entries in one map', () => {
+  throws(() =>
+    PSBTOutputCoder.encode({
+      proprietary: [
+        [Uint8Array.of(1), Uint8Array.of(2)],
+        [Uint8Array.of(1), Uint8Array.of(3)],
+      ],
+    })
+  );
+  throws(() => PSBTOutputCoder.decode(hex.decode('02fc01010202fc01010300')));
+});
+
+const tapLeaf = (depth, opcode) => ({ depth, version: 0xc0, script: Uint8Array.of(opcode) });
+
+should('PSBTOutputCoder rejects invalid tapTree tuples', () => {
+  throws(() => PSBTOutputCoder.encode({ tapTree: [] }));
+  const bad = [tapLeaf(2, 0x51), tapLeaf(1, 0x52), tapLeaf(2, 0x53)];
+  const before = bad.map(({ depth, version, script }) => ({
+    depth,
+    version,
+    script: Array.from(script),
+  }));
+  throws(() => PSBTOutputCoder.encode({ tapTree: bad }));
+  deepStrictEqual(
+    bad.map(({ depth, version, script }) => ({ depth, version, script: Array.from(script) })),
+    before
+  );
+});
+
+should('RawPSBTV2 rejects invalid tapTree tuples', () => {
+  const base = () => ({
+    global: { version: 2, txVersion: 2, inputCount: 1, outputCount: 1 },
+    inputs: [{ txid: Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 1 : 0)), index: 0 }],
+    outputs: [{ amount: 1n, script: Uint8Array.of(0x51) }],
+  });
+  const empty = base();
+  empty.outputs[0].tapTree = [];
+  throws(() => RawPSBTV2.encode(empty));
+  const bad = base();
+  bad.outputs[0].tapTree = [tapLeaf(2, 0x51), tapLeaf(1, 0x52), tapLeaf(2, 0x53)];
+  throws(() => RawPSBTV2.encode(bad));
 });
 
 should('BTC: P2PKH addresses', () => {
@@ -166,6 +621,8 @@ should('WIF', () => {
 });
 
 should('Script', () => {
+  deepStrictEqual(hex.encode(btc.Script.encode([-1])), '4f');
+  deepStrictEqual(btc.Script.decode(hex.decode('4f')), ['1NEGATE']);
   deepStrictEqual(
     btc.Script.decode(
       hex.decode(
@@ -267,8 +724,16 @@ should('P2A output type', () => {
     type: 'unknown',
     script: wrong_segwit_version,
   });
-  const invalid_taproot_witness_script = hex.decode('510247e4'); // Non-P2A output signature still decoded as Taproot.
-  throws(() => btc.OutScript.decode(invalid_taproot_witness_script));
+  const future_v1_short = hex.decode('510247e4');
+  deepStrictEqual(btc.OutScript.decode(future_v1_short), {
+    type: 'unknown',
+    script: future_v1_short,
+  });
+  const future_v1_long = hex.decode(`5128${'11'.repeat(40)}`);
+  deepStrictEqual(btc.OutScript.decode(future_v1_long), {
+    type: 'unknown',
+    script: future_v1_long,
+  });
 });
 
 should('payTo API', () => {
@@ -326,6 +791,7 @@ should('payTo API', () => {
     witnessScript: hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac'),
     hash: hex.decode('b996bbcda8f3f0bba7b021c9507ec5bf8717bf5d14cbb6bd3d6d1a82defed4ec'),
   });
+  throws(() => btc.p2wsh({ type: 'unknown', script: new Uint8Array(10001) }));
   // Cannot be wrapped in p2wsh
   throws(() => btc.p2wsh(btc.p2wpkh(compressed)));
   deepStrictEqual(btc.p2sh(btc.p2wsh(btc.p2pkh(compressed))), {
@@ -398,6 +864,13 @@ should('payTo API', () => {
   throws(() => btc.p2tr(undefined, btc.p2ms(2, [compressed, compressed2, compressed3])));
   // Maybe can be wrapped, but non-representable in PSBT
   throws(() => btc.p2sh(btc.p2sh(btc.p2pkh(compressed))));
+  throws(() => btc.p2sh({ type: 'unknown', script: new Uint8Array(521) } as any));
+  const manyPubkeys = Array.from({ length: 16 }, (_, i) => {
+    const secret = new Uint8Array(32);
+    secret[31] = i + 1;
+    return secp256k1.getPublicKey(secret, true);
+  });
+  throws(() => btc.multisig(16, manyPubkeys, false, false));
   const taproot = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   deepStrictEqual(btc.p2tr(taproot), {
     type: 'tr',
@@ -411,6 +884,27 @@ should('payTo API', () => {
   throws(() => btc.p2wsh(btc.p2tr(taproot)));
   const taproot2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
   const taproot3 = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
+  throws(() =>
+    btc.OutScript.encode({
+      type: 'ms',
+      m: 1.5 as any,
+      pubkeys: [compressed, compressed2, compressed3],
+    })
+  );
+  throws(() =>
+    btc.OutScript.encode({ type: 'tr_ms', m: 1.5 as any, pubkeys: [taproot, taproot2, taproot3] })
+  );
+  const badTRMSOp = btc.Script.encode([taproot, 'CHECKSIG', taproot2, 'ADD', 2, 'NUMEQUAL']);
+  deepStrictEqual(btc.OutScript.decode(badTRMSOp), { type: 'unknown', script: badTRMSOp });
+  const badTRMSKey = btc.Script.encode([taproot, 'CHECKSIG', 1, 'CHECKSIGADD', 2, 'NUMEQUAL']);
+  deepStrictEqual(btc.OutScript.decode(badTRMSKey), { type: 'unknown', script: badTRMSKey });
+  const bareChecksig = btc.Script.encode(['CHECKSIG']);
+  deepStrictEqual(btc.OutScript.decode(bareChecksig), { type: 'unknown', script: bareChecksig });
+  const badTRNSKey = hex.decode('4c0101ac');
+  deepStrictEqual(btc.OutScript.decode(badTRNSKey), {
+    type: 'unknown',
+    script: hex.decode('0101ac'),
+  });
   // TR NS multisig: 3-of-3 (single leaf script)
   deepStrictEqual(btc.p2tr_ns(3, [taproot, taproot2, taproot3]), [
     {
@@ -520,6 +1014,39 @@ should('payTo API', () => {
     address: 'bc1pevfcmnkqqq09a4n0fs8c7mwlc6r4efqpvgyqpjvegllavgw235fq3kz7a0',
     script: hex.decode('5120cb138dcec0001e5ed66f4c0f8f6ddfc6875ca401620800c99947ffd621ca8d12'),
   });
+});
+
+should('checkScript rejects stray wrapper metadata', () => {
+  const pk = hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  const pkh = btc.p2pkh(pk);
+  const wpkh = btc.p2wpkh(pk);
+  const shWpkh = btc.p2sh(wpkh);
+  const wshPkh = btc.p2wsh(pkh);
+  const shWshPkh = btc.p2sh(wshPkh);
+  const tapPriv = new Uint8Array(32).fill(1);
+  const tapPub = secp256k1_schnorr.getPublicKey(tapPriv);
+  const tr = btc.p2tr(tapPub);
+  throws(() => checkScript(pkh.script, pkh.script));
+  throws(() => checkScript(wpkh.script, undefined, pkh.script));
+  throws(() => checkScript(shWpkh.script, shWpkh.redeemScript, pkh.script));
+  throws(() =>
+    new btc.Transaction().addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { amount: 1n, script: tr.script },
+      tapInternalKey: tapPub,
+      redeemScript: wpkh.script,
+      witnessScript: btc.p2ms(1, [pk]).script,
+    })
+  );
+  checkScript(wshPkh.script, undefined, wshPkh.witnessScript);
+  checkScript(shWshPkh.script, shWshPkh.redeemScript, shWshPkh.witnessScript);
+});
+
+should('p2wsh rejects nested wsh', () => {
+  const pk = hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+  const inner = btc.p2wsh(btc.p2pkh(pk));
+  throws(() => btc.p2wsh(inner));
 });
 
 should('Transaction input/output', () => {
@@ -723,6 +1250,15 @@ should('TapRoot sanity check', () => {
   throws(() => btc.p2tr(undefined, [btc.p2tr(taproot)]));
   // tr-tr_pk -> OK
   btc.p2tr(undefined, [btc.p2tr_pk(taproot)]);
+  const oddLeaf = btc.p2tr_pk(taproot);
+  oddLeaf.leafVersion = 0xc1;
+  throws(() => btc.p2tr(undefined, [oddLeaf]));
+  const negativeLeaf = btc.p2tr_pk(taproot);
+  negativeLeaf.leafVersion = -1;
+  throws(() => btc.p2tr(undefined, [negativeLeaf]));
+  const annexLeaf = btc.p2tr_pk(taproot);
+  annexLeaf.leafVersion = 0x50;
+  throws(() => btc.p2tr(undefined, [annexLeaf]));
   // Plain tr inside tr -> error
   throws(() => btc.p2tr(undefined, [btc.p2tr(taproot)]));
   // Nested script tree is not allowed
@@ -773,6 +1309,14 @@ should('TapRoot sanity check', () => {
     btc.p2tr(undefined, [btc.p2tr_ms(2, [pubKey1, pubKey2, pubKey3])], regtest).address,
     'bcrt1pvj97rgc5flzt0kpdsly9aqsutsxp7ct2fwgtyzap4mtalh8gxe5sxaqm40'
   );
+});
+
+should('tapLeafHash rejects non-byte and parity-bit leaf versions', () => {
+  const script = new Uint8Array([0x51]);
+  throws(() => tapLeafHash(script, 0xc1));
+  throws(() => tapLeafHash(script, 256));
+  throws(() => tapLeafHash(script, -1));
+  throws(() => tapLeafHash(script, 193.5));
 });
 
 should('Multisig sanity check', () => {
@@ -1658,6 +2202,169 @@ should('Signed fields', () => {
   tx.updateOutput(0, { amount: 121n });
 });
 
+should('finalized inputs must be reopened before further mutation', () => {
+  const priv = new Uint8Array(32).fill(1);
+  const pub = btc.utils.pubSchnorr(priv);
+  const spend = btc.p2tr(pub);
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { amount: 2n, script: spend.script },
+    tapInternalKey: pub,
+    sighashType: btc.SigHash.SINGLE_ANYONECANPAY,
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  tx.signIdx(priv, 0, [btc.SigHash.SINGLE_ANYONECANPAY]);
+  tx.finalizeIdx(0);
+  throws(() => tx.addOutput({ script: spend.script, amount: 1n }));
+  tx.updateInput(0, { finalScriptWitness: undefined });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  deepStrictEqual(tx.outputsLength, 2);
+});
+
+should('Transaction.signIdx signs taproot HD inputs from tapBip32Derivation', () => {
+  const aux = new Uint8Array(32);
+  const path = "m/86'/0'/0'/0/0";
+  const mk = () => {
+    const master = HDKey.fromMasterSeed(new Uint8Array(32).fill(7));
+    const child = master.derive(path);
+    const internalKey = child.publicKey.slice(1);
+    const tr = btc.p2tr(internalKey);
+    const out = btc.p2wpkh(child.publicKey);
+    const tx = new btc.Transaction();
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { amount: 1000n, script: tr.script },
+      tapInternalKey: internalKey,
+      tapBip32Derivation: [
+        [
+          internalKey,
+          { hashes: [], der: { fingerprint: master.fingerprint, path: btc.bip32Path(path) } },
+        ],
+      ],
+    });
+    tx.addOutput({ amount: 900n, script: out.script });
+    return { master, child, tx };
+  };
+  const raw = mk();
+  deepStrictEqual(raw.tx.signIdx(raw.child.privateKey, 0, undefined, aux), true);
+  const hd = mk();
+  deepStrictEqual(hd.tx.signIdx(hd.master, 0, undefined, aux), true);
+  deepStrictEqual(hd.tx.inputs[0].tapKeySig, raw.tx.inputs[0].tapKeySig);
+});
+
+should('Transaction.signIdx skips unrelated same-fingerprint taproot derivation entries', () => {
+  const aux = new Uint8Array(32);
+  const goodPath = "m/86'/0'/0'/0/0";
+  const badPath = "m/86'/0'/0'/0/1";
+  const mk = () => {
+    const master = HDKey.fromMasterSeed(new Uint8Array(32).fill(7));
+    const child = master.derive(goodPath);
+    const other = master.derive(badPath);
+    const internalKey = child.publicKey.slice(1);
+    const tr = btc.p2tr(internalKey);
+    const out = btc.p2wpkh(child.publicKey);
+    const tx = new btc.Transaction();
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { amount: 1000n, script: tr.script },
+      tapInternalKey: internalKey,
+      tapBip32Derivation: [
+        [
+          other.publicKey.slice(1),
+          {
+            hashes: [new Uint8Array(32).fill(2)],
+            der: { fingerprint: master.fingerprint, path: btc.bip32Path(badPath) },
+          },
+        ],
+        [
+          internalKey,
+          { hashes: [], der: { fingerprint: master.fingerprint, path: btc.bip32Path(goodPath) } },
+        ],
+      ],
+    });
+    tx.addOutput({ amount: 900n, script: out.script });
+    return { master, child, tx };
+  };
+  const raw = mk();
+  deepStrictEqual(raw.tx.signIdx(raw.child.privateKey, 0, undefined, aux), true);
+  const hd = mk();
+  deepStrictEqual(hd.tx.signIdx(hd.master, 0, undefined, aux), true);
+  deepStrictEqual(hd.tx.inputs[0].tapKeySig, raw.tx.inputs[0].tapKeySig);
+});
+
+should('Transaction.signIdx matches Bitcoin Core taproot HD oracle fixture', () => {
+  // Fixed Bitcoin Core fixture with `{ master_fingerprint: e2867bb6, path: m/86h/1h/0h/0/0 }`.
+  const psbt =
+    'cHNidP8BAF4CAAAAAXqgVMKuHPSe1PNaRBM+vml6xWEoKul8PSkT34RuE+LeAQAAAAD/////AfC59QUAAAAAIlEgJyurNEwQux0PJCD9kNgqHc3u9QOIZmiWt89MqeUxnI4AAAAAAAEBKwDh9QUAAAAAIlEg1Gvw0cMHojWU/9oWCLI9f6pGuidxyamI8LcfqhAnSoQhFuJlIiKuyvCNm0kZF3/0aCOxAf5es9djLpiR2DiONzKGGQDihnu2VgAAgAEAAIAAAACAAAAAAAAAAAABFyDiZSIirsrwjZtJGRd/9GgjsQH+XrPXYy6Ykdg4jjcyhgAA';
+  const raw =
+    '020000000001017aa054c2ae1cf49ed4f35a44133ebe697ac561282ae97c3d2913df846e13e2de0100000000ffffffff01f0b9f50500000000225120272bab344c10bb1d0f2420fd90d82a1dcdeef50388666896b7cf4ca9e5319c8e0140b8a33f78d90a947a161ff344c655104cf3439f6b50daad64424620822c86c7b6f643f1e3e017172b3b7164f42fa0da6ccc6ce0bef581bb796e56048e6da2d64600000000';
+  const testnet = { public: 0x043587cf, private: 0x04358394 };
+  const master = HDKey.fromMasterSeed(new Uint8Array(32).fill(7), testnet);
+  const tx = btc.Transaction.fromPSBT(base64.decode(psbt));
+  deepStrictEqual(tx.signIdx(master, 0, undefined, new Uint8Array(32)), true);
+  tx.finalize();
+  deepStrictEqual(hex.encode(tx.extract()), raw);
+});
+
+should('Transaction.signIdx preserves allowedSighash when deriving HD child keys', () => {
+  const path = "m/84'/0'/0'/0/0";
+  const mk = () => {
+    const master = HDKey.fromMasterSeed(new Uint8Array(32).fill(9));
+    const child = master.derive(path);
+    const pay = btc.p2wpkh(child.publicKey);
+    const tx = new btc.Transaction();
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { amount: 1000n, script: pay.script },
+      sighashType: btc.SigHash.NONE,
+      bip32Derivation: [
+        [child.publicKey, { fingerprint: master.fingerprint, path: btc.bip32Path(path) }],
+      ],
+    });
+    tx.addOutput({ amount: 900n, script: pay.script });
+    return { master, child, tx };
+  };
+  const raw = mk();
+  deepStrictEqual(raw.tx.signIdx(raw.child.privateKey, 0, [btc.SigHash.NONE]), true);
+  const hd = mk();
+  deepStrictEqual(hd.tx.signIdx(hd.master, 0, [btc.SigHash.NONE]), true);
+  deepStrictEqual(hd.tx.inputs[0].partialSig, raw.tx.inputs[0].partialSig);
+});
+
+should('Transaction.signIdx skips unrelated same-fingerprint bip32 derivation entries', () => {
+  const path = "m/84'/0'/0'/0/0";
+  const badPath = "m/84'/0'/0'/0/1";
+  const mk = () => {
+    const master = HDKey.fromMasterSeed(new Uint8Array(32).fill(9));
+    const child = master.derive(path);
+    const other = master.derive(badPath);
+    const pay = btc.p2wpkh(child.publicKey);
+    const tx = new btc.Transaction();
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { amount: 1000n, script: pay.script },
+      sighashType: btc.SigHash.NONE,
+      bip32Derivation: [
+        [other.publicKey, { fingerprint: master.fingerprint, path: btc.bip32Path(badPath) }],
+        [child.publicKey, { fingerprint: master.fingerprint, path: btc.bip32Path(path) }],
+      ],
+    });
+    tx.addOutput({ amount: 900n, script: pay.script });
+    return { master, child, tx };
+  };
+  const raw = mk();
+  deepStrictEqual(raw.tx.signIdx(raw.child.privateKey, 0, [btc.SigHash.NONE]), true);
+  const hd = mk();
+  deepStrictEqual(hd.tx.signIdx(hd.master, 0, [btc.SigHash.NONE]), true);
+  deepStrictEqual(hd.tx.inputs[0].partialSig, raw.tx.inputs[0].partialSig);
+});
+
 should('have proper vsize for cloned transactions (gh-18)', () => {
   const opts = {};
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -1684,6 +2391,34 @@ should('have proper vsize for cloned transactions (gh-18)', () => {
   //console.log(clone.vsize); // B
   deepStrictEqual(tx.vsize, clone.vsize);
   deepStrictEqual(tx.vsize, 183);
+});
+
+should(
+  'weight includes empty witness vectors for legacy inputs once any input has witness data',
+  () => {
+    const tx = new btc.Transaction({ allowUnknownOutputs: true });
+    tx.addInput({ txid: new Uint8Array(32), index: 0, sequence: 0xfffffffe });
+    tx.addInput({ txid: new Uint8Array(32).fill(1), index: 1, sequence: 0xfffffffe });
+    tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n });
+    tx.inputs[0].finalScriptSig = Uint8Array.of(1);
+    tx.inputs[1].finalScriptWitness = [Uint8Array.of(2)];
+    const stripped = tx.toBytes(true, false).length;
+    const total = tx.toBytes(true, true).length;
+    deepStrictEqual(tx.weight, stripped * 4 + (total - stripped));
+  }
+);
+
+should('vsize rounds up the full BIP 141 weight for mixed legacy+segwit inputs', () => {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({ txid: new Uint8Array(32), index: 0, sequence: 0xfffffffe });
+  tx.addInput({ txid: new Uint8Array(32).fill(1), index: 1, sequence: 0xfffffffe });
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n });
+  tx.inputs[0].finalScriptSig = Uint8Array.of(1);
+  tx.inputs[1].finalScriptWitness = [new Uint8Array(4).fill(2)];
+  const stripped = tx.toBytes(true, false).length;
+  const total = tx.toBytes(true, true).length;
+  const expectedWeight = stripped * 4 + (total - stripped);
+  deepStrictEqual(tx.vsize, Math.ceil(expectedWeight / 4));
 });
 
 should('clone transaction with identical opts', () => {
@@ -1743,6 +2478,17 @@ should('clone transaction with identical opts', () => {
   deepStrictEqual(clone2.opts, opts2);
 });
 
+should(
+  'Transaction constructor does not mutate caller opts when normalizing deprecated aliases',
+  () => {
+    const opts = { allowUnknowInput: true, allowUnknowOutput: false };
+    const tx = new btc.Transaction(opts);
+    deepStrictEqual(tx.opts.allowUnknownInputs, true);
+    deepStrictEqual(tx.opts.allowUnknownOutputs, false);
+    deepStrictEqual(opts, { allowUnknowInput: true, allowUnknowOutput: false });
+  }
+);
+
 should('return immutable outputs/inputs', () => {
   const privKey1 = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const P1 = secp256k1.getPublicKey(privKey1, true);
@@ -1801,6 +2547,76 @@ should('return immutable outputs/inputs', () => {
   o1.script[0] = 128;
   deepStrictEqual(tx.outputs[1].script[0], 0);
   // console.log('O', tx.outputs[1], o1);
+});
+
+should('Transaction.addInput detaches caller-owned byte arrays', () => {
+  const txid = new Uint8Array(32).fill(0x11);
+  const script = Uint8Array.of(0x51);
+  const wit = Uint8Array.of(1, 2, 3);
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({
+    txid,
+    index: 0,
+    witnessUtxo: { amount: 1n, script },
+    finalScriptWitness: [wit],
+  });
+  txid[0] = 0xaa;
+  script[0] = 0x00;
+  wit[0] = 0xff;
+  deepStrictEqual(tx.getInput(0), {
+    txid: new Uint8Array(32).fill(0x11),
+    index: 0,
+    witnessUtxo: { amount: 1n, script: Uint8Array.of(0x51) },
+    finalScriptWitness: [Uint8Array.of(1, 2, 3)],
+    sequence: DEFAULT_SEQUENCE,
+  });
+});
+
+should('Transaction.updateInput detaches caller-owned byte arrays', () => {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({ txid: new Uint8Array(32).fill(0x11), index: 0 });
+  tx.addOutput({ amount: 1n, script: Uint8Array.of(0x51) });
+  const txid = new Uint8Array(32).fill(0x22);
+  const script = Uint8Array.of(0x51);
+  const wit = Uint8Array.of(4, 5, 6);
+  tx.updateInput(0, {
+    txid,
+    witnessUtxo: { amount: 1n, script },
+    finalScriptWitness: [wit],
+  });
+  txid[0] = 0xaa;
+  script[0] = 0x00;
+  wit[0] = 0xff;
+  deepStrictEqual(tx.getInput(0), {
+    txid: new Uint8Array(32).fill(0x22),
+    index: 0,
+    witnessUtxo: { amount: 1n, script: Uint8Array.of(0x51) },
+    finalScriptWitness: [Uint8Array.of(4, 5, 6)],
+    sequence: DEFAULT_SEQUENCE,
+  });
+});
+
+should('Transaction.addOutput detaches caller-owned script bytes', () => {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  const script = Uint8Array.of(0x51);
+  tx.addOutput({ amount: 1n, script });
+  script[0] = 0x00;
+  deepStrictEqual(tx.getOutput(0), {
+    amount: 1n,
+    script: Uint8Array.of(0x51),
+  });
+});
+
+should('Transaction.updateOutput detaches caller-owned script bytes', () => {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addOutput({ amount: 1n, script: Uint8Array.of(0x51) });
+  const script = Uint8Array.of(0x52);
+  tx.updateOutput(0, { script });
+  script[0] = 0x00;
+  deepStrictEqual(tx.getOutput(0), {
+    amount: 1n,
+    script: Uint8Array.of(0x52),
+  });
 });
 
 should('error on internalKey inside leaf script (gh-51)', () => {
@@ -1888,6 +2704,95 @@ should('combine PSBT (gh-56)', () => {
   deepStrictEqual(
     hex.encode(finalElectrum),
     '02000000000102a23a2a1789057082409fa62481d4353a0d297c66cd124ce2ec742fa2000af50a0000000000ffffffffa23a2a1789057082409fa62481d4353a0d297c66cd124ce2ec742fa2000af50a0100000000ffffffff01c80100000000000016001479b000887626b294a914501a4cd226b58b2359830247304402206ebc723b3e1f6cedf8d085f73c83b2aaa186ac108b9bae75b606b7fa5394a103022034c50a46673b17f72be8faaa47859af5aefefd0dee052ad57f71c3bedc06cacb0121031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f0247304402201fbd18c12d869fc4d6d443d4bac11e490375e4ccee6d86d3112134979b5d37440220298685e3020ca8f8f70c1eab5adfed9a40a81a8ddf1c7dc6976f743f6db2b5450121024d4b6cd1361032ca9bd2aeb9d900aa4d45d9ead80ac9423374c451a7254d076600000000'
+  );
+});
+
+should('PSBTCombine upgrades same-transaction inputs to the highest PSBT version', () => {
+  const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
+  const spend = btc.p2wpkh(pub);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  const v0 = tx.toPSBT(0);
+  const v2 = tx.toPSBT(2);
+  const exp = btc.Transaction.fromPSBT(v2).toPSBT(2);
+  for (const pair of [
+    [v0, v2],
+    [v2, v0],
+  ]) {
+    const comb = btc.PSBTCombine(pair);
+    deepStrictEqual(btc.Transaction.fromPSBT(comb).toPSBT(2), exp);
+  }
+});
+
+should('Transaction.combine rejects different PSBTv2 transactions', () => {
+  const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(7), true);
+  const spend = btc.p2wpkh(pub);
+  const mk = (fill: number) => {
+    const tx = new btc.Transaction();
+    tx.addInput({
+      txid: new Uint8Array(32).fill(fill),
+      index: 0,
+      witnessUtxo: { script: spend.script, amount: 2n },
+    });
+    tx.addOutput({ script: spend.script, amount: 1n });
+    return btc.Transaction.fromPSBT(tx.toPSBT(2));
+  };
+  throws(() => mk(1).combine(mk(2)));
+});
+
+should('representable PSBTv2 state downgrades back to PSBTv0', () => {
+  const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
+  const spend = btc.p2wpkh(pub);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  const v0 = tx.toPSBT(0);
+  const v2 = tx.toPSBT(2);
+  deepStrictEqual(btc.Transaction.fromPSBT(v2).toPSBT(0), v0);
+  const mixed = btc.Transaction.fromPSBT(v0);
+  mixed.combine(btc.Transaction.fromPSBT(v2));
+  deepStrictEqual(mixed.toPSBT(0), v0);
+});
+
+should('PSBTv2-only globals still reject PSBTv0 export', () => {
+  const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
+  const spend = btc.p2wpkh(pub);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  const psbt = btc.Transaction.fromPSBT(tx.toPSBT(2));
+  psbt.global.txModifiable = 1;
+  throws(() => psbt.toPSBT(0), /txModifiable/);
+});
+
+should('PSBT downgrade preserves proprietary globals', () => {
+  const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
+  const spend = btc.p2wpkh(pub);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  const psbt = btc.Transaction.fromPSBT(tx.toPSBT(2));
+  psbt.global.proprietary = [[new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])]];
+  deepStrictEqual(
+    btc.Transaction.fromPSBT(psbt.toPSBT(0)).global.proprietary,
+    psbt.global.proprietary
   );
 });
 
@@ -2024,6 +2929,27 @@ should('GH-101: TAP_BIP32_DERIVATION', () => {
   deepStrictEqual(
     hex.encode(tx.extract()),
     '020000000001033edaa6c4e0740ae334dbb5857dd8c6faf6ea5196760652ad7033ed9031c261c00000000000ffffffff0d9ae8a4191b3ba5a2b856c21af0f7a4feb97957ae80725ef38a933c906519a20000000000ffffffffc7a4a37d38c2b0de3d3b3e8d8e8a331977c12532fc2a4632df27a89c311ee2fa0000000000ffffffff030a000000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac320000000000000017a914a860f76561c85551594c18eecceffaee8c4822d7875d00000000000000160014e8df018c7e326cc253faac7e46cdc51e68542c420140de7efa69aff37822182ccae4675051454cc878510834d5f43b509168b4e02a231333f72a5bd603afdb32597b01fcbf65ef74c224e3d325aed36e93baf4e569800140ef36f29d16b6271789321dfbfcb0226940545af93d36efc4918fa13dfa4a70547ce752d4e0648df2650fc15213def1a507528c215a4f067e54501bd1c1ee1e9001400e2fb03c1a230294a50ec3069e30d80059ef48230f036013724d2db2ba7ce8805af7878fee31c18f993a70e8db3fd520327b421cf63e8984b499c9153c810e0000000000'
+  );
+  throws(() =>
+    RawPSBTV2.encode({
+      global: { version: 2, txVersion: 2, inputCount: 1, outputCount: 1 },
+      inputs: [
+        {
+          txid: Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 1 : 0)),
+          index: 0,
+          tapBip32Derivation: [
+            [
+              new Uint8Array(32),
+              {
+                hashes: [],
+                der: { fingerprint: 0, path: [] },
+              },
+            ],
+          ],
+        },
+      ],
+      outputs: [{ amount: 1n, script: Uint8Array.of(0x51) }],
+    })
   );
 });
 

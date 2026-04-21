@@ -18,6 +18,7 @@ import {
   NETWORK,
   PubT,
   TAPROOT_UNSPENDABLE_KEY,
+  type TArg,
   compareBytes,
   equalBytes,
   isBytes,
@@ -41,13 +42,21 @@ type TapLeafScript = psbt.TransactionInput['tapLeafScript'];
 type TB = Parameters<typeof psbt.TaprootControlBlock.encode>[0];
 const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
 
-function iterLeafs(tapLeafScript: TapLeafScript, sigSize: number, customScripts?: CustomScript[]) {
-  if (!tapLeafScript || !tapLeafScript.length) throw new Error('no leafs');
+function iterLeafs(
+  tapLeafScript: TArg<TapLeafScript>,
+  sigSize: number,
+  customScripts?: TArg<CustomScript[]>
+) {
+  const _tapLeafScript = tapLeafScript as TapLeafScript;
+  const _customScripts = customScripts as CustomScript[] | undefined;
+  if (!_tapLeafScript || !_tapLeafScript.length) throw new Error('no leafs');
+  // Dummy non-empty Schnorr signature bytes for weight estimation.
+  // Unsigned tr_ms slots use P.EMPTY below.
   const empty = () => new Uint8Array(sigSize);
   // If user want to select specific leaf, which can signed,
   // it is possible to remove all other leafs manually.
   // Sort leafs by control block length.
-  const leafs = tapLeafScript.sort(
+  const leafs = _tapLeafScript.sort(
     (a, b) => encodeTapBlock(a[0]).length - encodeTapBlock(b[0]).length
   );
   for (const [cb, _script] of leafs) {
@@ -65,9 +74,9 @@ function iterLeafs(tapLeafScript: TapLeafScript, sigSize: number, customScripts?
     } else if (outs.type === 'tr_ns') {
       for (const _pub of outs.pubkeys) signatures.push(empty());
     } else {
-      if (!customScripts) throw new Error('Finalize: Unknown tapLeafScript');
+      if (!_customScripts) throw new Error('Finalize: Unknown tapLeafScript');
       const leafHash = tapLeafHash(script, ver);
-      for (const c of customScripts) {
+      for (const c of _customScripts) {
         if (!c.finalizeTaproot) continue;
         const scriptDecoded = Script.decode(script);
         const csEncoded = c.encode(scriptDecoded);
@@ -89,6 +98,9 @@ function iterLeafs(tapLeafScript: TapLeafScript, sigSize: number, customScripts?
         if (!finalized) continue;
         return finalized.concat(encodeTapBlock(cb));
       }
+      // UTXO selection may run without the real signer/finalizer process. When no matching local
+      // finalizeTaproot hook exists, keep a minimal script-path witness lower bound here instead of
+      // failing selection; callers that need exact fee estimates must provide the matching hook.
     }
     // Witness is stack, so last element will be used first
     return signatures.reverse().concat([script, encodeTapBlock(cb)]);
@@ -98,23 +110,32 @@ function iterLeafs(tapLeafScript: TapLeafScript, sigSize: number, customScripts?
 
 function estimateInput(
   inputType: ReturnType<typeof getInputType>,
-  input: psbt.TransactionInput,
-  opts: TxOpts
+  input: TArg<psbt.TransactionInput>,
+  opts: TArg<TxOpts>
 ) {
+  const _input = input as psbt.TransactionInput;
+  const _opts = opts as TxOpts;
   let script: Bytes = P.EMPTY;
   let witness: Bytes[] | undefined;
 
   // schnorr sig is always 64 bytes. except for cases when sighash is not default!
   if (inputType.txType === 'taproot') {
     const SCHNORR_SIG_SIZE = inputType.sighash !== SignatureHash.DEFAULT ? 65 : 64;
-    if (input.tapInternalKey && !equalBytes(input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
+    // BIP371 `PSBT_IN_TAP_INTERNAL_KEY` is signer metadata, but UTXO selection
+    // runs before signer availability is known. We intentionally treat a
+    // present internal key as a key-path hint here to avoid overestimating fees
+    // on the online side. Callers that know only script-path signing is
+    // possible should omit `tapInternalKey` or pre-filter `tapLeafScript`
+    // before estimation.
+    if (_input.tapInternalKey && !equalBytes(_input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
       witness = [new Uint8Array(SCHNORR_SIG_SIZE)];
-    } else if (input.tapLeafScript) {
-      witness = iterLeafs(input.tapLeafScript, SCHNORR_SIG_SIZE, opts.customScripts);
+    } else if (_input.tapLeafScript) {
+      witness = iterLeafs(_input.tapLeafScript, SCHNORR_SIG_SIZE, _opts.customScripts);
     } else throw new Error('estimateInput/taproot: unknown input');
   } else {
-    // It is possible to grind signatures until it has minimal size (but changing fee value +N satoshi),
-    // which will make estimations exact. But will be very hard for multi sig (need to make sure all signatures has small size).
+    // It is possible to grind signatures until they have minimal size, but
+    // that changes the fee by +N satoshi. It would make estimation exact, but
+    // is very hard for multisig because every signature would need to stay small.
     const empty = () => new Uint8Array(72); // max size of sigs
     const emptyPub = () => new Uint8Array(33); // size of pubkey
     let inputScript = P.EMPTY;
@@ -133,7 +154,7 @@ function estimateInput(
     } else if (ltype === 'wpkh') {
       inputScript = P.EMPTY;
       inputWitness = [empty(), emptyPub()];
-    } else if (ltype === 'unknown' && !opts.allowUnknownInputs)
+    } else if (ltype === 'unknown' && !_opts.allowUnknownInputs)
       throw new Error('Unknown inputs are not allowed');
     if (inputType.type.includes('wsh-')) {
       // P2WSH
@@ -165,6 +186,8 @@ function estimateInput(
 
 // Exported for tests, internal method
 export const _cmpBig = (a: bigint, b: bigint): 0 | 1 | -1 => {
+  // Array.sort comparators must return a number, so normalize bigint comparisons to -1/0/1
+  // instead of coercing large differences through Number(...) and losing ordering precision.
   const n = a - b;
   if (n < 0n) return -1;
   else if (n > 0n) return 1;
@@ -173,43 +196,53 @@ export const _cmpBig = (a: bigint, b: bigint): 0 | 1 | -1 => {
 
 /** Options for fee estimation and UTXO selection. */
 export type EstimatorOpts = TxOpts & {
-  // NOTE: fees less than 1 satoshi per vbyte is not supported. Please create issue if you have valid use case for that.
+  // NOTE: feePerByte is an integer sat/vbyte bigint, so fractional rates are impossible here.
+  // Zero is useful on regtest/in tests, but negative rates are not supported.
   feePerByte: bigint; // satoshi per vbyte
   changeAddress: string; // address where change will be sent
   // Optional
   alwaysChange?: boolean; // always create change, even if less than dust threshold
   bip69?: boolean; // https://github.com/bitcoin/bips/blob/master/bip-0069.mediawiki
   network?: typeof NETWORK;
-  dust?: number; // how much vbytes considered dust?
+  dust?: bigint; // how much vbytes considered dust?
   dustRelayFeeRate?: bigint; // fee per dust byte (DUST_RELAY_TX_FEE)
   createTx?: boolean; // Create tx inside selection
   requiredInputs?: psbt.TransactionInputUpdate[]; // these inputs always will be used
   allowSameUtxo?: boolean; // allow using UTXO multiple times (for test purposes)
 };
 
-function getScript(o: Output, opts: TxOpts = {}, network = NETWORK) {
+function getScript(o: TArg<Output>, opts: TArg<TxOpts> = {}, network = NETWORK) {
+  const _o = o as Output;
+  const _opts = opts as TxOpts;
   let script;
-  if ('script' in o && isBytes(o.script)) {
-    script = o.script;
+  if ('script' in _o && isBytes(_o.script)) {
+    script = _o.script;
   }
-  if ('address' in o) {
-    if (typeof o.address !== 'string')
-      throw new Error(`Estimator: wrong output address=${o.address}`);
-    script = OutScript.encode(Address(network).decode(o.address));
+  if ('address' in _o) {
+    if (typeof _o.address !== 'string')
+      throw new Error(`Estimator: wrong output address=${_o.address}`);
+    // Address.decode() only yields known descriptors for valid output addresses, but the wrapped
+    // coder type still includes `undefined`, so narrow before re-encoding the script template.
+    script = OutScript.encode(
+      Address(network).decode(_o.address) as Parameters<typeof OutScript.encode>[0]
+    );
   }
   if (!script) throw new Error('Estimator: wrong output script');
-  if (typeof o.amount !== 'bigint')
+  if (typeof _o.amount !== 'bigint')
     throw new Error(
       `Estimator: wrong output amount=${
-        o.amount
-      }, should be of type bigint but got ${typeof o.amount}.`
+        _o.amount
+      }, should be of type bigint but got ${typeof _o.amount}.`
     );
-  if (script && !opts.allowUnknownOutputs && OutScript.decode(script).type === 'unknown') {
+  // Keep selector-only `createTx: false` flows aligned with the transaction/PSBT output boundary:
+  // satoshi-denominated outputs are not allowed to go negative.
+  if (_o.amount < 0n) throw new Error(`Estimator: wrong output amount=${_o.amount}`);
+  if (script && !_opts.allowUnknownOutputs && OutScript.decode(script).type === 'unknown') {
     throw new Error(
       'Estimator: unknown output script type, there is a chance that input is unspendable. Pass allowUnknownOutputs=true, if you sure'
     );
   }
-  if (!opts.disableScriptCheck) checkScript(script);
+  if (!_opts.disableScriptCheck) checkScript(script);
   return script;
 }
 
@@ -255,6 +288,10 @@ export class _Estimator {
           opts.feePerByte
         }, should be of type bigint but got ${typeof opts.feePerByte}.`
       );
+    // Zero-fee estimation is useful on regtest/in tests, but negative fee rates would make
+    // `getSatoshi(...)` produce nonsensical negative fees throughout selection.
+    if (opts.feePerByte < 0n)
+      throw new Error(`Estimator: feePerByte must be >= 0 satoshi per vbyte`);
     // Dust stuff
     // TODO: think about this more:
     // - current dust filters tx which cannot be relayed by core
@@ -299,7 +336,14 @@ export class _Estimator {
     let changeWeight =
       baseWeight +
       32 +
-      4 * VarBytes.encode(OutScript.encode(Address(network).decode(opts.changeAddress))).length;
+      // Same Address.decode() narrowing as above: the estimator only reaches this path for a
+      // concrete change output address, not an unknown descriptor.
+      4 *
+        VarBytes.encode(
+          OutScript.encode(
+            Address(network).decode(opts.changeAddress) as Parameters<typeof OutScript.encode>[0]
+          )
+        ).length;
     baseWeight += 4 * CompactSizeLen.encode(outputs.length).length;
     // If there a lot of outputs change can change fee
     changeWeight += 4 * CompactSizeLen.encode(outputs.length + 1).length;
@@ -320,13 +364,16 @@ export class _Estimator {
         opts.disableScriptCheck,
         opts.allowUnknown
       );
-      inputBeforeSign(normalized); // check fields
+      inputBeforeSign(normalized as TArg<psbt.TransactionInput>); // check fields
       const key = `${hex.encode(normalized.txid!)}:${normalized.index}`;
       if (!opts.allowSameUtxo && inputKeys.has(key))
         throw new Error(`Estimator: same input passed multiple times: ${key}`);
       inputKeys.add(key);
-      const inputType = getInputType(normalized, opts.allowLegacyWitnessUtxo);
-      const prev = getPrevOut(normalized);
+      const inputType = getInputType(
+        normalized as TArg<psbt.TransactionInput>,
+        opts.allowLegacyWitnessUtxo
+      );
+      const prev = getPrevOut(normalized as TArg<psbt.TransactionInput>);
       const estimate = estimateInput(inputType, normalized, this.opts);
       const value = prev.amount - opts.feePerByte * BigInt(toVsize(estimate.weight)); // value = amount-fee
       return { inputType, normalized, amount: prev.amount, value, estimate };
@@ -398,22 +445,29 @@ export class _Estimator {
     const targetAmount = this.amount;
     const res: Set<number> = new Set();
     let fee;
+    // BIP144 serialization uses a var_int `txin_count`, so fee accounting must use the post-add
+    // input count here; the CompactSize prefix grows from 1 to 3 bytes at 253 inputs.
+    const getTotal = (newWeight: number, newNum: number) => {
+      const totalWeight = newWeight + 4 * CompactSizeLen.encode(newNum).length;
+      return { totalWeight, fee: this.getSatoshi(totalWeight) };
+    };
     for (const idx of this.requiredIndices) {
       this.checkInputIdx(idx);
       if (res.has(idx)) throw new Error('required input encountered multiple times'); // should not happen
       const { estimate, amount } = this.normalizedInputs[idx];
       let newWeight = weight + estimate.weight;
       if (!hasWitnesses && estimate.hasWitnesses) newWeight += 2; // enable witness if needed
-      const totalWeight = newWeight + 4 * CompactSizeLen.encode(num).length; // number of outputs can change weight
-      fee = this.getSatoshi(totalWeight);
+      const newNum = num + 1;
+      const total = getTotal(newWeight, newNum);
+      fee = total.fee;
       weight = newWeight;
       if (estimate.hasWitnesses) hasWitnesses = true;
-      num++;
+      num = newNum;
       inputsAmount += amount;
       res.add(idx);
       // inputsAmount is enough to cover cost of tx
       if (!all && targetAmount + fee <= inputsAmount && num >= this.requiredIndices.length)
-        return { indices: Array.from(res), fee, weight: totalWeight, total: inputsAmount };
+        return { indices: Array.from(res), fee, weight: total.totalWeight, total: inputsAmount };
     }
     for (const idx of indices) {
       this.checkInputIdx(idx);
@@ -421,8 +475,9 @@ export class _Estimator {
       const { estimate, amount, value } = this.normalizedInputs[idx];
       let newWeight = weight + estimate.weight;
       if (!hasWitnesses && estimate.hasWitnesses) newWeight += 2; // enable witness if needed
-      const totalWeight = newWeight + 4 * CompactSizeLen.encode(num).length; // number of outputs can change weight
-      fee = this.getSatoshi(totalWeight);
+      const newNum = num + 1;
+      const total = getTotal(newWeight, newNum);
+      fee = total.fee;
       // Best case scenario exact(biggest) -> we find biggest output, less than target+threshold
       if (exact && amount + inputsAmount > targetAmount + fee + this.dust) continue; // skip if added value is bigger than dust
       // Negative: cost of using input is more than value provided (negative)
@@ -431,16 +486,21 @@ export class _Estimator {
       if (skipNegative && value <= 0n) continue;
       weight = newWeight;
       if (estimate.hasWitnesses) hasWitnesses = true;
-      num++;
+      num = newNum;
       inputsAmount += amount;
       res.add(idx);
       // inputsAmount is enough to cover cost of tx
       if (!all && targetAmount + fee <= inputsAmount)
-        return { indices: Array.from(res), fee, weight: totalWeight, total: inputsAmount };
+        return { indices: Array.from(res), fee, weight: total.totalWeight, total: inputsAmount };
     }
     if (all) {
-      const newWeight = weight + 4 * CompactSizeLen.encode(num).length;
-      return { indices: Array.from(res), fee, weight: newWeight, total: inputsAmount };
+      const total = getTotal(weight, num);
+      return {
+        indices: Array.from(res),
+        fee: total.fee,
+        weight: total.totalWeight,
+        total: inputsAmount,
+      };
     }
     return undefined;
   }
@@ -470,8 +530,15 @@ export class _Estimator {
       Biggest: () => this.biggest,
     };
     if (strategy.startsWith('exact')) {
-      const [exactData, left] = strategy.slice(5).split('/') as [SortStrategy, SelectionStrategy];
+      // Reject malformed `exact...` strings up front so a successful exact match cannot hide
+      // a missing or garbage `/accum...` fallback suffix.
+      const parts = strategy.split('/');
+      if (parts.length !== 2) throw new Error(`Estimator.select: wrong strategy=${strategy}`);
+      const [exactStrategy, left] = parts as [ExactStrategy, AccumStrategy];
+      const exactData = exactStrategy.slice(5) as SortStrategy;
       if (!data[exactData]) throw new Error(`Estimator.select: wrong strategy=${strategy}`);
+      if (!left.startsWith('accum'))
+        throw new Error(`Estimator.select: wrong strategy=${strategy}`);
       strategy = left;
       const exact = this.accumulate(data[exactData](), true, true);
       if (exact) return exact;
@@ -495,8 +562,11 @@ export class _Estimator {
 
     const changeFee = this.getSatoshi(changeWeight);
     let fee = s.fee;
+    // If dust suppresses the change output, the leftover becomes additional miner fee, so
+    // the returned fee/weight need to follow the no-change transaction shape instead of changeWeight.
     const change = total - this.amount - changeFee;
     if (change > this.dust) needChange = true;
+    else if (!needChange) fee = total - this.amount;
     let inputs = indices;
     let outputs = Array.from(this.outputs);
     if (needChange) {
@@ -513,7 +583,7 @@ export class _Estimator {
       inputs: inputs.map((i) => this.normalizedInputs[i].normalized),
       outputs,
       fee,
-      weight: this.opts.alwaysChange ? s.weight : changeWeight,
+      weight: needChange ? changeWeight : s.weight,
       change: !!needChange,
     };
     let tx;
@@ -559,13 +629,13 @@ export class _Estimator {
  * ```
  */
 export function selectUTXO(
-  inputs: psbt.TransactionInputUpdate[],
-  outputs: Output[],
+  inputs: TArg<psbt.TransactionInputUpdate[]>,
+  outputs: TArg<Output[]>,
   strategy: SelectionStrategy,
-  opts: EstimatorOpts
+  opts: TArg<EstimatorOpts>
 ) {
-  // Defaults: do we want bip69 by default?
-  const _opts = { createTx: true, bip69: true, ...opts };
-  const est = new _Estimator(inputs, outputs, _opts);
+  // Public wrapper defaults to BIP69 ordering and tx construction unless callers override them.
+  const _opts = { createTx: true, bip69: true, ...(opts as EstimatorOpts) };
+  const est = new _Estimator(inputs as psbt.TransactionInputUpdate[], outputs as Output[], _opts);
   return est.result(strategy);
 }

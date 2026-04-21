@@ -1,13 +1,16 @@
 import { schnorr, secp256k1 as secp } from '@noble/curves/secp256k1.js';
-import { bytesToNumberBE, numberToBytesBE } from '@noble/curves/utils.js';
+import { abytes, bytesToNumberBE, numberToBytesBE } from '@noble/curves/utils.js';
 import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
+import { type TArg, type TRet } from '@noble/hashes/utils.js';
 import { utils as packedUtils, U32LE } from 'micro-packed';
+export { type TArg, type TRet } from '@noble/hashes/utils.js';
 
 /** Hex-like input accepted by helpers in this module. */
 export type Hex = string | Uint8Array;
 /** Byte array alias used across the library. */
 export type Bytes = Uint8Array;
+
 const Point = /* @__PURE__ */ (() => secp.Point)();
 const Fn = /* @__PURE__ */ (() => Point.Fn)();
 const CURVE_ORDER = /* @__PURE__ */ (() => Point.Fn.ORDER)();
@@ -45,8 +48,9 @@ export const isBytes: (a: unknown) => a is Uint8Array = /* @__PURE__ */ (() =>
  * concatBytes(new Uint8Array([1]), new Uint8Array([2]));
  * ```
  */
-export const concatBytes: (...arrays: Uint8Array[]) => Uint8Array = /* @__PURE__ */ (() =>
-  packedUtils.concatBytes)();
+export const concatBytes: (...arrays: TArg<Uint8Array[]>) => TRet<Uint8Array> =
+  /* @__PURE__ */ (() =>
+    packedUtils.concatBytes as (...arrays: TArg<Uint8Array[]>) => TRet<Uint8Array>)();
 /**
  * Compares two byte arrays for equality.
  * @param a - first byte array
@@ -58,10 +62,13 @@ export const concatBytes: (...arrays: Uint8Array[]) => Uint8Array = /* @__PURE__
  * equalBytes(new Uint8Array([1]), new Uint8Array([1]));
  * ```
  */
-export const equalBytes: (a: Uint8Array, b: Uint8Array) => boolean = /* @__PURE__ */ (() =>
-  packedUtils.equalBytes)();
+export const equalBytes: (a: TArg<Uint8Array>, b: TArg<Uint8Array>) => boolean =
+  /* @__PURE__ */ (() =>
+    packedUtils.equalBytes as (a: TArg<Uint8Array>, b: TArg<Uint8Array>) => boolean)();
 /**
  * SHA-256 hash function.
+ * @param msg - bytes to hash
+ * @returns SHA-256 digest.
  * @example
  * Hash a byte array with SHA-256.
  * ```ts
@@ -80,7 +87,8 @@ export const sha256: typeof nobleSha256 = /* @__PURE__ */ (() => nobleSha256)();
  * hash160(new Uint8Array([1, 2, 3]));
  * ```
  */
-export const hash160 = (msg: Uint8Array): Uint8Array => ripemd160(sha256(msg));
+export const hash160 = (msg: TArg<Uint8Array>): TRet<Uint8Array> =>
+  ripemd160(sha256(msg)) as TRet<Uint8Array>;
 /**
  * Double-SHA256 helper used by Bitcoin transaction ids.
  * @param msgs - message parts to concatenate and hash
@@ -91,7 +99,8 @@ export const hash160 = (msg: Uint8Array): Uint8Array => ripemd160(sha256(msg));
  * sha256x2(new Uint8Array([1]), new Uint8Array([2]));
  * ```
  */
-export const sha256x2 = (...msgs: Uint8Array[]): Uint8Array => sha256(sha256(concatBytes(...msgs)));
+export const sha256x2 = (...msgs: TArg<Uint8Array[]>): TRet<Uint8Array> =>
+  sha256(sha256(concatBytes(...msgs))) as TRet<Uint8Array>;
 /**
  * Generates a random secp256k1 private key.
  * @returns Random 32-byte private key.
@@ -101,8 +110,8 @@ export const sha256x2 = (...msgs: Uint8Array[]): Uint8Array => sha256(sha256(con
  * const privKey = randomPrivateKeyBytes();
  * ```
  */
-export const randomPrivateKeyBytes: () => Uint8Array = /* @__PURE__ */ (() =>
-  schnorr.utils.randomSecretKey)();
+export const randomPrivateKeyBytes = (): TRet<Uint8Array> =>
+  schnorr.utils.randomSecretKey() as TRet<Uint8Array>;
 /**
  * Derives a BIP340 Schnorr public key from a private key.
  * @param priv - private key bytes
@@ -114,8 +123,8 @@ export const randomPrivateKeyBytes: () => Uint8Array = /* @__PURE__ */ (() =>
  * pubSchnorr(randomPrivateKeyBytes());
  * ```
  */
-export const pubSchnorr: (priv: Uint8Array) => Uint8Array = /* @__PURE__ */ (() =>
-  schnorr.getPublicKey)();
+export const pubSchnorr = (priv: TArg<Uint8Array>): TRet<Uint8Array> =>
+  schnorr.getPublicKey(priv) as TRet<Uint8Array>;
 /**
  * Derives a secp256k1 ECDSA public key from a private key.
  * @param privateKey - private key bytes
@@ -128,8 +137,8 @@ export const pubSchnorr: (priv: Uint8Array) => Uint8Array = /* @__PURE__ */ (() 
  * pubECDSA(randomPrivateKeyBytes());
  * ```
  */
-export const pubECDSA: (privateKey: Uint8Array, isCompressed?: boolean) => Uint8Array =
-  /* @__PURE__ */ (() => secp.getPublicKey)();
+export const pubECDSA = (privateKey: TArg<Uint8Array>, isCompressed?: boolean): TRet<Uint8Array> =>
+  secp.getPublicKey(privateKey, isCompressed) as TRet<Uint8Array>;
 
 // low-r signature grinding. Used to reduce tx size by 1 byte.
 // noble/secp256k1 does not support the feature: it is not used outside of BTC.
@@ -150,7 +159,10 @@ const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < CURVE_ORDER / 2n;
  * signECDSA(sha256(new Uint8Array([1, 2, 3])), randomPrivateKeyBytes());
  * ```
  */
-export function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
+export function signECDSA(hash: TArg<Bytes>, privateKey: TArg<Bytes>, lowR = false): TRet<Bytes> {
+  // signECDSA is the 32-byte sighash wrapper for BTC callers, so reject arbitrary-length
+  // messages here instead of silently signing them with prehash disabled.
+  abytes(hash, 32, 'hash');
   let sig = secp.Signature.fromBytes(secp.sign(hash, privateKey, { prehash: false }));
   if (lowR && !hasLowR(sig)) {
     const extraEntropy = new Uint8Array(32);
@@ -161,11 +173,15 @@ export function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
       if (counter > 4294967295) throw new Error('lowR counter overflow: report the error');
     }
   }
-  return sig.toBytes('der');
+  return sig.toBytes('der') as TRet<Bytes>;
 }
 
 /**
  * BIP340 Schnorr signing function.
+ * @param message - 32-byte message digest
+ * @param secretKey - signer private key
+ * @param auxRand - optional auxiliary randomness
+ * @returns Schnorr signature bytes.
  * @example
  * Sign a 32-byte digest with the built-in BIP340 helper.
  * ```ts
@@ -174,9 +190,16 @@ export function signECDSA(hash: Bytes, privateKey: Bytes, lowR = false): Bytes {
  * signSchnorr(msg, randomPrivateKeyBytes());
  * ```
  */
-export const signSchnorr: typeof schnorr.sign = /* @__PURE__ */ (() => schnorr.sign)();
+export const signSchnorr = (
+  message: TArg<Uint8Array>,
+  secretKey: TArg<Uint8Array>,
+  auxRand?: TArg<Uint8Array>
+): TRet<Uint8Array> => schnorr.sign(message, secretKey, auxRand) as TRet<Uint8Array>;
 /**
  * Tagged-hash helper used by Schnorr and taproot constructions.
+ * @param tag - tagged-hash domain separator
+ * @param messages - message parts hashed under the tag
+ * @returns Tagged SHA-256 digest.
  * @example
  * Build the tagged hash used by Taproot leaves or tweaks.
  * ```ts
@@ -184,14 +207,15 @@ export const signSchnorr: typeof schnorr.sign = /* @__PURE__ */ (() => schnorr.s
  * tagSchnorr('TapLeaf', Uint8Array.of(0xc0), Uint8Array.of(0x51));
  * ```
  */
-export const tagSchnorr: typeof schnorr.utils.taggedHash = /* @__PURE__ */ (() =>
-  schnorr.utils.taggedHash)();
+export const tagSchnorr = (tag: string, ...messages: TArg<Uint8Array[]>): TRet<Uint8Array> =>
+  schnorr.utils.taggedHash(tag, ...messages) as TRet<Uint8Array>;
 
 /** Public key format tags used by validation helpers. */
-export const PubT = /* @__PURE__ */ (() => ({
-  ecdsa: 0,
-  schnorr: 1,
-}))();
+export const PubT = /* @__PURE__ */ (() =>
+  Object.freeze({
+    ecdsa: 0,
+    schnorr: 1,
+  }))();
 /** Numeric public key format tag from {@link PubT}. */
 export type PubT = ValueOf<typeof PubT>;
 
@@ -205,20 +229,25 @@ export type PubT = ValueOf<typeof PubT>;
  * @example
  * Reject keys that do not match the encoding required by the current script path.
  * ```ts
- * import { PubT, pubECDSA, randomPrivateKeyBytes, validatePubkey } from '@scure/btc-signer/utils.js';
+ * import {
+ *   PubT,
+ *   pubECDSA,
+ *   randomPrivateKeyBytes,
+ *   validatePubkey,
+ * } from '@scure/btc-signer/utils.js';
  * validatePubkey(pubECDSA(randomPrivateKeyBytes()), PubT.ecdsa);
  * ```
  */
-export function validatePubkey(pub: Bytes, type: PubT): Bytes {
+export function validatePubkey(pub: TArg<Bytes>, type: PubT): TRet<Bytes> {
   const len = pub.length;
   if (type === PubT.ecdsa) {
     if (len === 32) throw new RangeError('Expected non-Schnorr key');
     Point.fromBytes(pub); // does assertValidity
-    return pub;
+    return pub as TRet<Bytes>;
   } else if (type === PubT.schnorr) {
     if (len !== 32) throw new RangeError('Expected 32-byte Schnorr key');
     schnorr.utils.lift_x(bytesToNumberBE(pub));
-    return pub;
+    return pub as TRet<Bytes>;
   } else {
     throw new TypeError('Unknown key type');
   }
@@ -237,7 +266,7 @@ export function validatePubkey(pub: Bytes, type: PubT): Bytes {
  * tapTweak(pubSchnorr(randomPrivateKeyBytes()), new Uint8Array());
  * ```
  */
-export function tapTweak(a: Bytes, b: Bytes): bigint {
+export function tapTweak(a: TArg<Bytes>, b: TArg<Bytes>): bigint {
   const u = schnorr.utils;
   const t = u.taggedHash('TapTweak', a, b);
   const tn = bytesToNumberBE(t);
@@ -258,8 +287,14 @@ export function tapTweak(a: Bytes, b: Bytes): bigint {
  * taprootTweakPrivKey(randomPrivateKeyBytes());
  * ```
  */
-export function taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = Uint8Array.of()): Bytes {
+export function taprootTweakPrivKey(
+  privKey: TArg<Bytes>,
+  merkleRoot: TArg<Bytes> = Uint8Array.of()
+): TRet<Bytes> {
   const u = schnorr.utils;
+  // BIP341 taproot_tweak_seckey starts with `seckey0 = int_from_bytes(seckey0)`, and
+  // BIP340 defines `int(x)` only for `x` as a 32-byte array, so reject other widths here.
+  abytes(privKey, 32, 'privKey');
   const seckey0 = bytesToNumberBE(privKey); // seckey0 = int_from_bytes(seckey0)
   const P = Point.BASE.multiply(seckey0); // P = point_mul(G, seckey0)
   // seckey = seckey0 if has_even_y(P) else SECP256K1_ORDER - seckey0
@@ -268,7 +303,7 @@ export function taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = Uint8Arr
   // t = int_from_bytes(tagged_hash("TapTweak", bytes_from_int(x(P)) + h)); >= SECP256K1_ORDER check
   const t = tapTweak(xP, merkleRoot);
   // bytes_from_int((seckey + t) % SECP256K1_ORDER)
-  return numberToBytesBE(Fn.add(seckey, t), 32);
+  return numberToBytesBE(Fn.add(seckey, t), 32) as TRet<Bytes>;
 }
 
 /**
@@ -280,28 +315,39 @@ export function taprootTweakPrivKey(privKey: Bytes, merkleRoot: Bytes = Uint8Arr
  * @example
  * Derive the final Taproot output key from the internal key and Merkle root.
  * ```ts
- * import { pubSchnorr, randomPrivateKeyBytes, taprootTweakPubkey } from '@scure/btc-signer/utils.js';
+ * import {
+ *   pubSchnorr,
+ *   randomPrivateKeyBytes,
+ *   taprootTweakPubkey,
+ * } from '@scure/btc-signer/utils.js';
  * taprootTweakPubkey(pubSchnorr(randomPrivateKeyBytes()), new Uint8Array());
  * ```
  */
-export function taprootTweakPubkey(pubKey: Bytes, h: Bytes): [Bytes, number] {
+export function taprootTweakPubkey(pubKey: TArg<Bytes>, h: TArg<Bytes>): TRet<[Bytes, number]> {
   const u = schnorr.utils;
+  // BIP341 taproot_tweak_pubkey feeds `pubkey` into `int_from_bytes(pubkey)`, and
+  // BIP340 defines `int(x)` only for `x` as a 32-byte array, so reject other widths here.
+  abytes(pubKey, 32, 'pubKey');
   const t = tapTweak(pubKey, h); // t = int_from_bytes(tagged_hash("TapTweak", pubkey + h))
   const P = u.lift_x(bytesToNumberBE(pubKey)); // P = lift_x(int_from_bytes(pubkey))
   const Q = P.add(Point.BASE.multiply(t)); // Q = point_add(P, point_mul(G, t))
   const parity = hasEven(Q.y) ? 0 : 1; // 0 if has_even_y(Q) else 1
-  return [u.pointToBytes(Q), parity]; // bytes_from_int(x(Q))
+  return [u.pointToBytes(Q), parity] as TRet<[Bytes, number]>; // bytes_from_int(x(Q))
 }
 
 // Another stupid decision, where lack of standard affects security.
 // Multisig needs to be generated with some key.
-// We are using approach from BIP 341/bitcoinjs-lib: SHA256(uncompressedDER(SECP256K1_GENERATOR_POINT))
+// We are using the BIP 341/bitcoinjs-lib approach:
+// SHA256(uncompressedDER(SECP256K1_GENERATOR_POINT))
 // It is possible to switch SECP256K1_GENERATOR_POINT with some random point;
 // but it's too complex to prove.
 // Also used by bitcoin-core and bitcoinjs-lib
+// This is the fixed BIP 341 H example, not the privacy-preserving H + rG variant.
+// Downstream helpers use exact-byte equality with it to recognize
+// library-generated script-only outputs.
 /** Standard unspendable internal key used for script-only Taproot outputs. */
-export const TAPROOT_UNSPENDABLE_KEY: Bytes = /* @__PURE__ */ (() =>
-  sha256(Point.BASE.toBytes(false)))();
+export const TAPROOT_UNSPENDABLE_KEY: TRet<Bytes> = /* @__PURE__ */ (() =>
+  sha256(Point.BASE.toBytes(false)) as TRet<Bytes>)();
 
 /** Bitcoin network parameters. */
 export type BTC_NETWORK = {
@@ -315,20 +361,20 @@ export type BTC_NETWORK = {
   wif: number;
 };
 /** Bitcoin mainnet network parameters. */
-export const NETWORK: BTC_NETWORK = {
+export const NETWORK: BTC_NETWORK = /* @__PURE__ */ Object.freeze({
   bech32: 'bc',
   pubKeyHash: 0x00,
   scriptHash: 0x05,
   wif: 0x80,
-};
+});
 
 /** Bitcoin testnet network parameters. */
-export const TEST_NETWORK: BTC_NETWORK = {
+export const TEST_NETWORK: BTC_NETWORK = /* @__PURE__ */ Object.freeze({
   bech32: 'tb',
   pubKeyHash: 0x6f,
   scriptHash: 0xc4,
   wif: 0xef,
-};
+});
 
 // Exported for tests, internal method
 /**
@@ -343,7 +389,7 @@ export const TEST_NETWORK: BTC_NETWORK = {
  * compareBytes(new Uint8Array([1]), new Uint8Array([2]));
  * ```
  */
-export function compareBytes(a: Bytes, b: Bytes): number {
+export function compareBytes(a: TArg<Bytes>, b: TArg<Bytes>): number {
   if (!isBytes(a) || !isBytes(b))
     throw new TypeError(`cmp: wrong type a=${typeof a} b=${typeof b}`);
   // -1 -> a<b, 0 -> a==b, 1 -> a>b
@@ -367,7 +413,9 @@ export function compareBytes(a: Bytes, b: Bytes): number {
 export function reverseObject<T extends Record<string, string | number>>(
   obj: T
 ): { [K in T[keyof T]]: Extract<keyof T, string> } {
-  const res = {} as any;
+  // Keep a raw dictionary shape so enum-like tables can reverse values like
+  // `toString` without colliding with inherited Object prototype properties.
+  const res = Object.create(null) as any;
   for (const k in obj) {
     if (res[obj[k]] !== undefined) throw new Error('duplicate key');
     res[obj[k]] = k;

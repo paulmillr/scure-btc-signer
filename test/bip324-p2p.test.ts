@@ -1,7 +1,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { bytesToHex, concatBytes, hexToBytes, hexToNumber } from '@noble/curves/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
-import { deepStrictEqual } from 'node:assert';
+import { deepStrictEqual, throws } from 'node:assert';
 import * as fs from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -75,6 +75,23 @@ describe('ElligatorSwift', () => {
       deepStrictEqual(bytesToHex(elligatorSwift.decode(hexToBytes(t['ellswift']))), t['x']);
     }
   });
+  should('elligatorSwift.encode rejects x coordinates outside 0..p-1', () => {
+    const bad = secp256k1.Point.BASE.x + secp256k1.Point.Fp.ORDER;
+    throws(() => elligatorSwift.encode(bad), /x|range|public key/i);
+  });
+  should(
+    'elligatorSwift.getSharedSecretBip324 requires a 64-byte local ElligatorSwift encoding',
+    () => {
+      const alice = elligatorSwift.keygen();
+      const bob = elligatorSwift.keygen();
+      for (const ours of [new Uint8Array(0), new Uint8Array(63), new Uint8Array(65)]) {
+        throws(
+          () => elligatorSwift.getSharedSecretBip324(alice.privateKey, bob.publicKey, ours, true),
+          /publicKeyOurs|length/i
+        );
+      }
+    }
+  );
   should('Example', () => {
     // random, so test more.
     for (let i = 0; i < 100; i++) {

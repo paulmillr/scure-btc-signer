@@ -153,7 +153,177 @@ describe('BIP327', () => {
     throws(() => musig2.sortKeys('x' as any), TypeError);
     throws(() => musig2.keyAggregate([publicKey], [], [true]), RangeError);
     throws(() => musig2.nonceGen(publicKey, secretKey, new Uint8Array(31)), RangeError);
+    throws(
+      () =>
+        musig2.deterministicSign(
+          secretKey,
+          musig2.nonceGen(publicKey, secretKey).public,
+          [publicKey],
+          new Uint8Array([1, 2, 3]),
+          [],
+          [],
+          new Uint8Array(31)
+        ),
+      RangeError
+    );
   });
+  should('sortKeys rejects empty key lists', () => {
+    throws(() => musig2.sortKeys([]), RangeError);
+  });
+  should('sortKeys returns a sorted copy without mutating caller input', () => {
+    const a = new Uint8Array(33);
+    a.fill(2);
+    const b = new Uint8Array(33);
+    b.fill(1);
+    const input = [a, b];
+    const snapshot = input.map((i) => Uint8Array.from(i));
+    const out = musig2.sortKeys(input);
+    deepStrictEqual(out, [snapshot[1], snapshot[0]]);
+    deepStrictEqual(out === input, false);
+    deepStrictEqual(input, snapshot);
+  });
+  should('keyAggregate rejects empty key lists', () => {
+    throws(() => musig2.keyAggregate([]), RangeError);
+  });
+  should('nonceAggregate rejects empty nonce lists', () => {
+    throws(() => musig2.nonceAggregate([]), RangeError);
+  });
+  should('partialSigAgg rejects empty partial-signature lists', () => {
+    const secretKey = schnorr.utils.randomSecretKey();
+    const publicKey = musig2.IndividualPubkey(secretKey);
+    const msg = new Uint8Array([1, 2, 3]);
+    const aggPublicKey = musig2.keyAggExport(musig2.keyAggregate([publicKey]));
+    const nonce = musig2.nonceGen(publicKey, secretKey, aggPublicKey, msg);
+    const session = new musig2.Session(musig2.nonceAggregate([nonce.public]), [publicKey], msg);
+    throws(() => session.partialSigAgg([]), RangeError);
+  });
+  should('keyAggregate rejects non-boolean isXonly entries', () => {
+    const secretKey = schnorr.utils.randomSecretKey();
+    const publicKey = musig2.IndividualPubkey(secretKey);
+    const tweak = new Uint8Array(32);
+    tweak[31] = 1;
+    throws(() => musig2.keyAggregate([publicKey], [tweak], [1 as any]), TypeError);
+  });
+  should('deterministic sign accepts a zero plain tweak as a no-op', () => {
+    const secretKey = schnorr.utils.randomSecretKey();
+    const publicKey = musig2.IndividualPubkey(secretKey);
+    const aggOtherNonce = musig2.nonceGen(publicKey, secretKey).public;
+    const msg = new Uint8Array([1, 2, 3]);
+    deepStrictEqual(
+      musig2.deterministicSign(
+        secretKey,
+        aggOtherNonce,
+        [publicKey],
+        msg,
+        [new Uint8Array(32)],
+        [false]
+      ),
+      musig2.deterministicSign(secretKey, aggOtherNonce, [publicKey], msg)
+    );
+  });
+  should('partialSigVerify treats a zero partial signature as invalid instead of throwing', () => {
+    const secretKey = schnorr.utils.randomSecretKey();
+    const publicKey = musig2.IndividualPubkey(secretKey);
+    const msg = new Uint8Array([1, 2, 3]);
+    const keyAgg = musig2.keyAggregate([publicKey]);
+    const aggPublicKey = musig2.keyAggExport(keyAgg);
+    const nonce = musig2.nonceGen(publicKey, secretKey, aggPublicKey, msg);
+    const session = new musig2.Session(musig2.nonceAggregate([nonce.public]), [publicKey], msg);
+    deepStrictEqual(session.partialSigVerify(new Uint8Array(32), [nonce.public], 0), false);
+  });
+  should('partialSigVerify depends on the full signer nonce list, not just pubNonces[i]', () => {
+    const empty = new Uint8Array(0);
+    const msg = new Uint8Array([1, 2, 3]);
+    const sk1 = new Uint8Array(32);
+    const sk2 = new Uint8Array(32);
+    const rand1 = new Uint8Array(32);
+    const rand2 = new Uint8Array(32);
+    const rand3 = new Uint8Array(32);
+    sk1[31] = 1;
+    sk2[31] = 2;
+    rand1[31] = 1;
+    rand2[31] = 2;
+    rand3[31] = 3;
+    const pk1 = musig2.IndividualPubkey(sk1);
+    const pk2 = musig2.IndividualPubkey(sk2);
+    const n1 = musig2.nonceGen(pk1, sk1, empty, msg, empty, rand1);
+    const n2 = musig2.nonceGen(pk2, sk2, empty, msg, empty, rand2);
+    const n2alt = musig2.nonceGen(pk2, sk2, empty, msg, empty, rand3);
+    const pubNonces = [n1.public, n2.public];
+    const mismatched = [n1.public, n2alt.public];
+    const session = new musig2.Session(musig2.nonceAggregate(pubNonces), [pk1, pk2], msg);
+    const recomputed = new musig2.Session(musig2.nonceAggregate(mismatched), [pk1, pk2], msg);
+    const psig1 = session.sign(new Uint8Array(n1.secret), sk1, true);
+    deepStrictEqual(session.partialSigVerify(psig1, pubNonces, 0), true);
+    deepStrictEqual(recomputed.partialSigVerify(psig1, mismatched, 0), false);
+    deepStrictEqual(session.partialSigVerify(psig1, mismatched, 0), false);
+  });
+  should('Session signing is not affected by later publicKeys mutation', () => {
+    const sk = new Uint8Array(32);
+    sk[31] = 1;
+    const pk = musig2.IndividualPubkey(sk);
+    const rand = new Uint8Array(32);
+    rand[31] = 9;
+    const empty = new Uint8Array(0);
+    const msg = new Uint8Array([1, 2, 3]);
+    const nonce = musig2.nonceGen(pk, sk, empty, msg, empty, rand);
+    const aggNonce = musig2.nonceAggregate([nonce.public]);
+    const expected = new musig2.Session(aggNonce, [pk], msg).sign(
+      musig2.nonceGen(pk, sk, empty, msg, empty, rand).secret,
+      sk
+    );
+    const publicKeys = [pk];
+    const session = new musig2.Session(aggNonce, publicKeys, msg);
+    publicKeys.length = 0;
+    deepStrictEqual(
+      session.sign(musig2.nonceGen(pk, sk, empty, msg, empty, rand).secret, sk),
+      expected
+    );
+  });
+  should('Session signing is not affected by later Buffer-backed publicKey mutation', () => {
+    const sk = new Uint8Array(32);
+    sk[31] = 1;
+    const pk = musig2.IndividualPubkey(sk);
+    const rand = new Uint8Array(32);
+    rand[31] = 9;
+    const empty = new Uint8Array(0);
+    const msg = new Uint8Array([1, 2, 3]);
+    const nonce = musig2.nonceGen(pk, sk, empty, msg, empty, rand);
+    const aggNonce = musig2.nonceAggregate([nonce.public]);
+    const expected = new musig2.Session(aggNonce, [pk], msg).sign(
+      musig2.nonceGen(pk, sk, empty, msg, empty, rand).secret,
+      sk
+    );
+    const pkBuf = Buffer.from(pk);
+    const session = new musig2.Session(aggNonce, [pkBuf], msg);
+    pkBuf[1] ^= 1;
+    deepStrictEqual(
+      session.sign(musig2.nonceGen(pk, sk, empty, msg, empty, rand).secret, sk),
+      expected
+    );
+  });
+  should(
+    'Session partialSigVerify is not affected by later Buffer-backed aggNonce mutation',
+    () => {
+      const sk = new Uint8Array(32);
+      sk[31] = 1;
+      const pk = musig2.IndividualPubkey(sk);
+      const rand = new Uint8Array(32);
+      rand[31] = 9;
+      const empty = new Uint8Array(0);
+      const msg = new Uint8Array([1, 2, 3]);
+      const nonce = musig2.nonceGen(pk, sk, empty, msg, empty, rand);
+      const aggNonce = musig2.nonceAggregate([nonce.public]);
+      const partialSig = new musig2.Session(aggNonce, [pk], msg).sign(
+        musig2.nonceGen(pk, sk, empty, msg, empty, rand).secret,
+        sk
+      );
+      const aggNonceBuf = Buffer.from(aggNonce);
+      const session = new musig2.Session(aggNonceBuf, [pk], msg);
+      aggNonceBuf[0] ^= 1;
+      deepStrictEqual(session.partialSigVerify(partialSig, [nonce.public], 0), true);
+    }
+  );
   should('key aggregation', () => {
     const pubkeys = keyAggVectors.pubkeys.map(hexToBytes);
     for (const t of keyAggVectors.valid_test_cases) {

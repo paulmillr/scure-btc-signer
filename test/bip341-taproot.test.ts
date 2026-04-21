@@ -1,7 +1,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
 import { should } from '@paulmillr/jsbt/test.js';
-import { deepStrictEqual } from 'node:assert';
+import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { default as v341 } from './vectors/bip341.json' with { type: 'json' };
 
@@ -164,6 +164,24 @@ should('BIP341: Taproot controlBlock', () => {
   }
 });
 
+should('Transaction.finalizeIdx: taproot key-path leaves empty finalScriptSig unset', () => {
+  const priv = new Uint8Array(32).fill(3);
+  const pub = btc.utils.pubSchnorr(priv);
+  const spend = btc.p2tr(pub);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { amount: 1000n, script: spend.script },
+    tapInternalKey: pub,
+  });
+  tx.addOutput({ amount: 900n, script: spend.script });
+  deepStrictEqual(tx.signIdx(priv, 0, undefined, new Uint8Array(32)), true);
+  tx.finalizeIdx(0);
+  deepStrictEqual(tx.inputs[0].finalScriptSig, undefined);
+  deepStrictEqual(tx.inputs[0].finalScriptWitness?.length, 1);
+});
+
 for (let i = 0; i < v341.scriptPubKey.length; i++) {
   const v = v341.scriptPubKey[i];
   should(`BIP341: TapRoot Script(${i})`, () => {
@@ -187,6 +205,7 @@ for (let i = 0; i < v341.scriptPubKey.length; i++) {
 }
 
 should('BIP341: TaprootListToTree', () => {
+  throws(() => btc.taprootListToTree([]), /empty|tree|taproot/i);
   // Single
   deepStrictEqual(btc.taprootListToTree([{ script: 1 }]), { script: 1 });
   // Simple (balanced binary tree)

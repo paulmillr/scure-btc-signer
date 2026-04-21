@@ -2,8 +2,9 @@ import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { describe, should } from '@paulmillr/jsbt/test.js';
-import { deepStrictEqual } from 'node:assert';
+import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
+import type { EstimatorOpts } from '../src/utxo.ts';
 
 describe('UTXO Select', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
@@ -857,7 +858,7 @@ describe('UTXO Select', () => {
       o: [64n],
       txFee: 192n,
       expFee: 190n,
-      fee: 191n,
+      fee: 192n,
       change: false,
     });
     deepStrictEqual(t2('accumSmallest', 65n), {
@@ -917,7 +918,7 @@ describe('UTXO Select', () => {
       o: [33551554n],
       txFee: 2622n,
       expFee: 2583n,
-      fee: 2591n,
+      fee: 2622n,
       change: false,
     });
     deepStrictEqual(t2('all', 33551406n), {
@@ -943,7 +944,7 @@ describe('UTXO Select', () => {
       o: [33551406n],
       txFee: 2770n,
       expFee: 2580n,
-      fee: 2591n,
+      fee: 2770n,
       change: false,
     });
     deepStrictEqual(t2('all', 33551405n), {
@@ -969,7 +970,7 @@ describe('UTXO Select', () => {
       o: [33551405n],
       txFee: 2771n,
       expFee: 2580n,
-      fee: 2591n,
+      fee: 2771n,
       change: false,
     });
 
@@ -1417,6 +1418,17 @@ describe('UTXO Select', () => {
       { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
     ]);
   });
+  should('Estimator accepts bigint dust opts', () => {
+    const opts = {
+      feePerByte: 100n,
+      changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
+      dust: 200n,
+      dustRelayFeeRate: 1n,
+      network: regtest,
+    } satisfies EstimatorOpts;
+    new btc._Estimator([], [], opts);
+    deepStrictEqual(opts.dust, 200n);
+  });
   should('add change outputs if more than dust', () => {
     const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
     const pubKey = secp256k1.getPublicKey(privKey, true);
@@ -1495,6 +1507,189 @@ describe('UTXO Select', () => {
       changeAddress: '134D6gYy8DsR5m4416BnmgASuMBqKvogQh',
     });
     deepStrictEqual(selection.inputs, [requiredInput, nonRequiredInput]);
+  });
+  const compactSizeBoundary = () => {
+    const inputs = Array.from({ length: 253 }, (_, i) => ({
+      txid: new Uint8Array(32).fill(i + 1),
+      index: i,
+      witnessUtxo: { amount: 1000n, script: spend5_1.script },
+      tapInternalKey: spend5_1.tapInternalKey,
+    }));
+    const output = { address: spend5_1.address!, amount: 237_500n };
+    const est = new btc._Estimator(inputs, [output], {
+      feePerByte: 1n,
+      changeAddress: spend5_1.address!,
+      network: regtest,
+    });
+    return { est, inputs, output };
+  };
+  const strategyBoundary = () => {
+    const priv = new Uint8Array(32).fill(1);
+    const spend = btc.p2tr(btc.utils.pubSchnorr(priv), undefined, regtest);
+    const inputs = [1000n, 5000n].map((amount, i) => ({
+      txid: new Uint8Array(32).fill(i + 1),
+      index: i,
+      witnessUtxo: { amount, script: spend.script },
+      tapInternalKey: spend.tapInternalKey,
+    }));
+    const output = { address: spend.address!, amount: 500n };
+    const opts = {
+      feePerByte: 1n,
+      changeAddress: spend.address!,
+      network: regtest,
+      createTx: false,
+    };
+    return { inputs, output, opts };
+  };
+  const resultBoundary = (inputAmount = 15_600n, amount = 100n, alwaysChange = false) => {
+    const priv = new Uint8Array(32).fill(1);
+    const spend = btc.p2tr(btc.utils.pubSchnorr(priv), undefined, regtest);
+    const selected = btc.selectUTXO(
+      [
+        {
+          ...spend,
+          txid: new Uint8Array(32),
+          index: 0,
+          witnessUtxo: { script: spend.script, amount: inputAmount },
+        },
+      ],
+      [{ script: spend.script, amount }],
+      'default',
+      {
+        changeAddress: spend.address!,
+        feePerByte: 100n,
+        dust: 200n,
+        dustRelayFeeRate: 1n,
+        bip69: true,
+        createTx: true,
+        network: regtest,
+        alwaysChange,
+      }
+    );
+    if (!selected) throw new Error('selection failed unexpectedly');
+    return { priv, selected };
+  };
+  should('Estimator.accumulate accounts for 253-input CompactSize boundary', () => {
+    const { est, inputs, output } = compactSizeBoundary();
+    const acc = est.accumulate(est.oldest);
+    const tx = new btc.Transaction({ network: regtest });
+    for (const idx of acc.indices) tx.addInput(inputs[idx]);
+    tx.addOutputAddress(output.address, output.amount, regtest);
+    tx.sign(privKey7, undefined, new Uint8Array(32));
+    tx.finalize();
+    deepStrictEqual(
+      { count: acc.indices.length, fee: acc.fee, weight: acc.weight },
+      { count: 253, fee: 14603n, weight: tx.weight }
+    );
+  });
+  should(
+    'Estimator.accumulate all mode recomputes fee after input-count CompactSize boundary',
+    () => {
+      const { est } = compactSizeBoundary();
+      const acc = est.accumulate(est.oldest, false, true, true);
+      deepStrictEqual(
+        { count: acc.indices.length, fee: acc.fee, weight: acc.weight },
+        { count: 253, fee: 14603n, weight: 58412 }
+      );
+    }
+  );
+  should('Estimator reports the actual fee and weight when dust suppresses change', () => {
+    const { priv, selected } = resultBoundary();
+    deepStrictEqual(selected.change, false);
+    deepStrictEqual(selected.outputs, [{ script: selected.outputs[0].script, amount: 100n }]);
+    selected.tx.sign(priv, undefined, new Uint8Array(32));
+    selected.tx.finalize();
+    deepStrictEqual(
+      { fee: selected.fee, weight: selected.weight },
+      { fee: selected.tx.fee, weight: selected.tx.weight }
+    );
+  });
+  should('Estimator alwaysChange keeps the forced change output even below dust', () => {
+    const { priv, selected } = resultBoundary(15_600n, 101n, true);
+    deepStrictEqual(selected.change, true);
+    deepStrictEqual(selected.outputs.length, 2);
+    deepStrictEqual(
+      selected.outputs.map((o) => o.amount).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+      [99n, 101n]
+    );
+    selected.tx.sign(priv, undefined, new Uint8Array(32));
+    selected.tx.finalize();
+    deepStrictEqual(
+      { fee: selected.fee, weight: selected.weight },
+      { fee: selected.tx.fee, weight: selected.tx.weight }
+    );
+  });
+  should('Estimator result metadata matches the built tx across change-policy branches', () => {
+    const cases = [
+      { inputAmount: 15_600n, amount: 100n, alwaysChange: false, change: false, outputs: [100n] },
+      {
+        inputAmount: 15_600n,
+        amount: 101n,
+        alwaysChange: true,
+        change: true,
+        outputs: [99n, 101n],
+      },
+      {
+        inputAmount: 16_000n,
+        amount: 100n,
+        alwaysChange: false,
+        change: true,
+        outputs: [100n, 500n],
+      },
+    ];
+    for (const c of cases) {
+      const { priv, selected } = resultBoundary(c.inputAmount, c.amount, c.alwaysChange);
+      deepStrictEqual(selected.change, c.change);
+      deepStrictEqual(
+        selected.outputs.map((o) => o.amount).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+        c.outputs
+      );
+      selected.tx.sign(priv, undefined, new Uint8Array(32));
+      selected.tx.finalize();
+      deepStrictEqual(
+        { fee: selected.fee, weight: selected.weight },
+        { fee: selected.tx.fee, weight: selected.tx.weight }
+      );
+    }
+  });
+  for (const strategy of [
+    'exactBiggest',
+    'exactBiggest/notARealStrategy',
+    'exactBiggest/accumSmallest/notARealStrategy',
+  ]) {
+    should(`selectUTXO rejects malformed strategy ${strategy}`, () => {
+      const { inputs, output, opts } = strategyBoundary();
+      throws(() => btc.selectUTXO(inputs, [output], strategy, opts), /wrong strategy/);
+    });
+  }
+  should(`Estimator rejects feePerByte=-1`, () => {
+    throws(
+      () =>
+        new btc._Estimator([], [], {
+          feePerByte: -1n,
+          changeAddress: '1KAD5EnzzLtrSo2Da2G4zzD7uZrjk8zRAv',
+        }),
+      /feePerByte|satoshi per vbyte/
+    );
+  });
+  should('selectUTXO rejects negative output amounts before tx creation', () => {
+    const input = {
+      txid: new Uint8Array(32).fill(0xaa),
+      index: 0,
+      witnessUtxo: { script: spend2_4.script, amount: 1000n },
+    };
+    const output = { script: spend2_4.script, amount: -1n };
+    throws(
+      () =>
+        btc.selectUTXO([input], [output], 'default', {
+          createTx: false,
+          changeAddress: '1KAD5EnzzLtrSo2Da2G4zzD7uZrjk8zRAv',
+          feePerByte: 1n,
+          bip69: true,
+          allowLegacyWitnessUtxo: true,
+        }),
+      /wrong output amount|validateOutput: wrong amount/
+    );
   });
 });
 

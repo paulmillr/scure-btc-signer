@@ -4,15 +4,26 @@ import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from 
 import * as psbt from './psbt.ts';
 import {
   CompactSizeLen,
+  OP,
   RawOldTx,
+  RawInput,
   RawOutput,
   RawTx,
   RawWitness,
   Script,
+  scriptPushLen,
   VarBytes,
 } from './script.ts';
 import * as u from './utils.ts';
-import { type Bytes, NETWORK, concatBytes, equalBytes, isBytes } from './utils.ts';
+import {
+  type Bytes,
+  NETWORK,
+  concatBytes,
+  equalBytes,
+  isBytes,
+  type TArg,
+  type TRet,
+} from './utils.ts';
 
 const EMPTY32: Uint8Array = /* @__PURE__ */ new Uint8Array(32);
 const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
@@ -30,6 +41,36 @@ const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
  * ```
  */
 export const toVsize = (weight: number): number => Math.ceil(weight / 4);
+
+const stripCodeSeparator = (script: TArg<Bytes>): TRet<Bytes> => {
+  // Reuse Script's raw pushdata-length parser here. Legacy sighash must remove
+  // only actual OP_CODESEPARATOR opcodes while preserving every other original
+  // byte, because semantic decode/re-encode would change the signed digest.
+  let start = 0;
+  const out: Uint8Array[] = [];
+  for (let i = 0; i < script.length; ) {
+    const pos = i;
+    const op = script[i++];
+    if (op === OP.CODESEPARATOR) {
+      if (start < pos) out.push(script.subarray(start, pos));
+      start = i;
+      continue;
+    }
+    const len = scriptPushLen(op, (bytes) => {
+      if (i + bytes > script.length) throw new Error('Unexpected end of script');
+      let len = 0;
+      for (let j = 0; j < bytes; j++) len |= script[i + j] << (8 * j);
+      i += bytes;
+      return len;
+    });
+    if (len === undefined) continue;
+    i += len;
+    if (i > script.length) throw new Error('Unexpected end of script');
+  }
+  if (start === 0) return script as TRet<Bytes>;
+  if (start < script.length) out.push(script.subarray(start));
+  return (out.length ? concatBytes(...out) : P.EMPTY) as TRet<Bytes>;
+};
 
 // @scure/bip32 interface
 interface HDKey {
@@ -50,17 +91,26 @@ export const PRECISION = 8;
 export const DEFAULT_VERSION = 2;
 /** Default transaction locktime. */
 export const DEFAULT_LOCKTIME = 0;
-/** Default input sequence number. */
+/** Default input sequence number.
+ * Final (`0xffffffff`): matches the PSBT omission default and disables nLockTime/CLTV semantics
+ * unless callers choose a lower sequence explicitly (for example `0xfffffffe` with lockTime).
+ */
 export const DEFAULT_SEQUENCE = 4294967295;
 /**
  * Decimal coder for BTC-denominated strings.
+ * This is a fixed-precision BTC-string to satoshi-bigint helper, not a validator
+ * for transaction/PSBT output amounts. Signed values are intentional here, so
+ * callers can reuse the helper for display/history-style deltas as well as
+ * unsigned transfer amounts. It keeps the BTC scale at 8 fractional digits and
+ * rejects over-precise inputs instead of rounding.
  * @example
  * Convert between satoshi bigint values and BTC-denominated decimal strings.
  * ```ts
  * Decimal.encode(1n);
  * ```
  */
-export const Decimal: P.Coder<bigint, string> = /* @__PURE__ */ P.coders.decimal(PRECISION);
+export const Decimal: P.Coder<bigint, string> = /* @__PURE__ */ (() =>
+  Object.freeze(P.coders.decimal(PRECISION)))();
 
 // Same as value || def, but doesn't overwrites zero ('0', 0, 0n, etc)
 /**
@@ -101,7 +151,9 @@ export function cloneDeep<T>(obj: T): T {
       Object.entries(obj).map(([k, v]) => [k, cloneDeep(v)])
     ) as unknown as T;
   }
-  throw new Error(`cloneDeep: unknown type=${obj} (${typeof obj})`);
+  // Don't interpolate unsupported values here: Symbol string coercion would
+  // throw before cloneDeep can surface its own stable helper error.
+  throw new Error(`cloneDeep: unknown type=${typeof obj}`);
 }
 
 // Mostly security features, hardened defaults;
@@ -163,13 +215,14 @@ export interface TxOpts {
  * SignatureHash.ALL | SignatureHash.ANYONECANPAY;
  * ```
  */
-export const SignatureHash = /* @__PURE__ */ (() => ({
-  DEFAULT: 0,
-  ALL: 1,
-  NONE: 2,
-  SINGLE: 3,
-  ANYONECANPAY: 0x80,
-}))();
+export const SignatureHash = /* @__PURE__ */ (() =>
+  Object.freeze({
+    DEFAULT: 0,
+    ALL: 1,
+    NONE: 2,
+    SINGLE: 3,
+    ANYONECANPAY: 0x80,
+  } as const))();
 
 /**
  * Common signature hash flag combinations.
@@ -180,26 +233,28 @@ export const SignatureHash = /* @__PURE__ */ (() => ({
  * ```
  */
 export const SigHash = /* @__PURE__ */ (() =>
-  ({
+  Object.freeze({
     DEFAULT: SignatureHash.DEFAULT,
     ALL: SignatureHash.ALL,
     NONE: SignatureHash.NONE,
     SINGLE: SignatureHash.SINGLE,
-    DEFAULT_ANYONECANPAY: SignatureHash.DEFAULT | SignatureHash.ANYONECANPAY,
+    // BIP341 only permits 0x00, 0x01, 0x02, 0x03, 0x81, 0x82, and 0x83 for taproot, so
+    // the mechanical `DEFAULT | ANYONECANPAY` combination (0x80) is invalid and not exported.
+    // DEFAULT_ANYONECANPAY: SignatureHash.DEFAULT | SignatureHash.ANYONECANPAY,
     ALL_ANYONECANPAY: SignatureHash.ALL | SignatureHash.ANYONECANPAY,
     NONE_ANYONECANPAY: SignatureHash.NONE | SignatureHash.ANYONECANPAY,
     SINGLE_ANYONECANPAY: SignatureHash.SINGLE | SignatureHash.ANYONECANPAY,
-  }) as const)();
+  } as const))();
 /** Reverse lookup table for signature hash flag names. */
-export const SigHashNames = /* @__PURE__ */ (() => u.reverseObject(SigHash))();
+export const SigHashNames = /* @__PURE__ */ (() => Object.freeze(u.reverseObject(SigHash)))();
 /** Signature-hash flag number accepted by signing helpers. */
 export type SigHash = u.ValueOf<typeof SigHash>;
 
 function getTaprootKeys(
-  privKey: Bytes,
-  pubKey: Bytes,
-  internalKey: Bytes,
-  merkleRoot: Bytes = P.EMPTY
+  privKey: TArg<Bytes>,
+  pubKey: TArg<Bytes>,
+  internalKey: TArg<Bytes>,
+  merkleRoot: TArg<Bytes> = P.EMPTY
 ) {
   if (equalBytes(internalKey, pubKey)) {
     privKey = u.taprootTweakPrivKey(privKey, merkleRoot);
@@ -222,10 +277,10 @@ export type TransactionInputRequired = {
 };
 
 // Force check amount/script
-function outputBeforeSign(i: psbt.TransactionOutput): psbt.TransactionOutputRequired {
+function outputBeforeSign(i: TArg<psbt.TransactionOutput>): TRet<psbt.TransactionOutputRequired> {
   if (i.script === undefined || i.amount === undefined)
     throw new Error('Transaction/output: script and amount required');
-  return { script: i.script, amount: i.amount };
+  return { script: i.script, amount: i.amount } as TRet<psbt.TransactionOutputRequired>;
 }
 
 // Force check index/txid/sequence
@@ -245,20 +300,28 @@ function outputBeforeSign(i: psbt.TransactionOutput): psbt.TransactionOutputRequ
  * });
  * ```
  */
-export function inputBeforeSign(i: psbt.TransactionInput): TransactionInputRequired {
+export function inputBeforeSign(i: TArg<psbt.TransactionInput>): TRet<TransactionInputRequired> {
   if (i.txid === undefined || i.index === undefined)
     throw new Error('Transaction/input: txid and index required');
-  return {
+  const res = {
     txid: i.txid,
     index: i.index,
     sequence: def(i.sequence, DEFAULT_SEQUENCE),
     finalScriptSig: def(i.finalScriptSig, P.EMPTY),
   };
+  // This helper is the public "normalize for signing" boundary, so reuse RawInput's existing
+  // wire-shape checks here instead of letting malformed runtime field types fail much later.
+  RawInput.encode(res);
+  return res as TRet<TransactionInputRequired>;
 }
-function cleanFinalInput(i: psbt.TransactionInput) {
-  for (const _k in i) {
-    const k = _k as keyof psbt.TransactionInput;
-    if (!psbt.PSBTInputFinalKeys.includes(k)) delete i[k];
+function cleanFinalInput(i: TArg<PSBTInputs>) {
+  const _i = i as PSBTInputs;
+  // BIP174 finalizers clear non-final input metadata after constructing final scripts/witnesses.
+  // That intentionally drops sighashType here, so post-finalize mutation becomes conservative
+  // until callers explicitly reopen the input by removing finalScriptSig/finalScriptWitness.
+  for (const _k in _i) {
+    const k = _k as keyof PSBTInputs;
+    if (!psbt.PSBTInputFinalKeys.includes(k)) delete _i[k];
   }
 }
 
@@ -280,7 +343,7 @@ function unpackSighash(hashType: number) {
   };
 }
 
-function validateOpts(opts: TxOpts): Readonly<TxOpts> {
+function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
   if (opts !== undefined && {}.toString.call(opts) !== '[object Object]')
     throw new Error(`Wrong object type for transaction options: ${opts}`);
 
@@ -291,10 +354,12 @@ function validateOpts(opts: TxOpts): Readonly<TxOpts> {
     lockTime: def(opts.lockTime, 0),
     PSBTVersion: def(opts.PSBTVersion, 0),
   };
+  // Normalize deprecated aliases on the owned copy so they still affect tx.opts without rewriting the
+  // caller-owned options object passed to the constructor.
   if (typeof _opts.allowUnknowInput !== 'undefined')
-    opts.allowUnknownInputs = _opts.allowUnknowInput;
+    _opts.allowUnknownInputs = _opts.allowUnknowInput;
   if (typeof _opts.allowUnknowOutput !== 'undefined')
-    opts.allowUnknownOutputs = _opts.allowUnknowOutput;
+    _opts.allowUnknownOutputs = _opts.allowUnknowOutput;
   if (typeof _opts.lockTime !== 'number') throw new Error('Transaction lock time should be number');
   P.U32LE.encode(_opts.lockTime); // Additional range checks that lockTime
   // There is no PSBT v1, and any new version will probably have fields which we don't know how to parse, which
@@ -337,23 +402,25 @@ function validateOpts(opts: TxOpts): Readonly<TxOpts> {
         throw new Error(`wrong script=${s} (${typeof s})`);
     }
   }
-  return Object.freeze(_opts);
+  return Object.freeze(_opts) as TRet<Readonly<TxOpts>>;
 }
 
 // NOTE: we cannot do this inside PSBTInput coder, because there is no index/txid at this point!
-function validateInput(i: psbt.TransactionInput): psbt.TransactionInput {
-  if (i.nonWitnessUtxo && i.index !== undefined) {
-    const last = i.nonWitnessUtxo.outputs.length - 1;
-    if (i.index > last) throw new Error(`validateInput: index(${i.index}) not in nonWitnessUtxo`);
-    const prevOut = i.nonWitnessUtxo.outputs[i.index];
+function validateInput(i: TArg<psbt.TransactionInput>): TRet<PSBTInputs> {
+  const _i = i as PSBTInputs;
+  if (_i.nonWitnessUtxo && _i.index !== undefined) {
+    const last = _i.nonWitnessUtxo.outputs.length - 1;
+    if (_i.index > last) throw new Error(`validateInput: index(${_i.index}) not in nonWitnessUtxo`);
+    const prevOut = _i.nonWitnessUtxo.outputs[_i.index];
     if (
-      i.witnessUtxo &&
-      (!equalBytes(i.witnessUtxo.script, prevOut.script) || i.witnessUtxo.amount !== prevOut.amount)
+      _i.witnessUtxo &&
+      (!equalBytes(_i.witnessUtxo.script, prevOut.script) ||
+        _i.witnessUtxo.amount !== prevOut.amount)
     )
       throw new Error('validateInput: witnessUtxo different from nonWitnessUtxo');
-    if (i.txid) {
-      const outputs = i.nonWitnessUtxo.outputs;
-      if (outputs.length - 1 < i.index) throw new Error('nonWitnessUtxo: incorect output index');
+    if (_i.txid) {
+      const outputs = _i.nonWitnessUtxo.outputs;
+      if (outputs.length - 1 < _i.index) throw new Error('nonWitnessUtxo: incorect output index');
       // At this point, we are using previous tx output to create new input.
       // Script safety checks are unnecessary:
       // - User has no control over previous tx. If somebody send money in same tx
@@ -362,22 +429,28 @@ function validateInput(i: psbt.TransactionInput): psbt.TransactionInput {
       //   in case user wants to use wrong input by mistake
       // - Worst case: tx will be rejected by nodes. Still better than disallowing user
       //   to spend real input, no matter how broken it looks
-      const tx = Transaction.fromRaw(RawTx.encode(i.nonWitnessUtxo), {
+      const tx = Transaction.fromRaw(RawTx.encode(_i.nonWitnessUtxo), {
         allowUnknownOutputs: true,
         disableScriptCheck: true,
         allowUnknownInputs: true,
       });
-      const txid = hex.encode(i.txid);
-      // PSBTv2 vectors have non-final tx in inputs
-      if (tx.isFinal && tx.id !== txid)
-        throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
+      const txid = hex.encode(_i.txid);
+      // BIP174 requires the provided nonWitnessUtxo to hash to the prevout txid even when the
+      // previous transaction is otherwise non-final; finality does not make its serialized txid optional.
+      // Keep the historical TransactionInput.txid convention here: internal txid bytes match
+      // `Transaction.id` (display-order hex), while raw-tx / PSBT boundary coders are responsible
+      // for any byte-order conversions required by their wire formats.
+      if (tx.id !== txid) throw new Error(`nonWitnessUtxo: wrong txid, exp=${txid} got=${tx.id}`);
     }
   }
-  return i;
+  return _i as TRet<PSBTInputs>;
 }
 
 /** Canonical PSBT input shape used by the coder layer. */
 export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
+
+/** Canonical PSBT output shape used by the coder layer. */
+export type PSBTOutputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTOutput>;
 
 // Normalizes input
 /**
@@ -391,11 +464,21 @@ export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
  * getPrevOut({ witnessUtxo: { amount: 1n, script: new Uint8Array([0x51]) } });
  * ```
  */
-export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof RawOutput> {
-  if (input.nonWitnessUtxo) {
-    if (input.index === undefined) throw new Error('Unknown input index');
-    return input.nonWitnessUtxo.outputs[input.index];
-  } else if (input.witnessUtxo) return input.witnessUtxo;
+export function getPrevOut(input: TArg<psbt.TransactionInput>): P.UnwrapCoder<typeof RawOutput> {
+  const _input = input as PSBTInputs;
+  if (_input.nonWitnessUtxo) {
+    if (_input.index === undefined) throw new Error('Unknown input index');
+    // BIP174 `PSBT_IN_NON_WITNESS_UTXO` is the full spent transaction, so the
+    // input outpoint index must name an existing output instead of leaking a
+    // synthetic `undefined` prevout into later signing / estimation callers.
+    if (
+      !Number.isSafeInteger(_input.index) ||
+      _input.index < 0 ||
+      _input.index >= _input.nonWitnessUtxo.outputs.length
+    )
+      throw new Error(`Wrong input index=${_input.index}`);
+    return _input.nonWitnessUtxo.outputs[_input.index];
+  } else if (_input.witnessUtxo) return _input.witnessUtxo;
   else throw new Error('Cannot find previous output info');
 }
 
@@ -408,7 +491,8 @@ export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof R
  * @param allowUnknown - whether to keep unknown PSBT fields
  * @returns Normalized PSBT input.
  * @example
- * Accept hex txids from callers, then normalize them into canonical PSBT bytes.
+ * Accept hex txids from callers in the same display-order form used by `Transaction.id`, then
+ * normalize them into the repo's internal `TransactionInput` shape.
  * ```ts
  * import { hex } from '@scure/base';
  * import { normalizeInput } from '@scure/btc-signer/transaction.js';
@@ -420,30 +504,35 @@ export function getPrevOut(input: psbt.TransactionInput): P.UnwrapCoder<typeof R
  * ```
  */
 export function normalizeInput(
-  i: psbt.TransactionInputUpdate,
-  cur?: psbt.TransactionInput,
-  allowedFields?: (keyof psbt.TransactionInput)[],
+  i: TArg<psbt.TransactionInputUpdate>,
+  cur?: TArg<PSBTInputs>,
+  allowedFields?: TArg<readonly (keyof PSBTInputs)[]>,
   disableScriptCheck = false,
   allowUnknown = false
-): psbt.TransactionInput {
-  let { nonWitnessUtxo, txid } = i;
+): TRet<PSBTInputs> {
+  const _i = i as psbt.TransactionInputUpdate;
+  const _cur = cur as PSBTInputs | undefined;
+  const _allowedFields = allowedFields as readonly (keyof PSBTInputs)[] | undefined;
+  let { nonWitnessUtxo, txid } = _i;
   // String support for common fields. We usually prefer Uint8Array to avoid errors
   // like hex looking string accidentally passed, however, in case of nonWitnessUtxo
   // it is better to expect string, since constructing this complex object will be
   // difficult for user
   if (typeof nonWitnessUtxo === 'string') nonWitnessUtxo = hex.decode(nonWitnessUtxo);
   if (isBytes(nonWitnessUtxo)) nonWitnessUtxo = RawTx.decode(nonWitnessUtxo);
-  if (!('nonWitnessUtxo' in i) && nonWitnessUtxo === undefined)
-    nonWitnessUtxo = cur?.nonWitnessUtxo;
+  if (!('nonWitnessUtxo' in _i) && nonWitnessUtxo === undefined)
+    nonWitnessUtxo = _cur?.nonWitnessUtxo;
   if (typeof txid === 'string') txid = hex.decode(txid);
   // TODO: if we have nonWitnessUtxo, we can extract txId from here
-  if (txid === undefined) txid = cur?.txid;
-  let res: PSBTInputs = { ...cur, ...i, nonWitnessUtxo, txid };
-  if (!('nonWitnessUtxo' in i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
+  if (txid === undefined) txid = _cur?.txid;
+  let res: PSBTInputs = { ..._cur, ..._i, nonWitnessUtxo, txid };
+  if (!('nonWitnessUtxo' in _i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
   if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
   if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
-  res = psbt.mergeKeyMap(psbt.PSBTInput, res, cur, allowedFields, allowUnknown);
-  psbt.PSBTInputCoder.encode(res); // Validates that everything is correct at this point
+  res = psbt.mergeKeyMap(psbt.PSBTInput, res, _cur, _allowedFields, allowUnknown) as PSBTInputs;
+  // Public PSBT coder surface is wrapped with TArg/TRet for TS compatibility; normalizeInput keeps
+  // the repo's historical raw internal shape and casts only at the validation boundary here.
+  psbt.PSBTInputCoder.encode(res as Parameters<typeof psbt.PSBTInputCoder.encode>[0]); // Validates that everything is correct at this point
 
   let prevOut;
   if (res.nonWitnessUtxo && res.index !== undefined)
@@ -451,15 +540,18 @@ export function normalizeInput(
   else if (res.witnessUtxo) prevOut = res.witnessUtxo;
   if (prevOut && !disableScriptCheck)
     checkScript(prevOut && prevOut.script, res.redeemScript, res.witnessScript);
-  return res;
+  return res as TRet<PSBTInputs>;
 }
 
 /**
  * Determines how an input should be signed and finalized.
+ * Wrapper consistency is expected to be validated earlier by {@link normalizeInput}
+ * and {@link checkScript}; this helper classifies already-normalized inputs and is
+ * not a standalone redeemScript/witnessScript correctness gate for raw caller input.
  * @param input - PSBT input to inspect
  * @param allowLegacyWitnessUtxo - whether legacy inputs may rely on witness UTXO data only
  * @returns Input classification including transaction type and sighash defaults.
- * @throws If the input scripts or previous-output data are inconsistent. {@link Error}
+ * @throws If a documented runtime validation or state check fails. {@link Error}
  * @example
  * Detect how the signer should treat a SegWit input from its previous output script.
  * ```ts
@@ -475,15 +567,18 @@ export function normalizeInput(
  * });
  * ```
  */
-export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtxo = false) {
+export function getInputType(input: TArg<psbt.TransactionInput>, allowLegacyWitnessUtxo = false) {
+  const _input = input as PSBTInputs;
   let txType = 'legacy';
-  let defaultSighash = SignatureHash.ALL;
-  const prevOut = getPrevOut(input);
+  let defaultSighash: number = SignatureHash.ALL;
+  const prevOut = getPrevOut(_input as TArg<psbt.TransactionInput>);
   const first = OutScript.decode(prevOut.script);
   let type = first.type;
   let cur = first;
   const stack = [first];
   if (first.type === 'tr') {
+    // Expected invariant: taproot inputs use PSBT_IN_TAP_* metadata only;
+    // legacy redeemScript/witnessScript fields belong to P2SH/P2WSH paths.
     defaultSighash = SignatureHash.DEFAULT;
     return {
       txType: 'taproot',
@@ -491,13 +586,13 @@ export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtx
       last: first,
       lastScript: prevOut.script,
       defaultSighash,
-      sighash: input.sighashType || defaultSighash,
+      sighash: _input.sighashType || defaultSighash,
     };
   } else {
     if (first.type === 'wpkh' || first.type === 'wsh') txType = 'segwit';
     if (first.type === 'sh') {
-      if (!input.redeemScript) throw new Error('inputType: sh without redeemScript');
-      let child = OutScript.decode(input.redeemScript);
+      if (!_input.redeemScript) throw new Error('inputType: sh without redeemScript');
+      let child = OutScript.decode(_input.redeemScript);
       if (child.type === 'wpkh' || child.type === 'wsh') txType = 'segwit';
       stack.push(child);
       cur = child;
@@ -505,8 +600,8 @@ export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtx
     }
     // wsh can be inside sh
     if (cur.type === 'wsh') {
-      if (!input.witnessScript) throw new Error('inputType: wsh without witnessScript');
-      let child = OutScript.decode(input.witnessScript);
+      if (!_input.witnessScript) throw new Error('inputType: wsh without witnessScript');
+      let child = OutScript.decode(_input.witnessScript);
       if (child.type === 'wsh') txType = 'segwit';
       stack.push(child);
       cur = child;
@@ -522,9 +617,9 @@ export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtx
       last,
       lastScript,
       defaultSighash,
-      sighash: input.sighashType || defaultSighash,
+      sighash: _input.sighashType || defaultSighash,
     };
-    if (txType === 'legacy' && !allowLegacyWitnessUtxo && !input.nonWitnessUtxo) {
+    if (txType === 'legacy' && !allowLegacyWitnessUtxo && !_input.nonWitnessUtxo) {
       throw new Error(
         `Transaction/sign: legacy input without nonWitnessUtxo, can result in attack that forces paying higher fees. Pass allowLegacyWitnessUtxo=true, if you sure`
       );
@@ -556,8 +651,8 @@ export function getInputType(input: psbt.TransactionInput, allowLegacyWitnessUtx
  */
 export class Transaction {
   private global: psbt.PSBTKeyMapKeys<typeof psbt.PSBTGlobal> = {};
-  private inputs: psbt.TransactionInput[] = []; // use getInput()
-  private outputs: psbt.TransactionOutput[] = []; // use getOutput()
+  private inputs: PSBTInputs[] = []; // use getInput()
+  private outputs: PSBTOutputs[] = []; // use getOutput()
   readonly opts: ReturnType<typeof validateOpts>;
   constructor(opts: TxOpts = {}) {
     const _opts = (this.opts = validateOpts(opts));
@@ -601,12 +696,13 @@ export class Transaction {
     const tx = new Transaction({ ...opts, version, lockTime, PSBTVersion });
     // We need slice here, because otherwise
     const inputCount = PSBTVersion === 0 ? unsigned?.inputs.length : parsed.global.inputCount;
-    tx.inputs = parsed.inputs.slice(0, inputCount).map((i, j) =>
-      validateInput({
-        finalScriptSig: P.EMPTY,
-        ...parsed.global.unsignedTx?.inputs[j],
-        ...i,
-      })
+    tx.inputs = parsed.inputs.slice(0, inputCount).map(
+      (i, j) =>
+        validateInput({
+          finalScriptSig: P.EMPTY,
+          ...parsed.global.unsignedTx?.inputs[j],
+          ...i,
+        }) as PSBTInputs
     );
     const outputCount = PSBTVersion === 0 ? unsigned?.outputs.length : parsed.global.outputCount;
     tx.outputs = parsed.outputs.slice(0, outputCount).map((i, j) => ({
@@ -617,7 +713,11 @@ export class Transaction {
     if (lockTime !== DEFAULT_LOCKTIME) tx.global.fallbackLocktime = lockTime;
     return tx;
   }
-  toPSBT(PSBTVersion: number | undefined = this.opts.PSBTVersion): Uint8Array {
+  // Prefer `global.version` when present so cross-version combiners can serialize at the highest
+  // required PSBT version without mutating the frozen transaction options object.
+  toPSBT(
+    PSBTVersion: number | undefined = this.global.version || this.opts.PSBTVersion
+  ): Uint8Array {
     if (PSBTVersion !== 0 && PSBTVersion !== 2)
       throw new Error(`Wrong PSBT version=${PSBTVersion}`);
     // if (PSBTVersion === 0 && this.inputs.length === 0) {
@@ -626,7 +726,9 @@ export class Transaction {
     //   );
     // }
     const inputs = this.inputs.map((i) =>
-      validateInput(psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTInput, i))
+      // For PSBTv0 the prevout txid/index live in global.unsignedTx rather than the input map, so
+      // validate the full transaction input before version filtering drops those fields.
+      psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTInput, validateInput(i) as TArg<PSBTInputs>)
     );
     for (const inp of inputs) {
       // Don't serialize empty fields
@@ -647,16 +749,28 @@ export class Transaction {
         RawOldTx.encode({
           version: this.version,
           lockTime: this.lockTime,
-          inputs: this.inputs.map(inputBeforeSign).map((i) => ({
-            ...i,
-            finalScriptSig: P.EMPTY,
-          })),
-          outputs: this.outputs.map(outputBeforeSign),
+          inputs: this.inputs
+            .map((i) => inputBeforeSign(i as TArg<psbt.TransactionInput>))
+            .map((i) => ({
+              ...i,
+              finalScriptSig: P.EMPTY,
+            })),
+          outputs: this.outputs.map((o) => outputBeforeSign(o as TArg<psbt.TransactionOutput>)),
         })
       );
       delete global.fallbackLocktime;
       delete global.txVersion;
+      // PSBTv0 carries the unsigned transaction as one blob, so the PSBTv2 framing fields must be
+      // removed here. Keeping `global.version` would make validation treat this rebuilt v0 map as
+      // PSBTv2 and reject the required `unsignedTx` field.
+      delete global.inputCount;
+      delete global.outputCount;
+      delete global.version;
     } else {
+      // Cross-version merges and v0->v2 re-exports can still carry the PSBTv0 unsignedTx blob in
+      // `this.global`, but PSBTv2 serializes the transaction through split global/input/output
+      // fields instead, so drop the stale v0-only field before PSBTv2 validation/encoding.
+      delete global.unsignedTx;
       global.version = PSBTVersion;
       global.txVersion = this.version;
       global.inputCount = this.inputs.length;
@@ -668,11 +782,10 @@ export class Transaction {
       if (!inputs.length) inputs.push({});
       if (!outputs.length) outputs.push({});
     }
-    return (PSBTVersion === 0 ? psbt.RawPSBTV0 : psbt.RawPSBTV2).encode({
-      global,
-      inputs,
-      outputs,
-    });
+    const raw = { global, inputs, outputs };
+    return PSBTVersion === 0
+      ? psbt.RawPSBTV0.encode(raw as Parameters<typeof psbt.RawPSBTV0.encode>[0])
+      : psbt.RawPSBTV2.encode(raw as Parameters<typeof psbt.RawPSBTV2.encode>[0]);
   }
 
   // BIP370 lockTime (https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time)
@@ -783,8 +896,9 @@ export class Transaction {
     out += 4 * CompactSizeLen.encode(this.inputs.length).length;
     for (const i of this.inputs) {
       out += 160 + 4 * VarBytes.encode(i.finalScriptSig || P.EMPTY).length;
-      if (this.hasWitnesses && i.finalScriptWitness)
-        out += RawWitness.encode(i.finalScriptWitness).length;
+      // Once segwit serialization is active, every input contributes one witness vector, including
+      // legacy inputs whose empty vector still encodes as a single zero-item-count byte.
+      if (this.hasWitnesses) out += RawWitness.encode(i.finalScriptWitness || []).length;
     }
     return out;
   }
@@ -824,19 +938,29 @@ export class Transaction {
   }
   getInput(idx: number): psbt.TransactionInput {
     this.checkInputIdx(idx);
-    return cloneDeep(this.inputs[idx]);
+    return cloneDeep(this.inputs[idx]) as psbt.TransactionInput;
   }
   get inputsLength(): number {
     return this.inputs.length;
   }
   // Modification
-  addInput(input: psbt.TransactionInputUpdate, _ignoreSignStatus = false): number {
+  addInput(input: TArg<psbt.TransactionInputUpdate>, _ignoreSignStatus = false): number {
     if (!_ignoreSignStatus && !this.signStatus().addInput)
       throw new Error('Tx has signed inputs, cannot add new one');
-    this.inputs.push(normalizeInput(input, undefined, undefined, this.opts.disableScriptCheck));
+    // normalizeInput preserves nested caller-owned byte arrays, so detach them here before the
+    // new input becomes transaction state and later caller mutation can rewrite it by aliasing.
+    this.inputs.push(
+      cloneDeep(
+        normalizeInput(input, undefined, undefined, this.opts.disableScriptCheck)
+      ) as PSBTInputs
+    );
     return this.inputs.length - 1;
   }
-  updateInput(idx: number, input: psbt.TransactionInputUpdate, _ignoreSignStatus = false): void {
+  updateInput(
+    idx: number,
+    input: TArg<psbt.TransactionInputUpdate>,
+    _ignoreSignStatus = false
+  ): void {
     this.checkInputIdx(idx);
     let allowedFields = undefined;
     if (!_ignoreSignStatus) {
@@ -844,13 +968,17 @@ export class Transaction {
       if (!status.addInput || status.inputs.includes(idx))
         allowedFields = psbt.PSBTInputUnsignedKeys;
     }
-    this.inputs[idx] = normalizeInput(
-      input,
-      this.inputs[idx],
-      allowedFields,
-      this.opts.disableScriptCheck,
-      this.opts.allowUnknown
-    );
+    // normalizeInput preserves nested caller-owned byte arrays, so detach the merged result here
+    // before the updated input becomes transaction state and later caller mutation can rewrite it.
+    this.inputs[idx] = cloneDeep(
+      normalizeInput(
+        input,
+        this.inputs[idx],
+        allowedFields,
+        this.opts.disableScriptCheck,
+        this.opts.allowUnknown
+      )
+    ) as PSBTInputs;
   }
   // Output stuff
   private checkOutputIdx(idx: number) {
@@ -859,22 +987,24 @@ export class Transaction {
   }
   getOutput(idx: number): psbt.TransactionOutput {
     this.checkOutputIdx(idx);
-    return cloneDeep(this.outputs[idx]);
+    return cloneDeep(this.outputs[idx]) as psbt.TransactionOutput;
   }
   getOutputAddress(idx: number, network: u.BTC_NETWORK = NETWORK): string | undefined {
     const out = this.getOutput(idx);
     if (!out.script) return;
-    return Address(network).encode(OutScript.decode(out.script));
+    return Address(network).encode(
+      OutScript.decode(out.script) as Parameters<ReturnType<typeof Address>['encode']>[0]
+    );
   }
 
   get outputsLength(): number {
     return this.outputs.length;
   }
   private normalizeOutput(
-    o: psbt.TransactionOutputUpdate,
-    cur?: psbt.TransactionOutput,
-    allowedFields?: (keyof typeof psbt.PSBTOutput)[]
-  ): psbt.TransactionOutput {
+    o: TArg<psbt.TransactionOutputUpdate>,
+    cur?: PSBTOutputs,
+    allowedFields?: readonly (keyof typeof psbt.PSBTOutput)[]
+  ): PSBTOutputs {
     let { amount, script } = o;
     if (amount === undefined) amount = cur?.amount;
     if (typeof amount !== 'bigint')
@@ -883,10 +1013,10 @@ export class Transaction {
       );
     if (typeof script === 'string') script = hex.decode(script);
     if (script === undefined) script = cur?.script;
-    let res: psbt.PSBTKeyMapKeys<typeof psbt.PSBTOutput> = { ...cur, ...o, amount, script };
+    let res: PSBTOutputs = { ...cur, ...(o as PSBTOutputs & { script?: string }), amount, script };
     if (res.amount === undefined) delete res.amount;
     res = psbt.mergeKeyMap(psbt.PSBTOutput, res, cur, allowedFields, this.opts.allowUnknown);
-    psbt.PSBTOutputCoder.encode(res);
+    psbt.PSBTOutputCoder.encode(res as Parameters<typeof psbt.PSBTOutputCoder.encode>[0]);
     if (
       res.script &&
       !this.opts.allowUnknownOutputs &&
@@ -899,13 +1029,19 @@ export class Transaction {
     if (!this.opts.disableScriptCheck) checkScript(res.script, res.redeemScript, res.witnessScript);
     return res;
   }
-  addOutput(o: psbt.TransactionOutputUpdate, _ignoreSignStatus = false): number {
+  addOutput(o: TArg<psbt.TransactionOutputUpdate>, _ignoreSignStatus = false): number {
     if (!_ignoreSignStatus && !this.signStatus().addOutput)
       throw new Error('Tx has signed outputs, cannot add new one');
-    this.outputs.push(this.normalizeOutput(o));
+    // normalizeOutput preserves nested caller-owned script bytes, so detach them here before the
+    // new output becomes transaction state and later caller mutation can rewrite it by aliasing.
+    this.outputs.push(cloneDeep(this.normalizeOutput(o)));
     return this.outputs.length - 1;
   }
-  updateOutput(idx: number, output: psbt.TransactionOutputUpdate, _ignoreSignStatus = false): void {
+  updateOutput(
+    idx: number,
+    output: TArg<psbt.TransactionOutputUpdate>,
+    _ignoreSignStatus = false
+  ): void {
     this.checkOutputIdx(idx);
     let allowedFields = undefined;
     if (!_ignoreSignStatus) {
@@ -913,10 +1049,19 @@ export class Transaction {
       if (!status.addOutput || status.outputs.includes(idx))
         allowedFields = psbt.PSBTOutputUnsignedKeys;
     }
-    this.outputs[idx] = this.normalizeOutput(output, this.outputs[idx], allowedFields);
+    // updateOutput replaces stored state with normalizeOutput(...) directly, so detach the result
+    // before storing it or later caller mutation of `output.script` will rewrite transaction state.
+    this.outputs[idx] = cloneDeep(this.normalizeOutput(output, this.outputs[idx], allowedFields));
   }
   addOutputAddress(address: string, amount: bigint, network: u.BTC_NETWORK = NETWORK): number {
-    return this.addOutput({ script: OutScript.encode(Address(network).decode(address)), amount });
+    return this.addOutput({
+      // Address.decode() only returns recognized descriptors here, but its wrapped output type
+      // still carries `undefined` for coder parity, so narrow before feeding OutScript.encode().
+      script: OutScript.encode(
+        Address(network).decode(address) as Parameters<typeof OutScript.encode>[0]
+      ),
+      amount,
+    });
   }
   // Utils
   get fee(): bigint {
@@ -940,9 +1085,7 @@ export class Transaction {
     if (idx < 0 || !Number.isSafeInteger(idx)) throw new Error(`Invalid input idx=${idx}`);
     if ((isSingle && idx >= this.outputs.length) || idx >= this.inputs.length)
       return P.U256BE.encode(1n);
-    prevOutScript = Script.encode(
-      Script.decode(prevOutScript).filter((i) => i !== 'CODESEPARATOR')
-    );
+    prevOutScript = stripCodeSeparator(prevOutScript);
     let inputs: TransactionInputRequired[] = this.inputs
       .map(inputBeforeSign)
       .map((input, inputIdx) => ({
@@ -959,7 +1102,10 @@ export class Transaction {
     let outputs = this.outputs.map(outputBeforeSign);
     if (isNone) outputs = [];
     else if (isSingle) {
-      outputs = outputs.slice(0, idx).fill(EMPTY_OUTPUT).concat([outputs[idx]]);
+      outputs = outputs
+        .slice(0, idx)
+        .fill(EMPTY_OUTPUT as (typeof outputs)[number])
+        .concat([outputs[idx]]);
     }
     const tmpTx = RawTx.encode({
       lockTime: this.lockTime,
@@ -976,6 +1122,10 @@ export class Transaction {
     hashType: number,
     amount: bigint
   ): Uint8Array {
+    // BIP143 serializes txTo.vin[nIn].prevout and txTo.vin[nIn].nSequence, so reject an invalid
+    // nIn explicitly instead of leaking a later undefined-input TypeError from inputs[idx].
+    if (idx < 0 || !Number.isSafeInteger(idx) || idx >= this.inputs.length)
+      throw new Error(`Invalid input idx=${idx}`);
     const { isAny, isNone, isSingle } = unpackSighash(hashType);
     let inputHash = EMPTY32;
     let sequenceHash = EMPTY32;
@@ -1018,6 +1168,11 @@ export class Transaction {
       throw new Error(`Invalid amounts array=${amount}`);
     if (!Array.isArray(prevOutScript) || this.inputs.length !== prevOutScript.length)
       throw new Error(`Invalid prevOutScript array=${prevOutScript}`);
+    // BIP341 SigMsg commits either to input_index or to the selected input's outpoint/amount/script/
+    // sequence under ANYONECANPAY, so reject an invalid index explicitly instead of hashing a
+    // nonexistent input or leaking a later integer-encoding RangeError for negative idx.
+    if (idx < 0 || !Number.isSafeInteger(idx) || idx >= this.inputs.length)
+      throw new Error(`Invalid input idx=${idx}`);
     const out: Bytes[] = [
       P.U8.encode(0),
       P.U8.encode(hashType), // U8 sigHash
@@ -1063,25 +1218,86 @@ export class Transaction {
   signIdx(privateKey: Signer, idx: number, allowedSighash?: SigHash[], _auxRand?: Bytes): boolean {
     this.checkInputIdx(idx);
     const input = this.inputs[idx];
-    const inputType = getInputType(input, this.opts.allowLegacyWitnessUtxo);
-    // Handle BIP32 HDKey
+    const inputType = getInputType(
+      input as TArg<psbt.TransactionInput>,
+      this.opts.allowLegacyWitnessUtxo
+    );
+    const canSign = (privateKey: Bytes): boolean => {
+      if (inputType.txType === 'taproot') {
+        const pubKey = u.pubSchnorr(privateKey);
+        if (input.tapInternalKey && equalBytes(pubKey, input.tapInternalKey)) return true;
+        if (!input.tapLeafScript) return false;
+        for (const [_, leaf] of input.tapLeafScript) {
+          for (const op of Script.decode(leaf.subarray(0, -1))) {
+            if (isBytes(op) && equalBytes(op, pubKey)) return true;
+          }
+        }
+        return false;
+      }
+      const pubKey = u.pubECDSA(privateKey);
+      const pubKeyHash = u.hash160(pubKey);
+      for (const op of Script.decode(inputType.lastScript)) {
+        if (isBytes(op) && (equalBytes(op, pubKey) || equalBytes(op, pubKeyHash))) return true;
+      }
+      return false;
+    };
+    // Expected invariant: HD signing should use bip32Derivation for legacy/segwit inputs,
+    // tapBip32Derivation for taproot inputs, and preserve caller sighash/auxRand constraints.
     if (!isBytes(privateKey)) {
-      if (!input.bip32Derivation || !input.bip32Derivation.length)
-        throw new Error('bip32Derivation: empty');
-      const signers = input.bip32Derivation
-        .filter((i) => i[1].fingerprint == (privateKey as HDKey).fingerprint)
-        .map(([pubKey, { path }]) => {
-          let s = privateKey as HDKey;
-          for (const i of path) s = s.deriveChild(i);
-          if (!equalBytes(s.publicKey, pubKey)) throw new Error('bip32Derivation: wrong pubKey');
-          if (!s.privateKey) throw new Error('bip32Derivation: no privateKey');
-          return s;
-        });
-      if (!signers.length)
-        throw new Error(`bip32Derivation: no items with fingerprint=${privateKey.fingerprint}`);
+      const root = privateKey as HDKey;
+      type DerRow = { pubKey: Bytes; fingerprint: number; path: readonly number[] };
+      const deriveSigners = (
+        label: string,
+        rows: DerRow[] | undefined,
+        pubKey: (signer: HDKey) => Bytes
+      ): HDKey[] => {
+        if (!rows || !rows.length) throw new Error(`${label}: empty`);
+        const signers = rows
+          .filter((row) => row.fingerprint == root.fingerprint)
+          .map((row) => {
+            let s = root;
+            for (const i of row.path) s = s.deriveChild(i);
+            if (!equalBytes(pubKey(s), row.pubKey)) throw new Error(`${label}: wrong pubKey`);
+            if (!s.privateKey) throw new Error(`${label}: no privateKey`);
+            return s;
+          });
+        if (!signers.length)
+          throw new Error(`${label}: no items with fingerprint=${root.fingerprint}`);
+        return signers;
+      };
+      const signers =
+        inputType.txType === 'taproot'
+          ? // BIP371 PSBT_IN_TAP_BIP32_DERIVATION stores x-only pubkeys plus `der`, so taproot HD
+            // signing must derive against that map instead of legacy bip32Derivation.
+            deriveSigners(
+              'tapBip32Derivation',
+              input.tapBip32Derivation?.map(([pubKey, { der }]) => ({
+                pubKey,
+                fingerprint: der.fingerprint,
+                path: der.path,
+              })),
+              (s) => s.publicKey.slice(1)
+            )
+          : deriveSigners(
+              'bip32Derivation',
+              input.bip32Derivation?.map(([pubKey, der]) => ({
+                pubKey,
+                fingerprint: der.fingerprint,
+                path: der.path,
+              })),
+              (s) => s.publicKey
+            );
       let signed = false;
-      for (const s of signers) if (this.signIdx(s.privateKey, idx)) signed = true;
-      return signed;
+      for (const s of signers) {
+        // PSBT may legitimately carry multiple same-fingerprint derivation entries (multisig or
+        // taproot internal/script-path keys). Skip unrelated derived children instead of aborting
+        // the whole HD signing attempt on the first non-applicable candidate.
+        if (!canSign(s.privateKey)) continue;
+        if (this.signIdx(s.privateKey, idx, allowedSighash, _auxRand)) signed = true;
+      }
+      if (signed) return true;
+      if (inputType.txType === 'taproot') throw new Error('No taproot scripts signed');
+      throw new Error(`Input script doesn't have pubKey: ${inputType.lastScript}`);
     }
     // Sighash checks
     // Just for compat with bitcoinjs-lib, so users won't face unexpected behaviour.
@@ -1291,8 +1507,8 @@ export class Transaction {
                 const finalized = c.finalizeTaproot(script, csEncoded, scriptSig);
                 if (!finalized) continue;
                 input.finalScriptWitness = finalized.concat(psbt.TaprootControlBlock.encode(cb));
-                input.finalScriptSig = P.EMPTY;
-                cleanFinalInput(input);
+                delete input.finalScriptSig;
+                cleanFinalInput(input as TArg<PSBTInputs>);
                 return;
               }
             }
@@ -1306,8 +1522,9 @@ export class Transaction {
         }
         if (!input.finalScriptWitness) throw new Error('finalize/taproot: empty witness');
       } else throw new Error('finalize/taproot: unknown input');
-      input.finalScriptSig = P.EMPTY;
-      cleanFinalInput(input);
+      // BIP174 Input Finalizer: if scriptSig is empty for an input, 0x07 remains unset.
+      delete input.finalScriptSig;
+      cleanFinalInput(input as TArg<PSBTInputs>);
       return;
     }
     if (!input.partialSig || !input.partialSig.length) throw new Error('Not enough partial sign');
@@ -1367,7 +1584,7 @@ export class Transaction {
     if (!finalScriptSig && !finalScriptWitness) throw new Error('Unknown error finalizing input');
     if (finalScriptSig) input.finalScriptSig = finalScriptSig;
     if (finalScriptWitness) input.finalScriptWitness = finalScriptWitness;
-    cleanFinalInput(input);
+    cleanFinalInput(input as TArg<PSBTInputs>);
   }
   finalize(): void {
     for (let i = 0; i < this.inputs.length; i++) this.finalizeIdx(i);
@@ -1379,7 +1596,10 @@ export class Transaction {
     return this.toBytes(true, true);
   }
   combine(other: Transaction): this {
-    for (const k of ['PSBTVersion', 'version', 'lockTime'] as const) {
+    // BIP174 combiners merge same-transaction PSBTs across versions and emit the highest required
+    // version, so PSBTVersion mismatches are normalized below instead of treated as conflicts.
+    const PSBTVersion = Math.max(this.opts.PSBTVersion || 0, other.opts.PSBTVersion || 0);
+    for (const k of ['version', 'lockTime'] as const) {
       if (this.opts[k] !== other.opts[k]) {
         throw new Error(
           `Transaction/combine: different ${k} this=${this.opts[k]} other=${other.opts[k]}`
@@ -1393,11 +1613,9 @@ export class Transaction {
         );
       }
     }
-    const thisUnsigned = this.global.unsignedTx ? RawOldTx.encode(this.global.unsignedTx) : P.EMPTY;
-    const otherUnsigned = other.global.unsignedTx
-      ? RawOldTx.encode(other.global.unsignedTx)
-      : P.EMPTY;
-    if (!equalBytes(thisUnsigned, otherUnsigned))
+    // Same-transaction checks must compare the normalized unsigned tx bytes here: PSBTv0 stores
+    // `global.unsignedTx`, while PSBTv2 reconstructs the same transaction from split fields.
+    if (!equalBytes(this.unsignedTx, other.unsignedTx))
       throw new Error(`Transaction/combine: different unsigned tx`);
     this.global = psbt.mergeKeyMap(
       psbt.PSBTGlobal,
@@ -1406,13 +1624,14 @@ export class Transaction {
       undefined,
       this.opts.allowUnknown
     );
+    if (PSBTVersion) this.global.version = PSBTVersion;
     for (let i = 0; i < this.inputs.length; i++) this.updateInput(i, other.inputs[i], true);
     for (let i = 0; i < this.outputs.length; i++) this.updateOutput(i, other.outputs[i], true);
     return this;
   }
   clone(): Transaction {
     // deepClone probably faster, but this enforces that encoding is valid
-    return Transaction.fromPSBT(this.toPSBT(this.opts.PSBTVersion), this.opts);
+    return Transaction.fromPSBT(this.toPSBT(), this.opts);
   }
 }
 
@@ -1429,12 +1648,12 @@ export class Transaction {
  * PSBTCombine([psbt, psbt]);
  * ```
  */
-export function PSBTCombine(psbts: Bytes[]): Bytes {
+export function PSBTCombine(psbts: TArg<Bytes[]>): TRet<Bytes> {
   if (!psbts || !Array.isArray(psbts) || !psbts.length)
     throw new Error('PSBTCombine: wrong PSBT list');
   const tx = Transaction.fromPSBT(psbts[0]);
   for (let i = 1; i < psbts.length; i++) tx.combine(Transaction.fromPSBT(psbts[i]));
-  return tx.toPSBT();
+  return tx.toPSBT() as TRet<Bytes>;
 }
 
 // Copy-pasted from bip32 derive, maybe do something like 'bip32.parsePath'?
@@ -1452,9 +1671,15 @@ const HARDENED_OFFSET: number = 0x80000000;
  */
 export function bip32Path(path: string): number[] {
   const out: number[] = [];
+  // PSBT key-origin records only carry raw child indices, so this convenience
+  // parser normalizes textual BIP32 roots into the same integer path array and
+  // uses apostrophe suffixes for hardening.
   if (!/^[mM]'?/.test(path)) throw new Error('Path must start with "m" or "M"');
   if (/^[mM]'?$/.test(path)) return out;
   const parts = path.replace(/^[mM]'?\//, '').split('/');
+  // BIP32 Serialization format `* 1 byte: depth`: extended keys cap depth at
+  // 255, so deeper text paths cannot roundtrip.
+  if (parts.length > 255) throw new Error('Path depth exceeds 255');
   for (const c of parts) {
     const m = /^(\d+)('?)$/.exec(c);
     if (!m || m.length !== 3) throw new Error(`Invalid child index: ${c}`);

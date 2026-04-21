@@ -59,6 +59,34 @@ should('utils validator constructors', () => {
   throws(() => btcUtils.validatePubkey(new Uint8Array(33), 99 as any), TypeError);
 });
 
+should('reverseObject handles string values that match Object prototype names', () => {
+  deepStrictEqual({ ...btcUtils.reverseObject({ a: 'toString' }) }, { toString: 'a' });
+  deepStrictEqual({ ...btcUtils.reverseObject({ a: 'hasOwnProperty' }) }, { hasOwnProperty: 'a' });
+});
+
+should('signECDSA rejects non-32-byte hashes', () => {
+  throws(() => btcUtils.signECDSA(Uint8Array.of(1, 2, 3), btcUtils.randomPrivateKeyBytes()));
+});
+
+should('taprootTweakPrivKey rejects non-32-byte secret keys', () => {
+  const key = (len: number) => {
+    const out = new Uint8Array(len);
+    out[len - 1] = 1;
+    return out;
+  };
+  throws(() => btcUtils.taprootTweakPrivKey(key(31), new Uint8Array()));
+  throws(() => btcUtils.taprootTweakPrivKey(key(33), new Uint8Array()));
+  throws(() => btcUtils.taprootTweakPrivKey(key(1), new Uint8Array()));
+});
+
+should('taprootTweakPubkey rejects non-32-byte x-only pubkeys', () => {
+  const sk = Uint8Array.from(Array.from({ length: 32 }, (_, i) => i + 1));
+  const pub = btcUtils.pubSchnorr(sk);
+  throws(() => btcUtils.taprootTweakPubkey(Uint8Array.of(1), new Uint8Array()));
+  throws(() => btcUtils.taprootTweakPubkey(pub.slice(1), new Uint8Array()));
+  throws(() => btcUtils.taprootTweakPubkey(Uint8Array.from([0, ...pub]), new Uint8Array()));
+});
+
 should('cmpBig', () => {
   const CASES = [
     [0n, 0n, 0],
@@ -71,6 +99,9 @@ should('cmpBig', () => {
 
 should('combinations', () => {
   // Looks ok, but still have a feeling like there is off by one bug lying around.
+  throws(() => btc.combinations(0, ['A', 'B', 'C']));
+  throws(() => btc.combinations(-1, ['A', 'B', 'C']));
+  throws(() => btc.combinations(1.5, ['A', 'B', 'C']));
   // 2 elms
   deepStrictEqual(btc.combinations(1, ['A', 'B']), [['A'], ['B']]);
   deepStrictEqual(btc.combinations(2, ['A', 'B']), [['A', 'B']]);
