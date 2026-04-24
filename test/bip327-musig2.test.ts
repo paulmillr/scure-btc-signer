@@ -23,7 +23,8 @@ const assertError = (error, cb) => {
   try {
     cb();
   } catch (e) {
-    if (error.signer)
+    if (e instanceof ReferenceError) throw e;
+    if (error.type === 'invalid_contribution' && error.signer !== null)
       deepStrictEqual(e, new musig2.InvalidContributionErr(error.signer, error.contrib));
     return;
   }
@@ -400,7 +401,7 @@ describe('BIP327', () => {
       assertError(t.error, () => {
         // TODO: uses already aggregated nonce here
         const session = new musig2.Session(aggNonce, publicKeys, msg);
-        session.sign(secnonce, sk, sessionCtx);
+        session.sign(secnonce, sk);
       });
     }
     for (const t of signVerifyVectors.verify_fail_test_cases) {
