@@ -1313,6 +1313,9 @@ Bitcoin is more complex than ETH / SOL despite having less features:
 
 The library has been independently audited:
 
+- at version 2.2.0, in Apr 2026, by ourselves (self-audited)
+  - Scope: everything
+  - [Changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/2.2.0..main)
 - at version 0.3.0, in Feb 2023, by [cure53](https://cure53.de)
   - PDFs: [online](https://cure53.de/audit-report_micro-btc-signer.pdf), [offline](./audit/2023-02-21-cure53-audit-report.pdf)
   - [Changes since audit](https://github.com/paulmillr/scure-btc-signer/compare/0.3.0..main).
