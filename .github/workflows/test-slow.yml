@@ -1,4 +1,4 @@
-name: Run slow TS tests
+name: Run scheduled tests
 on:
   schedule:
     - cron: '0 20 * * 1,4' # 14:00 bi-weekly (mon, thu)
@@ -6,6 +6,6 @@ on:
 jobs:
   slow:
     name: Large multisig tests
-    uses: paulmillr/jsbt/.github/workflows/test-ts-slow.yml@857e7538fb14d48feaaa1dda889d8d4d10b9289d
+    uses: paulmillr/jsbt/.github/workflows/test-custom.yml@231cc389fe2f825b6531285ad8c275584bf76588
     with:
       npm-task: test:slow
