@@ -1080,7 +1080,7 @@ export class Transaction {
   // Based on https://github.com/bitcoin/bitcoin/blob/5871b5b5ab57a0caf9b7514eb162c491c83281d5/test/functional/test_framework/script.py#L624
   // There is optimization opportunity to re-use hashes for multiple inputs for witness v0/v1,
   // but we are trying to be less complicated for audit purpose for now.
-  private preimageLegacy(idx: number, prevOutScript: Bytes, hashType: number) {
+  preimageLegacy(idx: number, prevOutScript: Bytes, hashType: number) {
     const { isAny, isNone, isSingle } = unpackSighash(hashType);
     if (idx < 0 || !Number.isSafeInteger(idx)) throw new Error(`Invalid input idx=${idx}`);
     if ((isSingle && idx >= this.outputs.length) || idx >= this.inputs.length)
