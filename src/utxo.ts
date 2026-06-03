@@ -41,6 +41,9 @@ export type Accumulated =
 type TapLeafScript = psbt.TransactionInput['tapLeafScript'];
 type TB = Parameters<typeof psbt.TaprootControlBlock.encode>[0];
 const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
+// Be friendly to bad ECMAScript parsers by not using bigint literals.
+// prettier-ignore
+const _0n = /* @__PURE__ */ BigInt(0), _3n = /* @__PURE__ */ BigInt(3);
 
 function iterLeafs(
   tapLeafScript: TArg<TapLeafScript>,
@@ -189,8 +192,8 @@ export const _cmpBig = (a: bigint, b: bigint): 0 | 1 | -1 => {
   // Array.sort comparators must return a number, so normalize bigint comparisons to -1/0/1
   // instead of coercing large differences through Number(...) and losing ordering precision.
   const n = a - b;
-  if (n < 0n) return -1;
-  else if (n > 0n) return 1;
+  if (n < _0n) return -1;
+  else if (n > _0n) return 1;
   return 0;
 };
 
@@ -236,7 +239,7 @@ function getScript(o: TArg<Output>, opts: TArg<TxOpts> = {}, network = NETWORK) 
     );
   // Keep selector-only `createTx: false` flows aligned with the transaction/PSBT output boundary:
   // satoshi-denominated outputs are not allowed to go negative.
-  if (_o.amount < 0n) throw new Error(`Estimator: wrong output amount=${_o.amount}`);
+  if (_o.amount < _0n) throw new Error(`Estimator: wrong output amount=${_o.amount}`);
   if (script && !_opts.allowUnknownOutputs && OutScript.decode(script).type === 'unknown') {
     throw new Error(
       'Estimator: unknown output script type, there is a chance that input is unspendable. Pass allowUnknownOutputs=true, if you sure'
@@ -290,7 +293,7 @@ export class _Estimator {
       );
     // Zero-fee estimation is useful on regtest/in tests, but negative fee rates would make
     // `getSatoshi(...)` produce nonsensical negative fees throughout selection.
-    if (opts.feePerByte < 0n)
+    if (opts.feePerByte < _0n)
       throw new Error(`Estimator: feePerByte must be >= 0 satoshi per vbyte`);
     // Dust stuff
     // TODO: think about this more:
@@ -312,7 +315,7 @@ export class _Estimator {
     // 3 sat/vb is the default minimum fee rate used to calculate dust thresholds by bitcoin core.
     // 3000 sat/kvb -> 3 sat/vb.
     // https://github.com/bitcoin/bitcoin/blob/27a770b34b8f1dbb84760f442edb3e23a0c2420b/src/policy/policy.h#L55
-    const dustFee = opts.dustRelayFeeRate === undefined ? 3n : opts.dustRelayFeeRate;
+    const dustFee = opts.dustRelayFeeRate === undefined ? _3n : opts.dustRelayFeeRate;
     if (typeof dustFee !== 'bigint') {
       throw new Error(
         `Estimator: wrong dustRelayFeeRate=${opts.dustRelayFeeRate}, should be of type bigint but got ${typeof opts.dustRelayFeeRate}.`
@@ -323,7 +326,7 @@ export class _Estimator {
     if (opts.requiredInputs !== undefined && !Array.isArray(opts.requiredInputs))
       throw new Error(`Estimator: wrong required inputs=${opts.requiredInputs}`);
     const network = opts.network || NETWORK;
-    let amount = 0n;
+    let amount = _0n;
     // Base weight: tx with outputs, no inputs
     let baseWeight = 32;
     for (const o of outputs) {
@@ -441,7 +444,7 @@ export class _Estimator {
     let weight = this.opts.alwaysChange ? this.changeWeight : this.baseWeight;
     let hasWitnesses = false;
     let num = 0;
-    let inputsAmount = 0n;
+    let inputsAmount = _0n;
     const targetAmount = this.amount;
     const res: Set<number> = new Set();
     let fee;
@@ -483,7 +486,7 @@ export class _Estimator {
       // Negative: cost of using input is more than value provided (negative)
       // By default 'blackjack' mode in coinselect doesn't use that, which means
       // it will use negative output if sorted by 'smallest'
-      if (skipNegative && value <= 0n) continue;
+      if (skipNegative && value <= _0n) continue;
       weight = newWeight;
       if (estimate.hasWitnesses) hasWitnesses = true;
       num = newNum;
@@ -572,7 +575,7 @@ export class _Estimator {
     if (needChange) {
       fee = changeFee;
       // this shouldn't happen!
-      if (change < 0n) throw new Error(`Estimator.result: negative change=${change}`);
+      if (change < _0n) throw new Error(`Estimator.result: negative change=${change}`);
       outputs.push({ address: this.opts.changeAddress, amount: change });
     }
     if (this.opts.bip69) {

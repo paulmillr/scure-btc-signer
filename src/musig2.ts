@@ -1,4 +1,5 @@
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import type { WeierstrassPoint } from '@noble/curves/abstract/weierstrass.js';
 import { aInRange, concatBytes, equalBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { abytes, anumber, randomBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
@@ -32,6 +33,15 @@ export type DetNonce = {
   publicNonce: Uint8Array;
   /** Partial signature produced after combining all participant data. */
   partialSig: Uint8Array;
+};
+/** MuSig2 key aggregation context used by signing sessions. */
+export type KeyAggregate = {
+  /** Aggregate public key before x-only export. */
+  aggPublicKey: WeierstrassPoint<bigint>;
+  /** Accumulated sign from x-only tweaks. */
+  gAcc: bigint;
+  /** Accumulated tweak scalar. */
+  tweakAcc: bigint;
 };
 /**
  * Represents an error indicating an invalid contribution from a signer.
@@ -75,6 +85,9 @@ const PUBKEY_LEN = /* @__PURE__ */ (() => secp256k1.lengths.publicKey!)();
 // BIP327 uses bytes(33, 0) both as cbytes_ext(Point.ZERO) for infinity and as GetSecondKey's
 // "no second distinct key" sentinel, so this all-zero compressed slot is intentionally out-of-band.
 const ZERO = /* @__PURE__ */ new Uint8Array(PUBKEY_LEN); // Compressed zero point
+// Be friendly to bad ECMAScript parsers by not using bigint literals.
+// prettier-ignore
+const _0n = /* @__PURE__ */ BigInt(0), _1n = /* @__PURE__ */ BigInt(1);
 
 // Encoding
 // TODO: re-use in PSBT?
@@ -89,7 +102,7 @@ const compressed = /* @__PURE__ */ (() =>
 // nonzero scalars in [1, n); tweak scalars use different validation because 0 is allowed there.
 const scalar = /* @__PURE__ */ (() =>
   P.validate(P.U256BE, (n) => {
-    aInRange('n', n, 1n, Fn.ORDER);
+    aInRange('n', n, _1n, Fn.ORDER);
     return n;
   }))();
 // Shared for both per-signer pubnonce bytes and aggregate aggnonce bytes. Because it accepts
@@ -216,7 +229,7 @@ function keyAggCoeffInternal(
   // pk2 is the all-zero sentinel from GetSecondKey, so every real signer key still hashes.
   abytes(publicKey1, PUBKEY_LEN);
   abytes(publicKey2, PUBKEY_LEN);
-  if (equalBytes(publicKey1, publicKey2)) return 1n;
+  if (equalBytes(publicKey1, publicKey2)) return _1n;
   return taggedInt('KeyAgg coefficient', L, publicKey1);
 }
 
@@ -248,7 +261,7 @@ export function keyAggregate(
   publicKeys: TArg<Uint8Array[]>,
   tweaks: TArg<Uint8Array[]> = [],
   isXonly: boolean[] = []
-) {
+): KeyAggregate {
   // BIP327 KeyAgg inputs require `0 < u < 2^32`, and ApplyTweak consumes a one-for-one
   // list of boolean tweak modes; callers should enforce that public contract here.
   abytesArray(publicKeys, PUBKEY_LEN);
@@ -559,7 +572,7 @@ export class Session {
     const Re_s = hasEven(R.y) ? Re_s_ : Re_s_.negate();
     const P = Point.fromBytes(publicKey);
     const a = this.getSessionKeyAggCoeff(P);
-    const g = Fn.mul(evenScalar(Q, 1n), gAcc);
+    const g = Fn.mul(evenScalar(Q, _1n), gAcc);
     const left = Point.BASE.multiplyUnsafe(s);
     const right = Re_s.add(P.multiply(Fn.mul(e, Fn.mul(a, g))));
     return left.equals(right);
@@ -596,7 +609,7 @@ export class Session {
     const pk = P.toBytes(true);
     if (!equalBytes(pk, originalPk)) throw new Error('Public key does not match nonceGen argument');
     const a = this.getSessionKeyAggCoeff(P);
-    const g = evenScalar(Q, 1n);
+    const g = evenScalar(Q, _1n);
     const d = Fn.mul(g, Fn.mul(gAcc, d_));
     /// k1 + (b*k2) + (e*a*d)
     const s = Fn.add(k1, Fn.add(Fn.mul(b, k2), Fn.mul(e, Fn.mul(a, d))));
@@ -654,13 +667,13 @@ export class Session {
     // [] is not a valid aggregate-signature input even though the sum starts from zero.
     if (partialSigs.length < 1) throw new RangeError('partialSigs.length must be >= 1');
     const { Q, tweakAcc, R, e } = this;
-    let s = 0n;
+    let s = _0n;
     for (let i = 0; i < partialSigs.length; i++) {
       const si = Fn.fromBytes(partialSigs[i], true);
       if (!Fn.isValid(si)) throw new InvalidContributionErr(i, 'psig');
       s = Fn.add(s, si);
     }
-    const g = evenScalar(Q, 1n);
+    const g = evenScalar(Q, _1n);
     s = Fn.add(s, Fn.mul(e, Fn.mul(g, tweakAcc))); // s + e * g * tweakAcc
     return concatBytes(pointToBytes(R), Fn.toBytes(s)) as TRet<Uint8Array>;
   }

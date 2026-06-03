@@ -25,9 +25,13 @@ import {
   type TRet,
 } from './utils.ts';
 
+// Be friendly to bad ECMAScript parsers by not using bigint literals.
+// prettier-ignore
+const _0n = /* @__PURE__ */ BigInt(0), _1n = /* @__PURE__ */ BigInt(1);
+const U64_MAX = /* @__PURE__ */ BigInt('0xffffffffffffffff');
 const EMPTY32: Uint8Array = /* @__PURE__ */ new Uint8Array(32);
 const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
-  amount: 0xffffffffffffffffn,
+  amount: U64_MAX,
   script: P.EMPTY,
 };
 /**
@@ -1065,7 +1069,7 @@ export class Transaction {
   }
   // Utils
   get fee(): bigint {
-    let res = 0n;
+    let res = _0n;
     for (const i of this.inputs) {
       const prevOut = getPrevOut(i);
       if (!prevOut) throw new Error('Empty input amount');
@@ -1084,7 +1088,7 @@ export class Transaction {
     const { isAny, isNone, isSingle } = unpackSighash(hashType);
     if (idx < 0 || !Number.isSafeInteger(idx)) throw new Error(`Invalid input idx=${idx}`);
     if ((isSingle && idx >= this.outputs.length) || idx >= this.inputs.length)
-      return P.U256BE.encode(1n);
+      return P.U256BE.encode(_1n);
     prevOutScript = stripCodeSeparator(prevOutScript);
     let inputs: TransactionInputRequired[] = this.inputs
       .map(inputBeforeSign)
@@ -1438,7 +1442,7 @@ export class Transaction {
 
   finalizeIdx(idx: number): void {
     this.checkInputIdx(idx);
-    if (this.fee < 0n) throw new Error('Outputs spends more than inputs amount');
+    if (this.fee < _0n) throw new Error('Outputs spends more than inputs amount');
     const input = this.inputs[idx];
     const inputType = getInputType(input, this.opts.allowLegacyWitnessUtxo);
     // Taproot finalize
@@ -1592,7 +1596,7 @@ export class Transaction {
   extract(): Uint8Array {
     if (!this.isFinal) throw new Error('Transaction has unfinalized inputs');
     if (!this.outputs.length) throw new Error('Transaction has no outputs');
-    if (this.fee < 0n) throw new Error('Outputs spends more than inputs amount');
+    if (this.fee < _0n) throw new Error('Outputs spends more than inputs amount');
     return this.toBytes(true, true);
   }
   combine(other: Transaction): this {

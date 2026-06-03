@@ -4,6 +4,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./musig2.js": "./src/musig2.ts",
+    "./net.js": "./src/net.ts",
     "./p2p.js": "./src/p2p.ts",
     "./payment.js": "./src/payment.ts",
     "./psbt.js": "./src/psbt.ts",

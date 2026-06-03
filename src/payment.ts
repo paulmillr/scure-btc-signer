@@ -408,7 +408,8 @@ export const OutScript: TRet<
 export type OutScriptType = typeof OutScript;
 // TRet-wrapping OutScript changes decode() to the normalized descriptor surface, but the local
 // checkScript/Address caches still need an explicit alias that can carry the decode-side `undefined`.
-type OutScriptValue = ReturnType<OutScriptType['decode']> | undefined;
+type AddressValue = NonNullable<ReturnType<OutScriptType['decode']>>;
+type OutScriptValue = AddressValue | undefined;
 
 // Basic sanity check for scripts
 function checkWSH(s: TArg<OutWSHType>, witnessScript: TArg<Bytes>) {
@@ -1429,9 +1430,9 @@ export function WIF(network: BTC_NETWORK = NETWORK): TRet<Coder<Bytes, string>> 
  * coder.encode(p2wpkh(pubECDSA(randomPrivateKeyBytes())));
  * ```
  */
-export function Address(network: BTC_NETWORK = NETWORK) {
+export function Address(network: BTC_NETWORK = NETWORK): TRet<P.Coder<AddressValue, string>> {
   return {
-    encode(from: Exclude<OutScriptValue, undefined>): string {
+    encode(from: TArg<AddressValue>): string {
       const { type } = from;
       if (type === 'wpkh') return programToWitness(0, from.hash, network);
       else if (type === 'wsh') return programToWitness(0, from.hash, network);
@@ -1440,7 +1441,7 @@ export function Address(network: BTC_NETWORK = NETWORK) {
       else if (type === 'sh') return formatKey(from.hash, [network.scriptHash]);
       throw new Error(`Unknown address type=${type}`);
     },
-    decode(address: string): OutScriptValue {
+    decode(address: string): TRet<AddressValue> {
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
       // Bech32
       if (network.bech32 && address.toLowerCase().startsWith(`${network.bech32}1`)) {
@@ -1458,11 +1459,11 @@ export function Address(network: BTC_NETWORK = NETWORK) {
         const data = bech32.fromWords(program);
         validateWitness(version, data);
         if (version === 0 && data.length === 32)
-          return { type: 'wsh', hash: data } as OutScriptValue;
+          return { type: 'wsh', hash: data } as TRet<AddressValue>;
         else if (version === 0 && data.length === 20)
-          return { type: 'wpkh', hash: data } as OutScriptValue;
+          return { type: 'wpkh', hash: data } as TRet<AddressValue>;
         else if (version === 1 && data.length === 32)
-          return { type: 'tr', pubkey: data } as OutScriptValue;
+          return { type: 'tr', pubkey: data } as TRet<AddressValue>;
         // Future witness versions can still be valid addresses, but this helper
         // only returns typed descriptors for recognized v0 and taproot templates.
         else throw new Error('Unknown witness program');
@@ -1471,12 +1472,12 @@ export function Address(network: BTC_NETWORK = NETWORK) {
       if (data.length !== 21) throw new Error('Invalid base58 address');
       // Pay To Public Key Hash
       if (data[0] === network.pubKeyHash) {
-        return { type: 'pkh', hash: data.slice(1) } as OutScriptValue;
+        return { type: 'pkh', hash: data.slice(1) } as TRet<AddressValue>;
       } else if (data[0] === network.scriptHash) {
         return {
           type: 'sh',
           hash: data.slice(1),
-        } as OutScriptValue;
+        } as TRet<AddressValue>;
       }
       throw new Error(`Invalid address prefix=${data[0]}`);
     },

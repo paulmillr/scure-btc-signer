@@ -21,6 +21,10 @@ import {
 
 // PSBT BIP174, BIP370, BIP371
 
+// Be friendly to bad ECMAScript parsers by not using bigint literals.
+// prettier-ignore
+const _0n = /* @__PURE__ */ BigInt(0), _1n = /* @__PURE__ */ BigInt(1);
+
 // BIP174 keydata only says "public key", so legacy PSBT ECDSA fields still accept both
 // compressed (33-byte) and uncompressed (65-byte) SEC1 encodings, but not x-only keys.
 const PubKeyECDSA: P.CoderType<Bytes> = /* @__PURE__ */ (() =>
@@ -157,9 +161,9 @@ const tapTree = /* @__PURE__ */ (() =>
         while (next.length < depth) next.push(0);
         path = next;
       }
-      let leaves = 0n;
-      for (let i = 0; i < tree.length; i++) leaves += 1n << BigInt(maxDepth - tree[i].depth);
-      if (leaves !== 1n << BigInt(maxDepth))
+      let leaves = _0n;
+      for (let i = 0; i < tree.length; i++) leaves += _1n << BigInt(maxDepth - tree[i].depth);
+      if (leaves !== _1n << BigInt(maxDepth))
         throw new Error('tapTree: tuples must describe a complete binary tree');
       return tree;
     }
@@ -593,7 +597,7 @@ export const PSBTOutputCoder = /* @__PURE__ */ (() =>
       // in the field coder itself because BIP371 constrains the tuple value, not just the row shape.
       // BIP174/BIP370 define PSBT_OUT_AMOUNT as a signed int64 transport field, but it still
       // represents the transaction output amount in satoshis, so negative output values are invalid.
-      if (o.amount !== undefined && o.amount < 0n)
+      if (o.amount !== undefined && o.amount < _0n)
         throw new Error(`validateOutput: wrong amount=${o.amount}`);
       if (o.bip32Derivation) for (const [k] of o.bip32Derivation) validatePubkey(k, PubT.ecdsa);
       return o;
@@ -747,7 +751,7 @@ export function cleanPSBTFields<T extends PSBTKeyMap>(
   return out as TRet<PSBTKeyMapKeys<T>>;
 }
 
-function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>) {
+function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>): P.UnwrapCoder<PSBTRaw> {
   const version = (tx && tx.global && tx.global.version) || 0;
   validatePSBTFields(version, PSBTGlobal, tx.global);
   for (const i of tx.inputs) validatePSBTFields(version, PSBTInput, i);

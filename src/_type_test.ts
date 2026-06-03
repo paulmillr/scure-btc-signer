@@ -50,7 +50,7 @@ tx.addInput({
 //   nonWitnessUtxo: 1,
 // });
 // Outputs
-tx.addOutput({ amount: 123n });
+tx.addOutput({ amount: BigInt(123) });
 // should fail
 // tx.updateOutput(0, { amount: '1' });
 // tx.updateOutput(0, { amount: 1 });

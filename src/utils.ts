@@ -14,6 +14,9 @@ export type Bytes = Uint8Array;
 const Point = /* @__PURE__ */ (() => secp.Point)();
 const Fn = /* @__PURE__ */ (() => Point.Fn)();
 const CURVE_ORDER = /* @__PURE__ */ (() => Point.Fn.ORDER)();
+// Be friendly to bad ECMAScript parsers by not using bigint literals.
+// prettier-ignore
+const _0n = /* @__PURE__ */ BigInt(0), _2n = /* @__PURE__ */ BigInt(2);
 /**
  * Checks whether a curve y-coordinate is even.
  * @param y - y-coordinate to inspect
@@ -24,7 +27,7 @@ const CURVE_ORDER = /* @__PURE__ */ (() => Point.Fn.ORDER)();
  * hasEven(2n);
  * ```
  */
-export const hasEven = (y: bigint) => y % 2n === 0n;
+export const hasEven = (y: bigint) => y % _2n === _0n;
 
 /**
  * Checks whether a value is a Uint8Array.
@@ -144,7 +147,7 @@ export const pubECDSA = (privateKey: TArg<Uint8Array>, isCompressed?: boolean): 
 // noble/secp256k1 does not support the feature: it is not used outside of BTC.
 // We implement it manually, because in BTC it's common.
 // Not best way, but closest to bitcoin implementation (easier to check)
-const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < CURVE_ORDER / 2n;
+const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < CURVE_ORDER / _2n;
 /**
  * Signs a 32-byte hash with ECDSA and returns DER encoding.
  * @param hash - message hash to sign

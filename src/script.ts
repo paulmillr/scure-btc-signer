@@ -1,5 +1,5 @@
 import * as P from 'micro-packed';
-import { isBytes, reverseObject, type ValueOf, type Bytes, type TArg, type TRet } from './utils.ts';
+import { isBytes, reverseObject, type Bytes, type TArg, type TRet, type ValueOf } from './utils.ts';
 
 /**
  * Maximum byte size allowed for a single pushed script element.
@@ -7,6 +7,12 @@ import { isBytes, reverseObject, type ValueOf, type Bytes, type TArg, type TRet 
  * the old 10,000-byte overall script-size cap.
  */
 export const MAX_SCRIPT_BYTE_LENGTH = 520;
+
+// Be friendly to bad ECMAScript parsers by not using bigint literals.
+// prettier-ignore
+const _0n = /* @__PURE__ */ BigInt(0), _1n = /* @__PURE__ */ BigInt(1), _2n = /* @__PURE__ */ BigInt(2), _8n = /* @__PURE__ */ BigInt(8);
+const U8_MAX = /* @__PURE__ */ BigInt(0xff);
+const COMPACT_DIRECT_MAX = /* @__PURE__ */ BigInt(0xfc);
 
 // prettier-ignore
 /**
@@ -87,11 +93,11 @@ export type ScriptType = ScriptOP[];
 export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<bigint> {
   return P.wrap({
     encodeStream: (w: P.Writer, value: bigint) => {
-      if (value === 0n) return;
+      if (value === _0n) return;
       const neg = value < 0;
       const val = BigInt(value);
       const nums = [];
-      for (let abs = neg ? -val : val; abs; abs >>= 8n) nums.push(Number(abs & 0xffn));
+      for (let abs = neg ? -val : val; abs; abs >>= _8n) nums.push(Number(abs & U8_MAX));
       if (nums[nums.length - 1] >= 0x80) nums.push(neg ? 0x80 : 0);
       else if (neg) nums[nums.length - 1] |= 0x80;
       w.bytes(new Uint8Array(nums));
@@ -100,7 +106,7 @@ export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<big
       const len = r.leftBytes;
       if (len > bytesLimit)
         throw new Error(`ScriptNum: number (${len}) bigger than limit=${bytesLimit}`);
-      if (len === 0) return 0n;
+      if (len === 0) return _0n;
       if (forceMinimal) {
         const data = r.bytes(len, true);
         // MSB is zero (without sign bit) -> not minimally encoded
@@ -111,13 +117,13 @@ export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<big
         }
       }
       let last = 0;
-      let res = 0n;
+      let res = _0n;
       for (let i = 0; i < len; ++i) {
         last = r.byte();
-        res |= BigInt(last) << (8n * BigInt(i));
+        res |= BigInt(last) << (_8n * BigInt(i));
       }
       if (last >= 0x80) {
-        res &= (2n ** BigInt(len * 8) - 1n) >> 1n;
+        res &= (_2n ** BigInt(len * 8) - _1n) >> _1n;
         res = -res;
       }
       return res;
@@ -267,13 +273,6 @@ export const Script: TRet<P.CoderType<ScriptType>> = /* @__PURE__ */ (() =>
     })
   ))() as TRet<P.CoderType<ScriptType>>;
 
-// BTC specific variable length integer encoding
-// https://en.bitcoin.it/wiki/Protocol_documentation#Variable_length_integer
-const CSLimits: Record<number, [number, number, bigint, bigint]> = {
-  0xfd: [0xfd, 2, 253n, 65535n],
-  0xfe: [0xfe, 4, 65536n, 4294967295n],
-  0xff: [0xff, 8, 4294967296n, 18446744073709551615n],
-};
 /**
  * Bitcoin CompactSize integer coder.
  * @example
@@ -282,16 +281,28 @@ const CSLimits: Record<number, [number, number, bigint, bigint]> = {
  * CompactSize.encode(1n);
  * ```
  */
-export const CompactSize: P.CoderType<bigint> = /* @__PURE__ */ (() =>
-  Object.freeze(
+export const CompactSize: P.CoderType<bigint> = /* @__PURE__ */ (() => {
+  // BTC specific variable length integer encoding
+  // https://en.bitcoin.it/wiki/Protocol_documentation#Variable_length_integer
+  const limits: Record<number, [number, number, bigint, bigint]> = {
+    0xfd: [0xfd, 2, BigInt(0xfd), BigInt(0xffff)],
+    0xfe: [0xfe, 4, BigInt(0x10000), BigInt(0xffffffff)],
+    0xff: [
+      0xff,
+      8,
+      BigInt(0x100000000),
+      BigInt('0xffffffffffffffff'),
+    ],
+  };
+  return Object.freeze(
     P.wrap({
       encodeStream: (w: P.Writer, value: bigint) => {
         if (typeof value === 'number') value = BigInt(value);
-        if (0n <= value && value <= 252n) return w.byte(Number(value));
-        for (const [flag, bytes, start, stop] of Object.values(CSLimits)) {
+        if (_0n <= value && value <= COMPACT_DIRECT_MAX) return w.byte(Number(value));
+        for (const [flag, bytes, start, stop] of Object.values(limits)) {
           if (start > value || value > stop) continue;
           w.byte(flag);
-          for (let i = 0; i < bytes; i++) w.byte(Number((value >> (8n * BigInt(i))) & 0xffn));
+          for (let i = 0; i < bytes; i++) w.byte(Number((value >> (_8n * BigInt(i))) & U8_MAX));
           return;
         }
         throw w.err(`VarInt too big: ${value}`);
@@ -299,16 +310,17 @@ export const CompactSize: P.CoderType<bigint> = /* @__PURE__ */ (() =>
       decodeStream: (r: P.Reader): bigint => {
         const b0 = r.byte();
         if (b0 <= 0xfc) return BigInt(b0);
-        const [_, bytes, start] = CSLimits[b0];
-        let num = 0n;
-        for (let i = 0; i < bytes; i++) num |= BigInt(r.byte()) << (8n * BigInt(i));
+        const [_, bytes, start] = limits[b0];
+        let num = _0n;
+        for (let i = 0; i < bytes; i++) num |= BigInt(r.byte()) << (_8n * BigInt(i));
         // BIP 152 / BIP 174: CompactSize fields must use the shortest encoding,
         // so wider prefixes for smaller values are rejected here.
         if (num < start) throw r.err(`Wrong CompactSize(${8 * bytes})`);
         return num;
       },
     })
-  ))();
+  );
+})();
 
 // Same thing, but in number instead of bigint. Checks for safe integer inside
 /**
