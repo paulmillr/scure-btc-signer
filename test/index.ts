@@ -14,6 +14,7 @@ import './bip340-schnorr.test.ts';
 import './bip174-psbt-extended.test.ts';
 import './bip327-musig2.test.ts';
 import './bip341-taproot.test.ts';
+import './net.test.ts';
 import './taproot-multisig.test.ts';
 import './utxo-select.test.ts';
 

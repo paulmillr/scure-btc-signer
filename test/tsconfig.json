@@ -7,7 +7,7 @@
   "include": [
     "../src",
     "./*.ts"
-  ],
+, "benchmark/network.ts", "misc/proxy.ts"  ],
   "exclude": [
     "node_modules"
   ]

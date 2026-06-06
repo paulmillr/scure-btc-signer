@@ -4,7 +4,7 @@ Audited & minimal library for creating, signing & decoding Bitcoin transactions.
 
 - 🔒 [**Audited**](#security) by an independent security firm
 - ✍️ Create transactions, inputs, outputs, sign them
-- 📡 No network code: simplified audits and offline usage
+- 📡 Optional network helper; core signer works offline
 - 🔀 UTXO selection with different strategies
 - 🎻 Classic & SegWit: P2PK, P2PKH, P2WPKH, P2SH, P2WSH, P2MS
 - 🧪 Schnorr & Taproot BIP340/BIP341: P2TR, P2TR-NS, P2TR-MS
@@ -69,6 +69,7 @@ import * as btc from '@scure/btc-signer';
   - [Basic transaction sign](#basic-transaction-sign)
   - [BIP174 PSBT multi-sig example](#bip174-psbt-multi-sig-example)
 - [UTXO selection](#utxo-selection)
+- [Network](#network)
 - [MuSig2](#musig2)
 - [P2P, ElligatorSwift, BIP324](#p2p-elligatorswift-bip324)
 - [Ordinals and custom scripts](#ordinals-and-custom-scripts)
@@ -519,27 +520,27 @@ type DerivationPath = { fingerprint: number; path: number[] };
 type TapScriptSigKey = { pubKey: Bytes; leafHash: Bytes };
 type TapLeafScriptKey = { version: number; internalKey: Bytes; merklePath: Bytes[] };
 type TransactionInput = {
-  txid?: Bytes,
-  index?: number,
-  nonWitnessUtxo?: RawTransactionBytesOrHex,
-  witnessUtxo?: { script?: Bytes; amount: bigint },
+  txid?: Bytes;
+  index?: number;
+  nonWitnessUtxo?: RawTransactionBytesOrHex;
+  witnessUtxo?: { script?: Bytes; amount: bigint };
   partialSig?: [Bytes, Bytes][]; // [PubKey, Signature]
-  sighashType?: number,
-  redeemScript?: Bytes,
-  witnessScript?: Bytes,
+  sighashType?: number;
+  redeemScript?: Bytes;
+  witnessScript?: Bytes;
   bip32Derivation?: [Bytes, DerivationPath | undefined][]; // [PubKey, DeriviationPath]
-  finalScriptSig?: Bytes,
-  finalScriptWitness?: Bytes[],
-  porCommitment?: Bytes,
-  sequence?: number,
-  requiredTimeLocktime?: number,
-  requiredHeightLocktime?: number,
-  tapKeySig?: Bytes,
+  finalScriptSig?: Bytes;
+  finalScriptWitness?: Bytes[];
+  porCommitment?: Bytes;
+  sequence?: number;
+  requiredTimeLocktime?: number;
+  requiredHeightLocktime?: number;
+  tapKeySig?: Bytes;
   tapScriptSig?: [TapScriptSigKey, Bytes][]; // [PubKeySchnorr, LeafHash]
   // [ControlBlock, ScriptWithVersion]
   tapLeafScript?: [TapLeafScriptKey, Bytes][];
-  tapInternalKey?: Bytes,
-  tapMerkleRoot?: Bytes,
+  tapInternalKey?: Bytes;
+  tapMerkleRoot?: Bytes;
 };
 
 // tx.addInput(input: TransactionInput): number;
@@ -632,12 +633,12 @@ const tx = new btc.Transaction();
 type Bytes = Uint8Array | string;
 type DerivationPath = { fingerprint: number; path: number[] };
 type TransactionOutput = {
-  script?: Bytes,
-  amount?: bigint,
-  redeemScript?: Bytes,
-  witnessScript?: Bytes,
+  script?: Bytes;
+  amount?: bigint;
+  redeemScript?: Bytes;
+  witnessScript?: Bytes;
   bip32Derivation?: [Bytes, DerivationPath | undefined][]; // [PubKey, DeriviationPath]
-  tapInternalKey?: Bytes,
+  tapInternalKey?: Bytes;
 };
 
 // tx.addOutput(o: TransactionOutput): number;
@@ -1023,6 +1024,72 @@ tx.finalize();
 deepStrictEqual(tx.id, 'b702078d65edd65a84b2a97a669df5631b06f42a67b0d7090e540b02cc65aed5');
 // real tx fee, can be bigger than estimated, since we expect signatures of maximal size
 deepStrictEqual(tx.fee, 394n);
+```
+
+## Network
+
+Bitcoin nodes can't be used as source-of-truth to construct transactions & get UTXOs.
+An extra indexer is required. Our `net.js` submodule allows to easily fetch UTXOs,
+balances, and other data for an address.
+See [README-fullnode.md](./README-fullnode.md) for details and
+guide on running a full node with an indexer.
+
+```ts
+import * as btc from '@scure/btc-signer';
+import { EsploraProvider } from '@scure/btc-signer/net.js';
+import { pubECDSA } from '@scure/btc-signer/utils.js';
+const net = new EsploraProvider(fetch, 'http://127.0.0.1:3000');
+// Methods: `height`, `blockInfo`, `fee`, `balance`, `txCount`, `sendTx`, `txInfo`, `unspent`, `transfers`.
+
+// Get latest block.
+async function latestBlock() {
+  const height = await net.height();
+  const block = await net.blockInfo(height);
+  return { number: block.number, hash: block.hash, timestamp: new Date(block.timestamp) };
+}
+
+// Get per-address transaction history.
+async function addressTransactions(address: string) {
+  const txs = await net.transfers(address, { limit: 10 });
+  return txs.map((tx) => ({ txid: tx.txid, block: tx.block, fee: tx.info.fee }));
+}
+
+// Get UTXOs, select inputs, and sign. Call with a key that controls funded UTXOs.
+async function signSpend(privKey: Uint8Array, to: string, amount: bigint) {
+  const spend = btc.p2wpkh(pubECDSA(privKey));
+  const unspent = await net.unspent(spend.address!);
+  const feePerByte = await net.fee(2);
+  const selected = btc.selectUTXO(unspent.utxo, [{ address: to, amount }], 'default', {
+    feePerByte,
+    changeAddress: spend.address!,
+  });
+  if (!selected) throw new Error(`not enough funds for ${spend.address}`);
+  const { tx } = selected;
+  tx.sign(privKey);
+  tx.finalize();
+  return { txid: tx.id, raw: tx.hex };
+}
+
+// For wrapped or script spends, add caller-owned metadata before selection:
+// const wrapped = btc.p2sh(btc.p2wpkh(pubECDSA(privKey)));
+// const base = await net.unspent(wrapped.address!);
+// const utxo = base.utxo.map((u) => ({ ...u, redeemScript: wrapped.redeemScript }));
+// const selected = btc.selectUTXO(utxo, outputs, 'default', opts);
+```
+
+First argument is `fetch` API-compatible transport.
+We suggest using `micro-ftch` package - a wrapper, which supports kill-switch,
+logging, timeouts, concurrency limits, replay fixtures, and other useful network controls:
+
+```ts
+import { ftch } from 'micro-ftch';
+let NETWORK_ENABLED = true;
+const fetcher = ftch(fetch, {
+  isValidRequest: () => NETWORK_ENABLED,
+  timeout: 10_000,
+  concurrencyLimit: 4,
+});
+const net = new EsploraProvider(fetcher, 'http://127.0.0.1:3000')
 ```
 
 ## MuSig2
