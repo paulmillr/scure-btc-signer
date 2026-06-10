@@ -4,6 +4,7 @@ import { ripemd160 } from '@noble/hashes/legacy.js';
 import { sha256 as nobleSha256 } from '@noble/hashes/sha2.js';
 import { type TArg, type TRet } from '@noble/hashes/utils.js';
 import { utils as packedUtils, U32LE } from 'micro-packed';
+export { abytes, validateObject as vld } from '@noble/curves/utils.js';
 export { type TArg, type TRet } from '@noble/hashes/utils.js';
 
 /** Hex-like input accepted by helpers in this module. */
@@ -11,6 +12,66 @@ export type Hex = string | Uint8Array;
 /** Byte array alias used across the library. */
 export type Bytes = Uint8Array;
 
+/**
+ * Validates that a value is a non-negative bigint.
+ * @param n - Value to validate.
+ * @param title - Label included in thrown errors.
+ * @returns The same bigint.
+ * @throws On wrong argument types. {@link TypeError}
+ * @example
+ * Validate a satoshi amount before transaction encoding.
+ * ```ts
+ * abigint(1n, 'amount');
+ * ```
+ */
+export function abigint(n: unknown, title: string = 'value'): bigint {
+  if (typeof n !== 'bigint')
+    throw new TypeError(`"${title}" expected bigint, got type=${typeof n}`);
+  if (n < _0n) throw new RangeError(`"${title}" expected non-negative bigint, got ${n}`);
+  return n;
+}
+
+
+import { validateObject as vld } from '@noble/curves/utils.js';
+
+export function aarray<T>(
+  item: unknown,
+  title: string,
+  inner: (elm: T, title: string) => void = () => {}
+): T[] {
+  if (!Array.isArray(item))
+    throw new TypeError(`"${title}" expected array, got type=${typeof item}`);
+  for (let i = 0; i < item.length; i++) inner(item[i], `${title}[${i}]`);
+  return item;
+}
+/**
+ * Asserts something is a string.
+ * @param value - Value to validate.
+ * @param title - Label included in thrown errors.
+ * @returns The validated string.
+ * @throws On wrong argument types. {@link TypeError}
+ * @example
+ * Validate a label string.
+ *
+ * ```ts
+ * astring('example', 'label');
+ * ```
+ */
+export function astring(value: unknown, title: string = ''): string {
+  if (typeof value !== 'string') {
+    const prefix = title && `"${title}" `;
+    throw new TypeError(prefix + 'expected string, got type=' + typeof value);
+  }
+  return value;
+}
+export function validateObject(
+  object: Record<string, any>,
+  fields: Record<string, string> = {},
+  optFields: Record<string, string> = {},
+  _title = 'object'
+) {
+  return vld(object, fields, optFields);
+}
 const Point = /* @__PURE__ */ (() => secp.Point)();
 const Fn = /* @__PURE__ */ (() => Point.Fn)();
 const CURVE_ORDER = /* @__PURE__ */ (() => Point.Fn.ORDER)();

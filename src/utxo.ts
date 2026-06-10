@@ -14,6 +14,9 @@ import {
   toVsize,
 } from './transaction.ts';
 import {
+  abigint,
+  aarray,
+  astring,
   type Bytes,
   NETWORK,
   PubT,
@@ -24,6 +27,7 @@ import {
   isBytes,
   sha256,
   validatePubkey,
+  validateObject,
 } from './utils.ts';
 
 // UTXO Select
@@ -215,6 +219,7 @@ export type EstimatorOpts = TxOpts & {
 };
 
 function getScript(o: TArg<Output>, opts: TArg<TxOpts> = {}, network = NETWORK) {
+  validateObject(o as Record<string, any>, {}, {}, 'output');
   const _o = o as Output;
   const _opts = opts as TxOpts;
   let script;
@@ -222,8 +227,7 @@ function getScript(o: TArg<Output>, opts: TArg<TxOpts> = {}, network = NETWORK) 
     script = _o.script;
   }
   if ('address' in _o) {
-    if (typeof _o.address !== 'string')
-      throw new Error(`Estimator: wrong output address=${_o.address}`);
+    astring(_o.address, 'output.address');
     // Address.decode() only yields known descriptors for valid output addresses, but the wrapped
     // coder type still includes `undefined`, so narrow before re-encoding the script template.
     script = OutScript.encode(
@@ -231,15 +235,9 @@ function getScript(o: TArg<Output>, opts: TArg<TxOpts> = {}, network = NETWORK) 
     );
   }
   if (!script) throw new Error('Estimator: wrong output script');
-  if (typeof _o.amount !== 'bigint')
-    throw new Error(
-      `Estimator: wrong output amount=${
-        _o.amount
-      }, should be of type bigint but got ${typeof _o.amount}.`
-    );
   // Keep selector-only `createTx: false` flows aligned with the transaction/PSBT output boundary:
   // satoshi-denominated outputs are not allowed to go negative.
-  if (_o.amount < _0n) throw new Error(`Estimator: wrong output amount=${_o.amount}`);
+  abigint(_o.amount, 'output.amount');
   if (script && !_opts.allowUnknownOutputs && OutScript.decode(script).type === 'unknown') {
     throw new Error(
       'Estimator: unknown output script type, there is a chance that input is unspendable. Pass allowUnknownOutputs=true, if you sure'
@@ -285,16 +283,9 @@ export class _Estimator {
   constructor(inputs: psbt.TransactionInputUpdate[], outputs: Output[], opts: EstimatorOpts) {
     this.outputs = outputs;
     this.opts = opts;
-    if (typeof opts.feePerByte !== 'bigint')
-      throw new Error(
-        `Estimator: wrong feePerByte=${
-          opts.feePerByte
-        }, should be of type bigint but got ${typeof opts.feePerByte}.`
-      );
     // Zero-fee estimation is useful on regtest/in tests, but negative fee rates would make
     // `getSatoshi(...)` produce nonsensical negative fees throughout selection.
-    if (opts.feePerByte < _0n)
-      throw new Error(`Estimator: feePerByte must be >= 0 satoshi per vbyte`);
+    abigint(opts.feePerByte, 'opts.feePerByte');
     // Dust stuff
     // TODO: think about this more:
     // - current dust filters tx which cannot be relayed by core
@@ -307,20 +298,12 @@ export class _Estimator {
     const inputsDust = 32 + 4 + 1 + 107 + 4; // NOTE: can be smaller for segwit tx?
     const outputDust = 34; // NOTE: 'nSize = GetSerializeSize(txout)'
     const dustBytes = opts.dust === undefined ? BigInt(inputsDust + outputDust) : opts.dust;
-    if (typeof dustBytes !== 'bigint') {
-      throw new Error(
-        `Estimator: wrong dust=${opts.dust}, should be of type bigint but got ${typeof opts.dust}.`
-      );
-    }
+    abigint(dustBytes, 'opts.dust');
     // 3 sat/vb is the default minimum fee rate used to calculate dust thresholds by bitcoin core.
     // 3000 sat/kvb -> 3 sat/vb.
     // https://github.com/bitcoin/bitcoin/blob/27a770b34b8f1dbb84760f442edb3e23a0c2420b/src/policy/policy.h#L55
     const dustFee = opts.dustRelayFeeRate === undefined ? _3n : opts.dustRelayFeeRate;
-    if (typeof dustFee !== 'bigint') {
-      throw new Error(
-        `Estimator: wrong dustRelayFeeRate=${opts.dustRelayFeeRate}, should be of type bigint but got ${typeof opts.dustRelayFeeRate}.`
-      );
-    }
+    abigint(dustFee, 'opts.dustRelayFeeRate');
     // Dust uses feePerbyte by default, but we allow separate dust fee if needed
     this.dust = dustBytes * dustFee;
     if (opts.requiredInputs !== undefined && !Array.isArray(opts.requiredInputs))
@@ -334,8 +317,7 @@ export class _Estimator {
       baseWeight += 32 + 4 * VarBytes.encode(script).length;
       amount += o.amount;
     }
-    if (typeof opts.changeAddress !== 'string')
-      throw new Error(`Estimator: wrong change address=${opts.changeAddress}`);
+    astring(opts.changeAddress, 'opts.changeAddress');
     let changeWeight =
       baseWeight +
       32 +
@@ -637,6 +619,10 @@ export function selectUTXO(
   strategy: SelectionStrategy,
   opts: TArg<EstimatorOpts>
 ) {
+  aarray(inputs, 'inputs');
+  aarray(outputs, 'outputs');
+  validateObject(opts as Record<string, any>, {}, {}, 'opts');
+  astring(strategy, 'strategy');
   // Public wrapper defaults to BIP69 ordering and tx construction unless callers override them.
   const _opts = { createTx: true, bip69: true, ...(opts as EstimatorOpts) };
   const est = new _Estimator(inputs as psbt.TransactionInputUpdate[], outputs as Output[], _opts);

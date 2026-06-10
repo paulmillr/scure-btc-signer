@@ -1,4 +1,5 @@
 import { hex } from '@scure/base';
+import { anumber } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import {
   CompactSize,
@@ -10,12 +11,14 @@ import {
   VarBytes,
 } from './script.ts';
 import {
+  aarray,
   type Bytes,
   compareBytes,
   equalBytes,
   PubT,
   type TArg,
   type TRet,
+  validateObject,
   validatePubkey,
 } from './utils.ts';
 
@@ -730,6 +733,9 @@ export function cleanPSBTFields<T extends PSBTKeyMap>(
   info: T,
   lst: TArg<PSBTKeyMapKeys<T>>
 ): TRet<PSBTKeyMapKeys<T>> {
+  anumber(version, 'version');
+  validateObject(info as Record<string, any>, {}, {}, 'info');
+  validateObject(lst as Record<string, any>, {}, {}, 'lst');
   const _lst = lst as PSBTKeyMapKeys<T>;
   const out: PSBTKeyMapKeys<T> = {};
   for (const _k in _lst) {
@@ -807,6 +813,10 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
   allowedFields?: TArg<readonly (keyof PSBTKeyMapKeys<T>)[]>,
   allowUnknown?: boolean
 ): TRet<PSBTKeyMapKeys<T>> {
+  validateObject(psbtEnum as Record<string, any>, {}, {}, 'psbtEnum');
+  validateObject(val as Record<string, any>, {}, {}, 'val');
+  if (cur !== undefined) validateObject(cur as Record<string, any>, {}, {}, 'cur');
+  if (allowedFields !== undefined) aarray(allowedFields, 'allowedFields');
   const _val = val as PSBTKeyMapKeys<T>;
   const _cur = cur as PSBTKeyMapKeys<T> | undefined;
   const _allowedFields = allowedFields as readonly (keyof PSBTKeyMapKeys<T>)[] | undefined;

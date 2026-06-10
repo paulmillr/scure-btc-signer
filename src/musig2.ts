@@ -3,7 +3,7 @@ import type { WeierstrassPoint } from '@noble/curves/abstract/weierstrass.js';
 import { aInRange, concatBytes, equalBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { abytes, anumber, randomBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
-import { compareBytes, hasEven, type TArg, type TRet } from './utils.ts';
+import { compareBytes, hasEven, type TArg, type TRet, validateObject } from './utils.ts';
 
 /*
 MuSig2. This is not the full protocol: only an implementation of primitives from BIP-327.
@@ -315,6 +315,9 @@ export function keyAggregate(
  * ```
  */
 export function keyAggExport(ctx: ReturnType<typeof keyAggregate>): TRet<Uint8Array> {
+  validateObject(ctx as Record<string, any>, {}, {}, 'ctx');
+  if (!(ctx.aggPublicKey instanceof Point))
+    throw new TypeError('"ctx.aggPublicKey" expected point, got type=' + typeof ctx.aggPublicKey);
   // BIP327 GetXonlyPubkey returns xbytes(Q), so this is the 32-byte x-only aggregate key
   // instead of the 33-byte compressed SEC1 form.
   return pointToBytes(ctx.aggPublicKey) as TRet<Uint8Array>;

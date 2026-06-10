@@ -1,5 +1,14 @@
 import * as P from 'micro-packed';
-import { isBytes, reverseObject, type Bytes, type TArg, type TRet, type ValueOf } from './utils.ts';
+import {
+  aarray,
+  abytes,
+  isBytes,
+  reverseObject,
+  type Bytes,
+  type TArg,
+  type TRet,
+  type ValueOf,
+} from './utils.ts';
 
 /**
  * Maximum byte size allowed for a single pushed script element.
@@ -209,6 +218,7 @@ export const Script: TRet<P.CoderType<ScriptType>> = /* @__PURE__ */ (() =>
   Object.freeze(
     P.wrap({
       encodeStream: (w: P.Writer, value: TArg<ScriptType>) => {
+        aarray(value, 'value');
         for (let o of value) {
           if (typeof o === 'string') {
             if (OP[o] === undefined) throw new Error(`Unknown opcode=${o}`);
@@ -230,7 +240,7 @@ export const Script: TRet<P.CoderType<ScriptType>> = /* @__PURE__ */ (() =>
           }
           // Encode big numbers
           if (typeof o === 'number') o = ScriptNum().encode(BigInt(o));
-          if (!isBytes(o)) throw new Error(`Wrong Script OP=${o} (${typeof o})`);
+          abytes(o, undefined, 'value');
           // Bytes
           const len = o.length;
           if (len < OP.PUSHDATA1) w.byte(len);

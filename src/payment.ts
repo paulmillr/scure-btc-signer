@@ -607,6 +607,7 @@ export const p2sh = <T extends P2Ret>(
   child: TArg<T>,
   network: BTC_NETWORK = NETWORK
 ): TRet<Extends<P2SHReturn<T>, P2Ret>> => {
+  u.validateObject(child as Record<string, any>, {}, {}, 'child');
   // It is already tested inside noble-hashes and checkScript
   // BIP16 redeemScripts are pushed by scriptSig, so anything over the 520-byte pushed-element
   // limit would be fundable by HASH160 but unspendable once wrapped in P2SH.
@@ -673,6 +674,7 @@ export const p2wsh = (
   child: TArg<P2Ret>,
   network: BTC_NETWORK = NETWORK
 ): TRet<Extends<P2WSH, P2Ret>> => {
+  u.validateObject(child as Record<string, any>, {}, {}, 'child');
   const cs = child.script;
   if (!u.isBytes(cs)) throw new Error(`Wrong script: ${typeof cs}, expected Uint8Array`);
   // BIP141 P2WSH says the witness "must consist of ... a serialized script (witnessScript)"
@@ -785,7 +787,7 @@ function checkTaprootScript(
       const cs = P.apply(Script, P.coders.match(customScripts));
       const c = cs.decode(script);
       if (c !== undefined) {
-        if (typeof c.type !== 'string' || !c.type.startsWith('tr_'))
+        if (!u.astring(c.type, 'c.type').startsWith('tr_'))
           throw new Error(`P2TR: invalid custom type=${c.type}`);
         return;
       }
@@ -868,6 +870,13 @@ type _TaprootTreeInternal = {
  * ```
  */
 export function taprootListToTree(taprootList: TArg<TaprootScriptList>): TRet<TaprootScriptTree> {
+  u.aarray<TaprootScriptList[number]>(taprootList, 'taprootList', (leaf, title) => {
+    // p2tr reduces non-binary trees through this helper, so nested branch arrays are valid here.
+    if (Array.isArray(leaf)) return;
+    u.validateObject(leaf as Record<string, any>, {}, {}, title);
+    // This helper only arranges weighted tree nodes; p2tr validates leaf scripts while hashing.
+    if (leaf.weight !== undefined) anumber(leaf.weight, title + '.weight');
+  });
   // Empty flat lists cannot represent a taproot script tree; omit the tree entirely for
   // key-path-only outputs instead of passing [] here, otherwise this helper would return
   // undefined and downstream taproot tree walkers would fail much later on a non-tree value.
@@ -948,17 +957,22 @@ function taprootHashTree(
   allowUnknownOutputs = false,
   customScripts?: TArg<CustomScript[]>
 ): TRet<HashedTree> {
-  if (!tree) throw new Error('taprootHashTree: empty tree');
+  if (tree === undefined) throw new Error('taprootHashTree: empty tree');
+  if (!Array.isArray(tree) && !P.utils.isPlainObject(tree))
+    throw new TypeError('"tree" expected object or array, got type=' + typeof tree);
   if (Array.isArray(tree) && tree.length === 1) tree = tree[0];
   // Terminal node (leaf)
   if (!Array.isArray(tree)) {
+    u.validateObject(tree as Record<string, any>, {}, {}, 'tree');
     const version = tree.leafVersion;
     const { script: leafScript } = tree;
     // Earliest tree walk where we can validate tapScripts
     if (tree.tapLeafScript || (tree.tapMerkleRoot && !u.equalBytes(tree.tapMerkleRoot, P.EMPTY)))
       throw new Error('P2TR: tapRoot leafScript cannot have tree');
-    const script = typeof leafScript === 'string' ? hex.decode(leafScript) : leafScript;
-    if (!u.isBytes(script)) throw new Error(`checkScript: wrong script type=${script}`);
+    const script =
+      typeof leafScript === 'string'
+        ? hex.decode(leafScript)
+        : abytes(leafScript, undefined, 'tree.script');
     checkTaprootScript(script, internalPubKey, allowUnknownOutputs, customScripts);
     return {
       type: 'leaf',
@@ -1279,6 +1293,7 @@ export function getAddress(
   privKey: TArg<Bytes>,
   network: BTC_NETWORK = NETWORK
 ): string {
+  u.astring(type, 'type');
   if (type === 'tr') {
     return p2tr(u.pubSchnorr(privKey), undefined, network).address;
   }
@@ -1431,9 +1446,12 @@ export function WIF(network: BTC_NETWORK = NETWORK): TRet<Coder<Bytes, string>> 
  * ```
  */
 export function Address(network: BTC_NETWORK = NETWORK): TRet<P.Coder<AddressValue, string>> {
+  u.validateObject(network as Record<string, any>, {}, {}, 'network');
   return {
     encode(from: TArg<AddressValue>): string {
+      u.validateObject(from as Record<string, any>, {}, {}, 'from');
       const { type } = from;
+      u.astring(type, 'from.type');
       if (type === 'wpkh') return programToWitness(0, from.hash, network);
       else if (type === 'wsh') return programToWitness(0, from.hash, network);
       else if (type === 'tr') return programToWitness(1, from.pubkey, network);
@@ -1442,6 +1460,7 @@ export function Address(network: BTC_NETWORK = NETWORK): TRet<P.Coder<AddressVal
       throw new Error(`Unknown address type=${type}`);
     },
     decode(address: string): TRet<AddressValue> {
+      u.astring(address, 'address');
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
       // Bech32
       if (network.bech32 && address.toLowerCase().startsWith(`${network.bech32}1`)) {

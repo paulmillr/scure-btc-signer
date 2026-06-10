@@ -1669,7 +1669,7 @@ describe('UTXO Select', () => {
           feePerByte: -1n,
           changeAddress: '1KAD5EnzzLtrSo2Da2G4zzD7uZrjk8zRAv',
         }),
-      /feePerByte|satoshi per vbyte/
+      /"opts.feePerByte" expected non-negative bigint, got -1/
     );
   });
   should('selectUTXO rejects negative output amounts before tx creation', () => {
@@ -1688,7 +1688,7 @@ describe('UTXO Select', () => {
           bip69: true,
           allowLegacyWitnessUtxo: true,
         }),
-      /wrong output amount|validateOutput: wrong amount/
+      /"output.amount" expected non-negative bigint, got -1/
     );
   });
 });

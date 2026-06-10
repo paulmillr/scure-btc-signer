@@ -1,4 +1,5 @@
 import { hex } from '@scure/base';
+import { anumber } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.ts';
 import * as psbt from './psbt.ts';
@@ -18,11 +19,13 @@ import * as u from './utils.ts';
 import {
   type Bytes,
   NETWORK,
+  abigint,
   concatBytes,
   equalBytes,
   isBytes,
   type TArg,
   type TRet,
+  validateObject,
 } from './utils.ts';
 
 // Be friendly to bad ECMAScript parsers by not using bigint literals.
@@ -305,6 +308,7 @@ function outputBeforeSign(i: TArg<psbt.TransactionOutput>): TRet<psbt.Transactio
  * ```
  */
 export function inputBeforeSign(i: TArg<psbt.TransactionInput>): TRet<TransactionInputRequired> {
+  validateObject(i as Record<string, any>, {}, {}, 'i');
   if (i.txid === undefined || i.index === undefined)
     throw new Error('Transaction/input: txid and index required');
   const res = {
@@ -348,8 +352,7 @@ function unpackSighash(hashType: number) {
 }
 
 function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
-  if (opts !== undefined && {}.toString.call(opts) !== '[object Object]')
-    throw new Error(`Wrong object type for transaction options: ${opts}`);
+  if (opts !== undefined) validateObject(opts as Record<string, any>, {}, {}, 'opts');
 
   const _opts = {
     ...opts,
@@ -411,6 +414,7 @@ function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
 
 // NOTE: we cannot do this inside PSBTInput coder, because there is no index/txid at this point!
 function validateInput(i: TArg<psbt.TransactionInput>): TRet<PSBTInputs> {
+  validateObject(i as Record<string, any>, {}, {}, 'i');
   const _i = i as PSBTInputs;
   if (_i.nonWitnessUtxo && _i.index !== undefined) {
     const last = _i.nonWitnessUtxo.outputs.length - 1;
@@ -469,6 +473,7 @@ export type PSBTOutputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTOutput>;
  * ```
  */
 export function getPrevOut(input: TArg<psbt.TransactionInput>): P.UnwrapCoder<typeof RawOutput> {
+  validateObject(input as Record<string, any>, {}, {}, 'input');
   const _input = input as PSBTInputs;
   if (_input.nonWitnessUtxo) {
     if (_input.index === undefined) throw new Error('Unknown input index');
@@ -482,8 +487,17 @@ export function getPrevOut(input: TArg<psbt.TransactionInput>): P.UnwrapCoder<ty
     )
       throw new Error(`Wrong input index=${_input.index}`);
     return _input.nonWitnessUtxo.outputs[_input.index];
-  } else if (_input.witnessUtxo) return _input.witnessUtxo;
-  else throw new Error('Cannot find previous output info');
+  } else if ('witnessUtxo' in _input) {
+    // The presence check catches malformed provided values; narrow after the guard for TS.
+    const prev = _input.witnessUtxo as P.UnwrapCoder<typeof RawOutput>;
+    validateObject(prev as Record<string, any>, {}, {}, 'input.witnessUtxo');
+    abigint(prev.amount, 'input.witnessUtxo.amount');
+    if (!isBytes(prev.script))
+      throw new TypeError(
+        '"input.witnessUtxo.script" expected Uint8Array, got type=' + typeof prev.script
+      );
+    return prev;
+  } else throw new Error('Cannot find previous output info');
 }
 
 /**
@@ -514,6 +528,9 @@ export function normalizeInput(
   disableScriptCheck = false,
   allowUnknown = false
 ): TRet<PSBTInputs> {
+  validateObject(i as Record<string, any>, {}, {}, 'i');
+  if (cur !== undefined) validateObject(cur as Record<string, any>, {}, {}, 'cur');
+  if (allowedFields !== undefined) u.aarray(allowedFields, 'allowedFields');
   const _i = i as psbt.TransactionInputUpdate;
   const _cur = cur as PSBTInputs | undefined;
   const _allowedFields = allowedFields as readonly (keyof PSBTInputs)[] | undefined;
@@ -722,6 +739,7 @@ export class Transaction {
   toPSBT(
     PSBTVersion: number | undefined = this.global.version || this.opts.PSBTVersion
   ): Uint8Array {
+    if (PSBTVersion !== undefined) anumber(PSBTVersion, 'PSBTVersion');
     if (PSBTVersion !== 0 && PSBTVersion !== 2)
       throw new Error(`Wrong PSBT version=${PSBTVersion}`);
     // if (PSBTVersion === 0 && this.inputs.length === 0) {
@@ -937,8 +955,8 @@ export class Transaction {
   }
   // Input stuff
   private checkInputIdx(idx: number) {
-    if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.inputs.length)
-      throw new Error(`Wrong input index=${idx}`);
+    anumber(idx, 'idx');
+    if (idx >= this.inputs.length) throw new Error(`Wrong input index=${idx}`);
   }
   getInput(idx: number): psbt.TransactionInput {
     this.checkInputIdx(idx);
@@ -949,6 +967,7 @@ export class Transaction {
   }
   // Modification
   addInput(input: TArg<psbt.TransactionInputUpdate>, _ignoreSignStatus = false): number {
+    validateObject(input as Record<string, any>, {}, {}, 'input');
     if (!_ignoreSignStatus && !this.signStatus().addInput)
       throw new Error('Tx has signed inputs, cannot add new one');
     // normalizeInput preserves nested caller-owned byte arrays, so detach them here before the
@@ -986,8 +1005,8 @@ export class Transaction {
   }
   // Output stuff
   private checkOutputIdx(idx: number) {
-    if (!Number.isSafeInteger(idx) || 0 > idx || idx >= this.outputs.length)
-      throw new Error(`Wrong output index=${idx}`);
+    anumber(idx, 'idx');
+    if (idx >= this.outputs.length) throw new Error(`Wrong output index=${idx}`);
   }
   getOutput(idx: number): psbt.TransactionOutput {
     this.checkOutputIdx(idx);
@@ -1009,12 +1028,10 @@ export class Transaction {
     cur?: PSBTOutputs,
     allowedFields?: readonly (keyof typeof psbt.PSBTOutput)[]
   ): PSBTOutputs {
+    validateObject(o as Record<string, any>, {}, {}, 'o');
     let { amount, script } = o;
     if (amount === undefined) amount = cur?.amount;
-    if (typeof amount !== 'bigint')
-      throw new Error(
-        `Wrong amount type, should be of type bigint in sats, but got ${amount} of type ${typeof amount}`
-      );
+    amount = abigint(amount, 'o.amount');
     if (typeof script === 'string') script = hex.decode(script);
     if (script === undefined) script = cur?.script;
     let res: PSBTOutputs = { ...cur, ...(o as PSBTOutputs & { script?: string }), amount, script };
@@ -1128,8 +1145,8 @@ export class Transaction {
   ): Uint8Array {
     // BIP143 serializes txTo.vin[nIn].prevout and txTo.vin[nIn].nSequence, so reject an invalid
     // nIn explicitly instead of leaking a later undefined-input TypeError from inputs[idx].
-    if (idx < 0 || !Number.isSafeInteger(idx) || idx >= this.inputs.length)
-      throw new Error(`Invalid input idx=${idx}`);
+    anumber(idx, 'idx');
+    if (idx >= this.inputs.length) throw new Error(`Invalid input idx=${idx}`);
     const { isAny, isNone, isSingle } = unpackSighash(hashType);
     let inputHash = EMPTY32;
     let sequenceHash = EMPTY32;
@@ -1168,15 +1185,17 @@ export class Transaction {
     leafVer = 0xc0,
     annex?: Bytes
   ): Uint8Array {
-    if (!Array.isArray(amount) || this.inputs.length !== amount.length)
-      throw new Error(`Invalid amounts array=${amount}`);
-    if (!Array.isArray(prevOutScript) || this.inputs.length !== prevOutScript.length)
-      throw new Error(`Invalid prevOutScript array=${prevOutScript}`);
     // BIP341 SigMsg commits either to input_index or to the selected input's outpoint/amount/script/
     // sequence under ANYONECANPAY, so reject an invalid index explicitly instead of hashing a
     // nonexistent input or leaking a later integer-encoding RangeError for negative idx.
-    if (idx < 0 || !Number.isSafeInteger(idx) || idx >= this.inputs.length)
-      throw new Error(`Invalid input idx=${idx}`);
+    anumber(idx, 'idx');
+    if (idx >= this.inputs.length) throw new Error(`Invalid input idx=${idx}`);
+    u.aarray(amount, 'amount');
+    u.aarray(prevOutScript, 'prevOutScript');
+    if (this.inputs.length !== amount.length)
+      throw new Error(`Invalid amounts array=${amount}`);
+    if (this.inputs.length !== prevOutScript.length)
+      throw new Error(`Invalid prevOutScript array=${prevOutScript}`);
     const out: Bytes[] = [
       P.U8.encode(0),
       P.U8.encode(hashType), // U8 sigHash
@@ -1220,6 +1239,18 @@ export class Transaction {
   }
   // Signer can be privateKey OR instance of bip32 HD stuff
   signIdx(privateKey: Signer, idx: number, allowedSighash?: SigHash[], _auxRand?: Bytes): boolean {
+    if (!isBytes(privateKey)) {
+      // HDKey is a structural external instance, so plain-object validation would
+      // reject valid signers.
+      if (
+        !privateKey ||
+        typeof privateKey !== 'object' ||
+        typeof (privateKey as HDKey).deriveChild !== 'function'
+      )
+        throw new TypeError(
+          '"privateKey" expected Uint8Array or HDKey, got type=' + typeof privateKey
+        );
+    }
     this.checkInputIdx(idx);
     const input = this.inputs[idx];
     const inputType = getInputType(
@@ -1600,6 +1631,8 @@ export class Transaction {
     return this.toBytes(true, true);
   }
   combine(other: Transaction): this {
+    if (!(other instanceof Transaction))
+      throw new TypeError('"other" expected Transaction, got type=' + typeof other);
     // BIP174 combiners merge same-transaction PSBTs across versions and emit the highest required
     // version, so PSBTVersion mismatches are normalized below instead of treated as conflicts.
     const PSBTVersion = Math.max(this.opts.PSBTVersion || 0, other.opts.PSBTVersion || 0);

@@ -1,4 +1,5 @@
 import { hex } from '@scure/base';
+import { utils as packedUtils } from 'micro-packed';
 import { Address } from './payment.ts';
 import type * as psbt from './psbt.ts';
 import {
@@ -247,8 +248,8 @@ const parseRawTx = (raw: string, txid: string): void => {
     throw new EsploraError(`wrong raw txid, expected ${txid} got ${tx.id}`);
 };
 const validateTransfersOpts = (opts: TArg<TransfersOpts>): TRet<TransfersOpts> => {
-  if (opts !== undefined && {}.toString.call(opts) !== '[object Object]')
-    throw new EsploraError('expected transfer options object');
+  if (opts !== undefined && !packedUtils.isPlainObject(opts))
+    throw new EsploraError(`"opts" expected object or undefined, got type=${typeof opts}`);
   const res = { ...opts } as TransfersOpts;
   if (res.fromBlock !== undefined) res.fromBlock = validateUint(res.fromBlock, 'fromBlock');
   if (res.toBlock !== undefined) res.toBlock = validateUint(res.toBlock, 'toBlock');
@@ -615,6 +616,25 @@ export class EsploraProvider {
  * ```
  */
 export function calcTransfersDiff(transfers: TxTransfers[]): (TxTransfers & Balances)[] {
+  validateArray(transfers, 'transfers');
+  for (let i = 0; i < transfers.length; i++) {
+    const tx = validateRecord(transfers[i], `transfers.${i}`);
+    validateString(tx.txid, `transfers.${i}.txid`);
+    const moves = validateArray(tx.transfers, `transfers.${i}.transfers`);
+    validateRecord(tx.info, `transfers.${i}.info`);
+    for (let j = 0; j < moves.length; j++) {
+      const transfer = validateRecord(moves[j], `transfers.${i}.transfers.${j}`);
+      if (transfer.from !== undefined)
+        validateString(transfer.from, `transfers.${i}.transfers.${j}.from`);
+      if (transfer.to !== undefined)
+        validateString(transfer.to, `transfers.${i}.transfers.${j}.to`);
+      // Transfer diffs include spends as negative deltas, so this boundary only checks type.
+      if (typeof transfer.value !== 'bigint')
+        throw new EsploraError(
+          `expected transfers.${i}.transfers.${j}.value bigint, got type=${typeof transfer.value}`
+        );
+    }
+  }
   const balances: Record<string, bigint> = {};
   for (const tx of transfers) {
     for (const transfer of tx.transfers) {

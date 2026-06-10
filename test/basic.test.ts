@@ -284,7 +284,7 @@ should('preimageWitnessV0 rejects invalid input indexes', () => {
   );
   throws(
     () => tx.preimageWitnessV0(-1, Uint8Array.of(0x51), btc.SigHash.ALL, 2n),
-    /Invalid input idx=-1/
+    /"idx" expected integer >= 0, got -1/
   );
 });
 
@@ -302,7 +302,7 @@ should('preimageWitnessV1 rejects invalid input indexes', () => {
   );
   throws(
     () => tx.preimageWitnessV1(-1, [Uint8Array.of(0x51)], btc.SigHash.ALL, [2n]),
-    /Invalid input idx=-1/
+    /"idx" expected integer >= 0, got -1/
   );
 });
 
