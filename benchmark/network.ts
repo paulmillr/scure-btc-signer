@@ -6,9 +6,9 @@ import type {
   TxInfo,
   TxTransfers,
   Unspent,
-} from '../../src/net.ts';
-import { EsploraProvider } from '../../src/net.ts';
-import { startProxy } from '../misc/proxy.ts';
+} from '../src/net.ts';
+import { EsploraProvider } from '../src/net.ts';
+import { startProxy } from '../test/misc/proxy.ts';
 
 const DEFAULT_DIRECT = 'http://127.0.0.1:3000';
 const DEFAULT_BLOCKSTREAM = 'tcp://127.0.0.1:51001';
@@ -30,7 +30,7 @@ type Fixture = { address: string; txid: string; count: number };
 type Variant = { name: string; provider: Provider; close?: () => Promise<void> };
 type Stat = { min: number; p50: number; max: number };
 
-const usage = `usage: node test/net.bench.ts [--runs N] [--address ADDR --txid TXID]
+const usage = `usage: node benchmark/network.ts [--runs N] [--address ADDR --txid TXID]
   [--busy-address ADDR] [--busy-limit N]
   [--direct http://127.0.0.1:3000]
   [--blockstream tcp://127.0.0.1:51001]

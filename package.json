@@ -17,7 +17,7 @@
     "micro-packed": "~0.9.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.5.2",
+    "@paulmillr/jsbt": "0.6.0",
     "@scure/bip32": "2.2.0",
     "micro-ftch": "^1.0.0",
     "prettier": "3.6.2",
@@ -28,6 +28,8 @@
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}",
     "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
     "check": "npx --no @paulmillr/jsbt check package.json",
+    "benchmark": "node benchmark/index.ts",
+    "benchmark:network": "node benchmark/network.ts",
     "format": "prettier --write src test/*.test.*",
     "test": "node --no-warnings test/index.ts",
     "test:bun": "bun test/index.ts",
