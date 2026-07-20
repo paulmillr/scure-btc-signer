@@ -1,11 +1,18 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { bytesToHex, concatBytes, hexToBytes, hexToNumber } from '@noble/curves/utils.js';
+import {
+  bytesToHex,
+  bytesToNumberBE,
+  concatBytes,
+  hexToBytes,
+  hexToNumber,
+} from '@noble/curves/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as fs from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { elligatorSwift } from '../src/p2p.ts';
+import { pubSchnorr } from '../src/utils.ts';
 
 // https://eprint.iacr.org/2022/759
 export const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -124,6 +131,36 @@ describe('ElligatorSwift', () => {
       }
     }
   });
+});
+
+// Regression tests.
+const privA = hexToBytes('02'.repeat(32));
+const privB = hexToBytes('03'.repeat(32));
+const privC = hexToBytes('04'.repeat(32));
+
+should('elligatorSwift.encode rejects off-curve x coordinates', () => {
+  // Fixed issue: x = 0 is not on secp256k1 (y^2 = 7 has no root mod p), yet
+  // encode(0n) used to succeed and silently produce an encoding that decodes to a
+  // DIFFERENT x — an ElligatorSwift encoding of the wrong public key.
+  throws(() => elligatorSwift.encode(0n));
+  // Out-of-range x is still rejected, and real public keys still round-trip.
+  throws(() => elligatorSwift.encode(-1n));
+  for (const priv of [privA, privB, privC]) {
+    const pub = pubSchnorr(priv);
+    deepStrictEqual(elligatorSwift.decode(elligatorSwift.encode(bytesToNumberBE(pub))), pub);
+  }
+});
+
+should('elligatorSwift ECDH symmetry and validation', () => {
+  // End-to-end pin for the encode/decode changes (field-wide u sampling, shared
+  // X/Y inversion, INV_2): both sides must derive the same BIP324 shared secret.
+  const pubA = elligatorSwift.encode(bytesToNumberBE(pubSchnorr(privA)));
+  const pubB = elligatorSwift.encode(bytesToNumberBE(pubSchnorr(privB)));
+  const s1 = elligatorSwift.getSharedSecretBip324(privA, pubB, pubA, true);
+  const s2 = elligatorSwift.getSharedSecretBip324(privB, pubA, pubB, false);
+  deepStrictEqual(s1, s2);
+  // Initiator/responder ordering is security-relevant: only real booleans allowed.
+  throws(() => elligatorSwift.getSharedSecretBip324(privA, pubB, pubA, 'true' as any));
 });
 
 should.runWhen(import.meta.url);

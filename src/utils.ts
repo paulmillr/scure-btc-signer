@@ -31,7 +31,6 @@ export function abigint(n: unknown, title: string = 'value'): bigint {
   return n;
 }
 
-
 import { validateObject as vld } from '@noble/curves/utils.js';
 
 export function aarray<T>(
@@ -208,7 +207,10 @@ export const pubECDSA = (privateKey: TArg<Uint8Array>, isCompressed?: boolean): 
 // noble/secp256k1 does not support the feature: it is not used outside of BTC.
 // We implement it manually, because in BTC it's common.
 // Not best way, but closest to bitcoin implementation (easier to check)
-const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < CURVE_ORDER / _2n;
+// Hoisted: the bound is constant; no need to redo the bigint division on every
+// grinding-loop iteration. n/2 < 2^255, so r < n/2 guarantees the 32-byte DER r.
+const LOW_R_BOUND = /* @__PURE__ */ (() => CURVE_ORDER / _2n)();
+const hasLowR = (sig: { r: bigint; s: bigint }) => sig.r < LOW_R_BOUND;
 /**
  * Signs a 32-byte hash with ECDSA and returns DER encoding.
  * @param hash - message hash to sign

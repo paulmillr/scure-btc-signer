@@ -235,4 +235,41 @@ should('verify unspendable key', () => {
   );
 });
 
+// Regression tests.
+const TXID_01 = '00'.repeat(31) + '01';
+const privC = hex.decode('04'.repeat(32));
+
+should('taproot SIGHASH_SINGLE without matching output', () => {
+  const pub = btc.utils.pubSchnorr(privC);
+  const spend = btc.p2tr(pub);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: TXID_01,
+    index: 0,
+    witnessUtxo: { amount: 10000n, script: spend.script },
+    tapInternalKey: pub,
+    sighashType: btc.SigHash.SINGLE,
+  });
+  // Guard: signing must reject SINGLE with no output at the input's index.
+  throws(() => tx.signIdx(privC, 0, [btc.SigHash.SINGLE]));
+  // KNOWN ISSUE (leniency, kept for sighash test-vector coverage): the low-level
+  // preimage hashes an empty 32-byte block where BIP341 mandates failure.
+  const preimage = tx.preimageWitnessV1(0, [spend.script], btc.SigHash.SINGLE, [10000n]);
+  deepStrictEqual(preimage.length, 32);
+});
+
+should('p2tr allowUnknownOutputs works with non-matching customScripts', () => {
+  // Fixed issue: micro-packed match() throws on no-match, so providing
+  // customScripts used to make the allowUnknownOutputs escape unreachable
+  // ('match/encode: cannot find match' instead of accepting the leaf).
+  const pub = btc.utils.pubSchnorr(privC);
+  const leaf = { script: new Uint8Array([0x6a]) }; // OP_RETURN: unknown leaf script
+  const neverMatches = { encode: () => undefined, decode: () => undefined };
+  const without = btc.p2tr(pub, leaf as any, undefined, true);
+  const withCS = btc.p2tr(pub, leaf as any, undefined, true, [neverMatches as any]);
+  deepStrictEqual(withCS.address, without.address);
+  // Unknown leaves are still rejected when allowUnknownOutputs is off.
+  throws(() => btc.p2tr(pub, leaf as any, undefined, false, [neverMatches as any]));
+});
+
 should.runWhen(import.meta.url);

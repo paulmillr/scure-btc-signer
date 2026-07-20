@@ -625,4 +625,58 @@ describe('BIP327', () => {
     }
   });
 });
+
+// Regression test.
+const privA = hexToBytes('02'.repeat(32));
+const privB = hexToBytes('03'.repeat(32));
+
+should('MuSig2 end-to-end 2-of-2 with tweaks', () => {
+  // Independent check of the verification-path multiplyUnsafe refactor: run a full
+  // signing round (random-nonce and deterministic) and verify the final signatures
+  // with plain BIP340 schnorr.verify against the tweaked aggregate key.
+  const [skA, skB] = [privA, privB];
+  const publicKeys = [musig2.IndividualPubkey(skA), musig2.IndividualPubkey(skB)];
+  const tweaks = [new Uint8Array(32).fill(7)];
+  const isXonly = [true];
+  const aggPk = musig2.keyAggExport(musig2.keyAggregate(publicKeys, tweaks, isXonly));
+  const msg = new Uint8Array(32).fill(0xab);
+  const nA = musig2.nonceGen(publicKeys[0], skA, aggPk, msg, undefined, new Uint8Array(32).fill(1));
+  const nB = musig2.nonceGen(publicKeys[1], skB, aggPk, msg, undefined, new Uint8Array(32).fill(2));
+  const aggNonce = musig2.nonceAggregate([nA.public, nB.public]);
+  const session = new musig2.Session(aggNonce, publicKeys, msg, tweaks, isXonly);
+  const sigA = session.sign(Uint8Array.from(nA.secret), skA); // sign() zeroes its input copy
+  const sigB = session.sign(Uint8Array.from(nB.secret), skB);
+  deepStrictEqual(session.partialSigVerify(sigA, [nA.public, nB.public], 0), true);
+  deepStrictEqual(session.partialSigVerify(sigB, [nA.public, nB.public], 1), true);
+  // A nonce set that does not aggregate to the session's aggNonce must not verify
+  // (pins the cached-session guard).
+  const nC = musig2.nonceGen(publicKeys[1], skB, aggPk, msg, undefined, new Uint8Array(32).fill(3));
+  deepStrictEqual(session.partialSigVerify(sigA, [nA.public, nC.public], 0), false);
+  const finalSig = session.partialSigAgg([sigA, sigB]);
+  deepStrictEqual(schnorr.verify(finalSig, msg, aggPk), true);
+  // Wrong-length aggregate nonce is rejected up front with a clear error.
+  throws(() => new musig2.Session(aggNonce.slice(0, 65), publicKeys, msg));
+
+  // Deterministic flow: B derives nonce+psig from A's public nonce in one step.
+  const nA2 = musig2.nonceGen(
+    publicKeys[0],
+    skA,
+    aggPk,
+    msg,
+    undefined,
+    new Uint8Array(32).fill(4)
+  );
+  const det = musig2.deterministicSign(skB, nA2.public, publicKeys, msg, tweaks, isXonly);
+  const session2 = new musig2.Session(
+    musig2.nonceAggregate([nA2.public, det.publicNonce]),
+    publicKeys,
+    msg,
+    tweaks,
+    isXonly
+  );
+  const sigA2 = session2.sign(Uint8Array.from(nA2.secret), skA);
+  const finalSig2 = session2.partialSigAgg([sigA2, det.partialSig]);
+  deepStrictEqual(schnorr.verify(finalSig2, msg, aggPk), true);
+});
+
 should.runWhen(import.meta.url);

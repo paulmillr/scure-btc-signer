@@ -283,6 +283,10 @@ export function keyAggregate(
     }
     aggPublicKey = aggPublicKey.add(Pi.multiply(keyAggCoeffInternal(publicKeys[i], pk2, L)));
   }
+  // BIP327 KeyAggInternal: "Fail if is_infinite(Q)". Computationally unreachable for
+  // hash-derived coefficients, but the spec mandates the explicit check before tweaking.
+  if (isZero(aggPublicKey))
+    throw new Error('keyAggregate: aggregate public key cannot be infinity');
   let gAcc = Fn.ONE;
   let tweakAcc = Fn.ZERO;
   // Apply tweaks
@@ -518,6 +522,7 @@ export class Session {
     tweaks: Uint8Array[] = [],
     isXonly: boolean[] = []
   ) {
+    abytes(aggNonce, 66);
     abytesArray(publicKeys, 33);
     abytesArray(tweaks, 32);
     aXonly(isXonly);
@@ -536,7 +541,10 @@ export class Session {
     this.gAcc = gAcc;
     this.tweakAcc = tweakAcc;
     this.b = taggedInt('MuSig/noncecoef', aggNonce, pointToBytes(aggPublicKey), msg);
-    const R = R1.add(R2.multiply(this.b));
+    // b and the nonce points are public session values, so the faster variable-time
+    // multiplication is safe here; it also matches the reference point_mul, which
+    // maps a (negligible-probability) zero coefficient to infinity instead of failing.
+    const R = R1.add(R2.multiplyUnsafe(this.b));
     this.R = isZero(R) ? Point.BASE : R;
     this.e = taggedInt('BIP0340/challenge', pointToBytes(this.R), pointToBytes(aggPublicKey), msg);
     this.tweaks = tweaks.map((t) => Uint8Array.from(t));
@@ -571,13 +579,16 @@ export class Session {
     // BIP327 PartialSigVerifyInternal: `Let s = int(psig); fail if s >= n`, so s=0 must stay
     // in the public verification equation and return false on mismatch instead of throwing.
     const { R1, R2 } = PubNonce.decode(publicNonce);
-    const Re_s_ = R1.add(R2.multiply(b));
+    // Verification only handles public data (nonces, pubkeys, hash-derived scalars),
+    // so the faster variable-time multiplications are safe here; they also match the
+    // reference point_mul, which maps zero scalars to infinity instead of failing.
+    const Re_s_ = R1.add(R2.multiplyUnsafe(b));
     const Re_s = hasEven(R.y) ? Re_s_ : Re_s_.negate();
     const P = Point.fromBytes(publicKey);
     const a = this.getSessionKeyAggCoeff(P);
     const g = Fn.mul(evenScalar(Q, _1n), gAcc);
     const left = Point.BASE.multiplyUnsafe(s);
-    const right = Re_s.add(P.multiply(Fn.mul(e, Fn.mul(a, g))));
+    const right = Re_s.add(P.multiplyUnsafe(Fn.mul(e, Fn.mul(a, g))));
     return left.equals(right);
   }
 
@@ -603,7 +614,7 @@ export class Session {
     // Modifying input arguments is pretty bad.
     secretNonce.fill(0, 0, 64);
     if (!Fn.isValid(k1_)) throw new Error('wrong k1');
-    if (!Fn.isValid(k2_)) throw new Error('wrong k1');
+    if (!Fn.isValid(k2_)) throw new Error('wrong k2');
     const k1 = evenScalar(R, k1_);
     const k2 = evenScalar(R, k2_);
     const d_ = Fn.fromBytes(secret);

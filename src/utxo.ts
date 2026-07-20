@@ -2,7 +2,7 @@ import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.ts';
 import * as psbt from './psbt.ts';
-import { CompactSizeLen, RawWitness, Script, VarBytes } from './script.ts';
+import { CompactSizeLen, Script } from './script.ts';
 import {
   SignatureHash,
   Transaction,
@@ -48,6 +48,8 @@ const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
 // Be friendly to bad ECMAScript parsers by not using bigint literals.
 // prettier-ignore
 const _0n = /* @__PURE__ */ BigInt(0), _3n = /* @__PURE__ */ BigInt(3);
+// Serialized length of VarBytes(data) without allocating the encoded copy
+const varLen = (dataLen: number) => CompactSizeLen.encode(dataLen).length + dataLen;
 
 function iterLeafs(
   tapLeafScript: TArg<TapLeafScript>,
@@ -182,10 +184,11 @@ function estimateInput(
     } else if (inputType.type.startsWith('wsh-')) {
     } else if (inputType.txType !== 'segwit') script = inputScript;
   }
-  let weight = 160 + 4 * VarBytes.encode(script).length;
+  let weight = 160 + 4 * varLen(script.length);
   let hasWitnesses = false;
   if (witness) {
-    weight += RawWitness.encode(witness).length;
+    weight += CompactSizeLen.encode(witness.length).length;
+    for (const w of witness) weight += varLen(w.length);
     hasWitnesses = true;
   }
   return { weight, hasWitnesses };
@@ -314,7 +317,7 @@ export class _Estimator {
     let baseWeight = 32;
     for (const o of outputs) {
       const script = getScript(o, opts, opts.network);
-      baseWeight += 32 + 4 * VarBytes.encode(script).length;
+      baseWeight += 32 + 4 * varLen(script.length);
       amount += o.amount;
     }
     astring(opts.changeAddress, 'opts.changeAddress');
@@ -324,11 +327,11 @@ export class _Estimator {
       // Same Address.decode() narrowing as above: the estimator only reaches this path for a
       // concrete change output address, not an unknown descriptor.
       4 *
-        VarBytes.encode(
+        varLen(
           OutScript.encode(
             Address(network).decode(opts.changeAddress) as Parameters<typeof OutScript.encode>[0]
-          )
-        ).length;
+          ).length
+        );
     baseWeight += 4 * CompactSizeLen.encode(outputs.length).length;
     // If there a lot of outputs change can change fee
     changeWeight += 4 * CompactSizeLen.encode(outputs.length + 1).length;
@@ -480,6 +483,10 @@ export class _Estimator {
     }
     if (all) {
       const total = getTotal(weight, num);
+      // 'all' accumulates unconditionally, so sufficiency must be checked here; otherwise
+      // result() would report a negative fee (or throw its internal negative-change error).
+      // Insufficient funds are a selection failure, same as for accumulation strategies.
+      if (targetAmount + total.fee > inputsAmount) return undefined;
       return {
         indices: Array.from(res),
         fee: total.fee,

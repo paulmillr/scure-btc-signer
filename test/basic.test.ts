@@ -1,16 +1,16 @@
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { HDKey } from '@scure/bip32/index.js';
-import { base64, createBase58check, hex } from '@scure/base';
+import { base64, bech32m, createBase58check, hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { checkScript, tapLeafHash } from '../src/payment.ts';
 import { _RawPSBTV0, PSBTInputCoder, PSBTOutputCoder, RawPSBTV2 } from '../src/psbt.ts';
-import { RawOldTx } from '../src/script.ts';
+import { OpToNum, RawOldTx } from '../src/script.ts';
 import { cloneDeep, DEFAULT_SEQUENCE, getPrevOut, inputBeforeSign } from '../src/transaction.ts';
-import { sha256x2 } from '../src/utils.ts';
+import { pubECDSA, pubSchnorr, sha256x2 } from '../src/utils.ts';
 import psbtV from './vectors/psbt_vectors.js';
 
 const testClone = (tx) => deepStrictEqual(tx.clone(), tx);
@@ -2961,6 +2961,214 @@ should('GH-20: verify transaction hash', () => {
   btc.Transaction.fromPSBT(tx.toPSBT()); // ok
   tx.inputs[0].txid[0] = 0; // break tx id
   throws(() => btc.Transaction.fromPSBT(tx.toPSBT()));
+});
+
+// Regression / documentation tests. Tests marked KNOWN ISSUE assert current
+// (buggy or lenient) behavior on purpose: if one starts failing, the underlying
+// issue was fixed — flip the assertion.
+const TXID_01 = '00'.repeat(31) + '01';
+const privA = hex.decode('02'.repeat(32));
+const privB = hex.decode('03'.repeat(32));
+const badPub33 = new Uint8Array(33).fill(0xff); // not a curve point
+const badX32 = new Uint8Array(32).fill(0xff); // not a valid x-only key
+
+// tx.weight refactor (transaction.ts): must equal 3 * base_size + total_size (BIP141),
+// computed here from actual serialization instead of the arithmetic size formula.
+const checkWeight = (tx: btc.Transaction) => {
+  const base = tx.toBytes(true, false).length;
+  const total = tx.toBytes(true, true).length;
+  deepStrictEqual(tx.weight, 3 * base + total);
+  deepStrictEqual(tx.vsize, Math.ceil(tx.weight / 4));
+};
+
+// Legacy prev-tx paying `script`, so tests can build p2pkh inputs with nonWitnessUtxo.
+const legacyPrevTx = (script: Uint8Array, amount: bigint) => {
+  const prev = new btc.Transaction();
+  prev.addInput({ txid: TXID_01, index: 0 });
+  prev.addOutput({ script, amount });
+  return prev;
+};
+
+// Consensus-valid tx with a version outside the standard [-1, 0, 1, 2, 3] set.
+const weirdVersionTx = () => {
+  const spend = btc.p2wpkh(pubECDSA(privA));
+  const raw = btc.RawTx.encode({
+    version: 305419896, // 0x12345678
+    segwitFlag: false,
+    inputs: [
+      {
+        txid: hex.decode(TXID_01),
+        index: 0,
+        finalScriptSig: new Uint8Array(0),
+        sequence: 4294967295,
+      },
+    ],
+    outputs: [{ amount: 1000n, script: spend.script }],
+    lockTime: 0,
+  } as any);
+  return { spend, raw, txid: hex.encode(sha256x2(raw).reverse()) };
+};
+
+should('weight matches serialized size (segwit)', () => {
+  const spend = btc.p2wpkh(pubECDSA(privA));
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: TXID_01,
+    index: 0,
+    witnessUtxo: { amount: 10000n, script: spend.script },
+  });
+  tx.addOutput({ script: spend.script, amount: 9000n });
+  tx.sign(privA);
+  tx.finalize();
+  deepStrictEqual(tx.hasWitnesses, true);
+  checkWeight(tx);
+});
+
+should('weight matches serialized size (legacy, no witness)', () => {
+  const spend = btc.p2pkh(pubECDSA(privA));
+  const prev = legacyPrevTx(spend.script, 10000n);
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: prev.id, index: 0, nonWitnessUtxo: prev.hex });
+  tx.addOutput({ script: spend.script, amount: 9000n });
+  tx.sign(privA);
+  tx.finalize();
+  deepStrictEqual(tx.hasWitnesses, false);
+  checkWeight(tx);
+});
+
+should('weight matches serialized size (mixed legacy+segwit inputs)', () => {
+  // The legacy input must still contribute one empty witness vector (a single zero
+  // byte) once segwit serialization is active for the transaction.
+  const spendLegacy = btc.p2pkh(pubECDSA(privA));
+  const spendSegwit = btc.p2wpkh(pubECDSA(privB));
+  const prev = legacyPrevTx(spendLegacy.script, 10000n);
+  const tx = new btc.Transaction();
+  tx.addInput({ txid: prev.id, index: 0, nonWitnessUtxo: prev.hex });
+  tx.addInput({
+    txid: TXID_01,
+    index: 1,
+    witnessUtxo: { amount: 20000n, script: spendSegwit.script },
+  });
+  tx.addOutput({ script: spendSegwit.script, amount: 25000n });
+  tx.sign(privA);
+  tx.sign(privB);
+  tx.finalize();
+  deepStrictEqual(tx.hasWitnesses, true);
+  checkWeight(tx);
+});
+
+should('Script.decode rejects malformed PUSHDATA4 (stripCodeSeparator gate)', () => {
+  // stripCodeSeparator's own length reader breaks on PUSHDATA4 lengths with the top
+  // bit set (signed-shift overflow; declared length -5 below would rewind its cursor).
+  // It is unreachable only because signing always runs Script.decode on the same
+  // script first — this pins that gate.
+  throws(() => btc.Script.decode(hex.decode('4efbffffff')));
+  // Positive declared length larger than the remaining bytes must also throw.
+  throws(() => btc.Script.decode(hex.decode('4e05000000ffff')));
+});
+
+should('OutScript near-miss scripts decode as unknown', () => {
+  // Fixed issue: scripts matching a known skeleton but failing semantic checks
+  // (bad pubkeys, degenerate m/n, wrong hash sizes, off-curve x-only keys) used
+  // to throw from OutScript.decode instead of classifying as 'unknown', which
+  // also made such prevouts unsignable even with allowUnknownInputs.
+  const nearMisses = [
+    btc.Script.encode([1, badPub33, 1, 'CHECKMULTISIG']), // ms with off-curve key
+    btc.Script.encode([0, 0, 'CHECKMULTISIG']), // degenerate 0-of-0 ms
+    btc.Script.encode([2, pubECDSA(privA), 1, 'CHECKMULTISIG']), // ms with m > n
+    btc.Script.encode([1, badX32]), // v1 32-byte program, off-curve (taproot-unspendable)
+    btc.Script.encode([badX32, 'CHECKSIG', badX32, 'CHECKSIGADD', 2, 'NUMEQUAL']), // tr_ms
+    btc.Script.encode(['DUP', 'HASH160', new Uint8Array(19), 'EQUALVERIFY', 'CHECKSIG']), // pkh
+    btc.Script.encode(['HASH160', new Uint8Array(21), 'EQUAL']), // sh with 21-byte hash
+  ];
+  for (const script of nearMisses)
+    deepStrictEqual(btc.OutScript.decode(script).type, 'unknown', hex.encode(script));
+  // Valid scripts still classify as before.
+  const pk = pubECDSA(privA);
+  const [xa, xb] = [pubSchnorr(privA), pubSchnorr(privB)];
+  deepStrictEqual(btc.OutScript.decode(btc.Script.encode([1, pk, 1, 'CHECKMULTISIG'])).type, 'ms');
+  deepStrictEqual(btc.OutScript.decode(btc.Script.encode([1, xa])).type, 'tr');
+  deepStrictEqual(
+    btc.OutScript.decode(btc.Script.encode([xa, 'CHECKSIG', xb, 'CHECKSIGADD', 2, 'NUMEQUAL']))
+      .type,
+    'tr_ms'
+  );
+  // Descriptor-side validation is unchanged: encoding invalid descriptors throws.
+  throws(() => btc.OutScript.encode({ type: 'ms', m: 0, pubkeys: [] } as any));
+  throws(() => btc.OutScript.encode({ type: 'tr', pubkey: badX32 } as any));
+  throws(() => btc.OutScript.encode({ type: 'tr_ms', m: 3, pubkeys: [xa, xb] } as any));
+});
+
+should('near-miss multisig prevout classifies as unknown input', () => {
+  const script = btc.Script.encode([1, badPub33, 1, 'CHECKMULTISIG']);
+  const inputType = btc.getInputType({ witnessUtxo: { amount: 1n, script } } as any, true);
+  deepStrictEqual(inputType.type, 'unknown');
+  deepStrictEqual(inputType.txType, 'legacy');
+});
+
+should('P2A address support', () => {
+  // Fixed issue: OutScript supported P2A but Address() did not, so
+  // getOutputAddress/addOutputAddress failed on pay-to-anchor outputs.
+  const script = hex.decode('51024e73');
+  const desc = btc.OutScript.decode(script);
+  deepStrictEqual(btc.Address().encode(desc as any), 'bc1pfeessrawgf');
+  deepStrictEqual(btc.Address().decode('bc1pfeessrawgf'), { type: 'p2a', script });
+  const tAddr = btc.Address(btc.TEST_NETWORK).encode(desc as any);
+  deepStrictEqual(btc.Address(btc.TEST_NETWORK).decode(tAddr), { type: 'p2a', script });
+  // Other short v1 programs stay unrecognized.
+  const otherV1 = bech32m.encode('bc', [1, ...bech32m.toWords(hex.decode('47e4'))]);
+  throws(() => btc.Address().decode(otherV1));
+  const tx = new btc.Transaction();
+  tx.addOutputAddress('bc1pfeessrawgf', 240n);
+  deepStrictEqual(tx.getOutputAddress(0), 'bc1pfeessrawgf');
+});
+
+should('Script.encode rejects inherited Object.prototype keys', () => {
+  // Fixed issue: OP['toString'] etc. resolve to inherited functions, not opcodes;
+  // they used to reach the byte writer and fail with a confusing internal error.
+  for (const key of ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf'])
+    throws(() => btc.Script.encode([key as any]), /Unknown opcode/);
+  deepStrictEqual(hex.encode(btc.Script.encode(['DUP'])), '76');
+});
+
+should('OpToNum rejects unsafe negative integers', () => {
+  // Fixed issue: only the positive Number.MAX_SAFE_INTEGER bound was checked, so
+  // large negative ScriptNums coerced through Number() with silent precision loss.
+  deepStrictEqual(OpToNum(btc.ScriptNum(9).encode(-(2n ** 60n)), 9), undefined);
+  deepStrictEqual(OpToNum(btc.ScriptNum(9).encode(2n ** 60n), 9), undefined);
+  deepStrictEqual(OpToNum(btc.ScriptNum(9).encode(-5n), 9), -5);
+  deepStrictEqual(OpToNum(5), 5);
+});
+
+should('ScriptNum minimal-encoding enforcement', () => {
+  // Pins the single-read decode refactor, including the minimality checks.
+  const min = btc.ScriptNum(6, true);
+  throws(() => min.decode(hex.decode('00'))); // non-minimal zero
+  throws(() => min.decode(hex.decode('0080'))); // negative zero
+  throws(() => min.decode(hex.decode('0100'))); // 1 with redundant high byte
+  deepStrictEqual(min.decode(new Uint8Array(0)), 0n);
+  deepStrictEqual(min.decode(hex.decode('7f')), 127n);
+  deepStrictEqual(min.decode(hex.decode('ff80')), -255n); // sign byte required for 0xff
+  deepStrictEqual(min.decode(hex.decode('8000')), 128n); // high magnitude needs padding byte
+});
+
+should('allowUnknownVersion accepts non-standard versions', () => {
+  // Fixed issue: the validateOpts ternary was inverted, so the option threw for
+  // EVERY numeric version (even standard ones) — it had never worked.
+  const tx = new btc.Transaction({ version: 5, allowUnknownVersion: true });
+  deepStrictEqual(tx.version, 5);
+  new btc.Transaction({ version: 2, allowUnknownVersion: true });
+  throws(() => new btc.Transaction({ version: 5 })); // still rejected without the flag
+  for (const version of [NaN, Infinity, 1.5, 2 ** 31, -(2 ** 31) - 1])
+    throws(() => new btc.Transaction({ version, allowUnknownVersion: true }));
+  const { raw, txid } = weirdVersionTx();
+  const parsed = btc.Transaction.fromRaw(raw, {
+    allowUnknownInputs: true,
+    allowUnknownOutputs: true,
+    disableScriptCheck: true,
+    allowUnknownVersion: true,
+  });
+  deepStrictEqual(parsed.id, txid);
 });
 
 should.runWhen(import.meta.url);

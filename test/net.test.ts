@@ -2,15 +2,16 @@ import { should } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
-import { p2sh, p2wpkh, Transaction } from '../src/index.ts';
+import { p2sh, p2wpkh, RawTx, Transaction } from '../src/index.ts';
 import {
   calcTransfersDiff,
   EsploraError,
   EsploraProvider,
+  type ScanProgress,
   type TransfersOpts,
   type TxTransfers,
 } from '../src/net.ts';
-import { pubECDSA } from '../src/utils.ts';
+import { pubECDSA, sha256x2 } from '../src/utils.ts';
 import { selectUTXO } from '../src/utxo.ts';
 import { default as NET_BASIC } from './vectors/rpc/net_basic.js';
 import { default as NET_OLD_HISTORY } from './vectors/rpc/net_old_history.js';
@@ -1039,5 +1040,640 @@ should(
     });
   }
 );
+
+// Plain path-routed fetch mock for the streaming/retry/abort tests; the
+// replay-based tests above keep exercising the captured mainnet vectors.
+type MockRes = {
+  ok: boolean;
+  status: number;
+  statusText?: string;
+  json: () => Promise<unknown>;
+  text: () => Promise<string>;
+};
+const okRes = (body: unknown): MockRes => ({
+  ok: true,
+  status: 200,
+  json: async () => (typeof body === 'string' ? JSON.parse(body) : body),
+  text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+});
+const errRes = (status: number, statusText = ''): MockRes => ({
+  ok: false,
+  status,
+  statusText,
+  json: async () => ({}),
+  text: async () => '',
+});
+const routed =
+  (routes: Record<string, unknown>, calls: string[] = []) =>
+  async (url: string, opts: { method?: string } = {}): Promise<MockRes> => {
+    const path = url.slice(NODE_URL.length);
+    calls.push(`${opts.method || 'GET'} ${path}`);
+    if (!(path in routes)) return errRes(404, 'Not Found');
+    return okRes(routes[path]);
+  };
+const collect = async <T>(gen: AsyncGenerator<T, void>): Promise<T[]> => {
+  const out: T[] = [];
+  for await (const item of gen) out.push(item);
+  return out;
+};
+
+should('EsploraProvider: retries transient GET failures', async () => {
+  let calls = 0;
+  const fetch = async () => (++calls < 3 ? errRes(503, 'Service Unavailable') : okRes('123'));
+  deepStrictEqual(await new EsploraProvider(fetch, NODE_URL).height(), 123);
+  deepStrictEqual(calls, 3);
+});
+
+should('EsploraProvider: retries browser fetch failures', async () => {
+  let calls = 0;
+  const fetch = async () => {
+    if (++calls === 1) throw new TypeError('Failed to fetch');
+    return okRes({ '2': 5 });
+  };
+  deepStrictEqual(await new EsploraProvider(fetch, NODE_URL).fee(), 5n);
+  deepStrictEqual(calls, 2);
+});
+
+should('EsploraProvider: retries transient body-parse failures', async () => {
+  // A proxy can serve an HTML error page with status 200; the failure only
+  // surfaces at res.json() and must back off like a status failure.
+  let calls = 0;
+  const html: MockRes = {
+    ok: true,
+    status: 200,
+    json: async () => {
+      throw new SyntaxError('Unexpected token \'<\', "<html>" is not valid JSON');
+    },
+    text: async () => '<html>',
+  };
+  const truncated: MockRes = {
+    ...html,
+    json: async () => {
+      throw new SyntaxError('Unexpected end of JSON input');
+    },
+  };
+  const fetch = async () => (++calls === 1 ? html : calls === 2 ? truncated : okRes({ '2': 5 }));
+  deepStrictEqual(await new EsploraProvider(fetch, NODE_URL).fee(), 5n);
+  deepStrictEqual(calls, 3);
+});
+
+should('EsploraProvider: waitForTx aborts promptly during the poll sleep', async () => {
+  // A signal aborted before sleep() is entered fires no 'abort' event; the
+  // upfront aborted check must reject instead of waiting out pollIntervalMs.
+  const controller = new AbortController();
+  const reason = new Error('cancel wait');
+  const fetch = async (): Promise<MockRes> => {
+    controller.abort(reason);
+    return okRes({ confirmed: false });
+  };
+  const net = new EsploraProvider(fetch, NODE_URL);
+  const start = Date.now();
+  await rejects(
+    () => net.waitForTx(TAPROOT_TX, { pollIntervalMs: 60_000, signal: controller.signal }),
+    reason
+  );
+  deepStrictEqual(Date.now() - start < 5_000, true);
+});
+
+should('EsploraProvider: does not retry non-transient or POST failures', async () => {
+  let getCalls = 0;
+  const badRequest = async () => {
+    getCalls++;
+    return errRes(400, 'Bad Request');
+  };
+  await rejects(() => new EsploraProvider(badRequest, NODE_URL).height());
+  deepStrictEqual(getCalls, 1);
+  let postCalls = 0;
+  const overloaded = async () => {
+    postCalls++;
+    return errRes(503, 'Service Unavailable');
+  };
+  await rejects(() => new EsploraProvider(overloaded, NODE_URL).sendTx(TAPROOT_RAW));
+  deepStrictEqual(postCalls, 1);
+});
+
+should('EsploraProvider: errors carry HTTP status and path', async () => {
+  const net = new EsploraProvider(async () => errRes(404, 'Not Found'), NODE_URL);
+  await rejects(
+    () => net.height(),
+    (error: unknown) => {
+      deepStrictEqual(error instanceof EsploraError, true);
+      deepStrictEqual((error as EsploraError).status, 404);
+      deepStrictEqual((error as EsploraError).path, '/blocks/tip/height');
+      return true;
+    }
+  );
+});
+
+should('EsploraProvider: unspent fetches each funding transaction once', async () => {
+  const funding = new Transaction({ disableScriptCheck: true });
+  funding.addOutputAddress(OLD_ADDR, 1n);
+  funding.addOutputAddress(OLD_ADDR, 2n);
+  funding.addInput({ txid: new Uint8Array(32), index: 0, finalScriptSig: Uint8Array.of(0) });
+  const other = fakeRawTx(9);
+  const calls: string[] = [];
+  const fetch = routed(
+    {
+      [`/address/${OLD_ADDR}/utxo`]: [
+        { txid: funding.id, vout: 0, value: 1, status: { confirmed: true } },
+        { txid: funding.id, vout: 1, value: 2, status: { confirmed: true } },
+        { txid: other.txid, vout: 0, value: 1, status: { confirmed: true } },
+      ],
+      [`/tx/${funding.id}/hex`]: funding.hex,
+      [`/tx/${other.txid}/hex`]: other.raw,
+    },
+    calls
+  );
+  const unspent = await new EsploraProvider(fetch, NODE_URL).unspent(OLD_ADDR);
+  deepStrictEqual(unspent.balance, 4n);
+  deepStrictEqual(unspent.utxo.length, 3);
+  deepStrictEqual(calls.filter((call) => call === `GET /tx/${funding.id}/hex`).length, 1);
+});
+
+should('EsploraProvider: unspent bounds raw-tx fetch concurrency', async () => {
+  const rawTxs = Array.from({ length: 10 }, (_, i) => fakeRawTx(i));
+  const byTxid = new Map(rawTxs.map(({ txid, raw }) => [txid, raw]));
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const fetch = async (url: string): Promise<MockRes> => {
+    const path = url.slice(NODE_URL.length);
+    if (path === `/address/${OLD_ADDR}/utxo`)
+      return okRes(rawTxs.map(({ txid }) => ({ txid, vout: 0, value: 1 })));
+    const match = /^\/tx\/([0-9a-f]{64})\/hex$/.exec(path);
+    if (match && byTxid.has(match[1])) {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return okRes(byTxid.get(match[1])!);
+    }
+    return errRes(404, 'Not Found');
+  };
+  const unspent = await new EsploraProvider(fetch, NODE_URL).unspent(OLD_ADDR, { concurrency: 2 });
+  deepStrictEqual(unspent.balance, 10n);
+  deepStrictEqual(maxInFlight <= 2, true);
+});
+
+should('EsploraProvider: unspent stops raw-tx fan-out after a failure', async () => {
+  const rawTxs = Array.from({ length: 10 }, (_, i) => fakeRawTx(i));
+  let started = 0;
+  const fetch = async (url: string): Promise<MockRes> => {
+    const path = url.slice(NODE_URL.length);
+    if (path === `/address/${OLD_ADDR}/utxo`)
+      return okRes(rawTxs.map(({ txid }) => ({ txid, vout: 0, value: 1 })));
+    started++;
+    if (path === `/tx/${rawTxs[0].txid}/hex`) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return errRes(400, 'Bad Request');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const found = rawTxs.find(({ txid }) => path === `/tx/${txid}/hex`);
+    return found ? okRes(found.raw) : errRes(404, 'Not Found');
+  };
+  await rejects(() => new EsploraProvider(fetch, NODE_URL).unspent(OLD_ADDR, { concurrency: 2 }));
+  // Workers finish their in-flight item but must not pull new ones after the
+  // first failure: 2 started (one per worker), not all 10.
+  deepStrictEqual(started <= 3, true);
+});
+
+should('EsploraProvider: history streams newest-first and stops fetching early', async () => {
+  const rawTxs = Array.from({ length: 50 }, (_, i) => fakeRawTx(i));
+  const txids = rawTxs.map((i) => i.txid);
+  const routes: Record<string, unknown> = Object.fromEntries(
+    rawTxs.map(({ txid, raw }) => [`/tx/${txid}/hex`, raw])
+  );
+  routes[`/address/${OLD_ADDR}/txs`] = txids.slice(0, 25).map(fakeConfirmedTx);
+  routes[`/address/${OLD_ADDR}/txs/chain/${txids[24]}`] = txids.slice(25).map(fakeConfirmedTx);
+  routes[`/address/${OLD_ADDR}/txs/chain/${txids[49]}`] = [];
+  const net = new EsploraProvider(routed(routes), NODE_URL);
+  const rows = await collect(net.history(OLD_ADDR));
+  deepStrictEqual(
+    rows.map((tx) => tx.txid),
+    txids
+  );
+  deepStrictEqual(rows, (await net.transfers(OLD_ADDR)).reverse());
+  // Early stop: one consumed row costs the first page and its raw txs, and
+  // never touches the second pagination page.
+  const calls: string[] = [];
+  const early = new EsploraProvider(routed(routes, calls), NODE_URL);
+  for await (const tx of early.history(OLD_ADDR)) {
+    deepStrictEqual(tx.txid, txids[0]);
+    break;
+  }
+  deepStrictEqual(calls.filter((call) => call.includes('/txs/chain/')).length, 0);
+  deepStrictEqual(calls.filter((call) => call.includes('/hex')).length, 25);
+});
+
+should('EsploraProvider: history reports exact scan progress', async () => {
+  const rawTxs = Array.from({ length: 50 }, (_, i) => fakeRawTx(i));
+  const txids = rawTxs.map((i) => i.txid);
+  const routes: Record<string, unknown> = Object.fromEntries(
+    rawTxs.map(({ txid, raw }) => [`/tx/${txid}/hex`, raw])
+  );
+  routes[`/address/${OLD_ADDR}/txs`] = txids.slice(0, 25).map(fakeConfirmedTx);
+  routes[`/address/${OLD_ADDR}/txs/chain/${txids[24]}`] = txids.slice(25).map(fakeConfirmedTx);
+  routes[`/address/${OLD_ADDR}/txs/chain/${txids[49]}`] = [];
+  routes[`/address/${OLD_ADDR}`] = {
+    chain_stats: { funded_txo_sum: 0, spent_txo_sum: 0, tx_count: 50 },
+    mempool_stats: { funded_txo_sum: 0, spent_txo_sum: 0, tx_count: 0 },
+  };
+  const events: ScanProgress[] = [];
+  const net = new EsploraProvider(routed(routes), NODE_URL);
+  await collect(net.history(OLD_ADDR, { onProgress: (progress) => events.push(progress) }));
+  deepStrictEqual(events.length, 50);
+  deepStrictEqual(events[0], { scannedTxs: 1, totalTxs: 50, percent: 2, currentBlock: 700_000 });
+  deepStrictEqual(events[49], {
+    scannedTxs: 50,
+    totalTxs: 50,
+    percent: 100,
+    currentBlock: 700_000,
+  });
+});
+
+should('EsploraProvider: scans abort via AbortSignal', async () => {
+  const controller = new AbortController();
+  const reason = new Error('stop scan');
+  controller.abort(reason);
+  let calls = 0;
+  const net = new EsploraProvider(async () => {
+    calls++;
+    return okRes([]);
+  }, NODE_URL);
+  await rejects(() => net.transfers(OLD_ADDR, { signal: controller.signal }), reason);
+  const stream = net.history(OLD_ADDR, { signal: controller.signal });
+  await rejects(() => stream.next(), reason);
+  await rejects(() => net.unspent(OLD_ADDR, { signal: controller.signal }), reason);
+  deepStrictEqual(calls, 0);
+});
+
+should('EsploraProvider: history observes aborts between buffered rows', async () => {
+  const txs = [fakeRawTx(0), fakeRawTx(1)];
+  const routes = Object.fromEntries(txs.map((tx) => [`/tx/${tx.txid}/hex`, tx.raw]));
+  routes[`/address/${OLD_ADDR}/txs`] = txs.map((tx) => fakeConfirmedTx(tx.txid));
+  const controller = new AbortController();
+  const reason = new Error('stop buffered history');
+  const stream = new EsploraProvider(routed(routes), NODE_URL).history(OLD_ADDR, {
+    signal: controller.signal,
+  });
+  await stream.next();
+  // Both raws are resolved; cancellation must still win before the second yield.
+  controller.abort(reason);
+  await rejects(() => stream.next(), reason);
+});
+
+should('EsploraProvider: historyMulti merges watched addresses into one stream', async () => {
+  const mk = (outputs: { address: string; value: bigint }[], index: number) => {
+    const tx = new Transaction({ disableScriptCheck: true });
+    for (const { address, value } of outputs) tx.addOutputAddress(address, value);
+    tx.addInput({ txid: new Uint8Array(32), index, finalScriptSig: Uint8Array.of(index) });
+    return tx;
+  };
+  const txA = mk([{ address: OLD_ADDR, value: 1n }], 0);
+  const txB = mk([{ address: TAPROOT_ADDR, value: 2n }], 1);
+  const txAB = mk(
+    [
+      { address: OLD_ADDR, value: 3n },
+      { address: TAPROOT_ADDR, value: 4n },
+    ],
+    2
+  );
+  const meta = (tx: Transaction, block: number, outputs: { address: string; value: number }[]) => ({
+    txid: tx.id,
+    version: 2,
+    locktime: 0,
+    vin: [],
+    vout: outputs.map(({ address, value }) => ({
+      scriptpubkey: '00',
+      scriptpubkey_address: address,
+      value,
+    })),
+    size: 100,
+    weight: 400,
+    fee: 10,
+    status: {
+      confirmed: true,
+      block_height: block,
+      block_hash: '0'.repeat(64),
+      block_time: 1_700_000_000,
+    },
+  });
+  const sharedOuts = [
+    { address: OLD_ADDR, value: 3 },
+    { address: TAPROOT_ADDR, value: 4 },
+  ];
+  const routes = {
+    [`/address/${OLD_ADDR}/txs`]: [
+      meta(txAB, 150, sharedOuts),
+      meta(txA, 100, [{ address: OLD_ADDR, value: 1 }]),
+    ],
+    [`/address/${TAPROOT_ADDR}/txs`]: [
+      meta(txB, 200, [{ address: TAPROOT_ADDR, value: 2 }]),
+      meta(txAB, 150, sharedOuts),
+    ],
+    [`/tx/${txA.id}/hex`]: txA.hex,
+    [`/tx/${txB.id}/hex`]: txB.hex,
+    [`/tx/${txAB.id}/hex`]: txAB.hex,
+  };
+  const calls: string[] = [];
+  const net = new EsploraProvider(routed(routes, calls), NODE_URL);
+  const newest = await collect(net.historyMulti([OLD_ADDR, TAPROOT_ADDR]));
+  // The shared tx is discovered by both address streams but fetched once.
+  deepStrictEqual(calls.filter((call) => call === `GET /tx/${txAB.id}/hex`).length, 1);
+  deepStrictEqual(
+    newest.map((tx) => ({ txid: tx.txid, addresses: tx.addresses })),
+    [
+      { txid: txB.id, addresses: [TAPROOT_ADDR] },
+      { txid: txAB.id, addresses: [OLD_ADDR, TAPROOT_ADDR] },
+      { txid: txA.id, addresses: [OLD_ADDR] },
+    ]
+  );
+  const oldest = await collect(net.historyMulti([OLD_ADDR, TAPROOT_ADDR], { order: 'oldest' }));
+  deepStrictEqual(
+    oldest.map((tx) => tx.txid),
+    [txA.id, txAB.id, txB.id]
+  );
+  throws(
+    () => net.historyMulti([]),
+    new EsploraError('"addresses" expected non-empty array, got type=object')
+  );
+  // A chain cursor exists in at most one address's history; fanning it out
+  // would silently drop the other addresses' rows.
+  throws(
+    () => net.historyMulti([OLD_ADDR, TAPROOT_ADDR], { afterTxid: txA.id }),
+    new EsploraError('expected historyMulti without afterTxid')
+  );
+  // Participant matching uses the backend's canonical encoding, so valid but
+  // non-canonical inputs (uppercase bech32) must still be tagged.
+  const upper = await collect(net.historyMulti([OLD_ADDR.toUpperCase()]));
+  deepStrictEqual(
+    upper.map((tx) => ({ txid: tx.txid, addresses: tx.addresses })),
+    [
+      { txid: txAB.id, addresses: [OLD_ADDR] },
+      { txid: txA.id, addresses: [OLD_ADDR] },
+    ]
+  );
+});
+
+should(
+  'EsploraProvider: historyMulti yields a resolved head before advancing its stream',
+  async () => {
+    const txs = Array.from({ length: 25 }, (_, i) => fakeRawTx(i));
+    const routes = Object.fromEntries(txs.map((tx) => [`/tx/${tx.txid}/hex`, tx.raw]));
+    routes[`/address/${OLD_ADDR}/txs`] = txs.map((tx) => fakeConfirmedTx(tx.txid));
+    const nextPath = `/address/${OLD_ADDR}/txs/chain/${txs[24].txid}`;
+    const failure = new EsploraError(`GET ${nextPath} failed 404 Not Found`, {
+      status: 404,
+      path: nextPath,
+    });
+    const scan = async (multi: boolean) => {
+      const net = new EsploraProvider(routed(routes), NODE_URL);
+      const stream = multi ? net.historyMulti([OLD_ADDR]) : net.history(OLD_ADDR);
+      const rows: string[] = [];
+      await rejects(async () => {
+        for await (const row of stream) rows.push(row.txid);
+      }, failure);
+      return rows;
+    };
+    // One full page makes both public APIs fail on the same following-page request.
+    const history = await scan(false);
+    deepStrictEqual(
+      history,
+      txs.map((tx) => tx.txid)
+    );
+    deepStrictEqual(await scan(true), history);
+  }
+);
+
+should('EsploraProvider: waitForTx polls status until confirmed', async () => {
+  const confirmed = {
+    confirmed: true,
+    block_height: 700_000,
+    block_hash: '0'.repeat(64),
+    block_time: 1_700_000_000,
+  };
+  let statusCalls = 0;
+  const fetch = async (url: string): Promise<MockRes> => {
+    const path = url.slice(NODE_URL.length);
+    if (path !== `/tx/${TAPROOT_TX}/status`) return errRes(400, 'Bad Request');
+    statusCalls++;
+    if (statusCalls === 1) return errRes(404, 'Not Found'); // not yet propagated
+    if (statusCalls === 2) return okRes({ confirmed: false });
+    return okRes(confirmed);
+  };
+  const net = new EsploraProvider(fetch, NODE_URL);
+  deepStrictEqual(await net.waitForTx(TAPROOT_TX, { pollIntervalMs: 1 }), {
+    confirmed: true,
+    block: 700_000,
+    blockHash: '0'.repeat(64),
+    timestamp: 1_700_000_000_000,
+  });
+  deepStrictEqual(statusCalls, 3);
+});
+
+should('EsploraProvider: waitForTx polls through transient outages', async () => {
+  const confirmed = {
+    confirmed: true,
+    block_height: 700_000,
+    block_hash: '0'.repeat(64),
+    block_time: 1_700_000_000,
+  };
+  // A backend outage between polls must not reject a wait that is documented
+  // to run until timeoutMs; the next poll retries.
+  let calls = 0;
+  const fetch = async (): Promise<MockRes> =>
+    ++calls < 3 ? errRes(503, 'Service Unavailable') : okRes(confirmed);
+  const status = await new EsploraProvider(fetch, NODE_URL).waitForTx(TAPROOT_TX, {
+    pollIntervalMs: 1,
+  });
+  deepStrictEqual(status.block, 700_000);
+  deepStrictEqual(calls, 3);
+  // Non-transient failures still reject on the first poll.
+  let badCalls = 0;
+  const badFetch = async (): Promise<MockRes> => {
+    badCalls++;
+    return errRes(400, 'Bad Request');
+  };
+  await rejects(() =>
+    new EsploraProvider(badFetch, NODE_URL).waitForTx(TAPROOT_TX, { pollIntervalMs: 1 })
+  );
+  deepStrictEqual(badCalls, 1);
+});
+
+should('EsploraProvider: waitForTx waits for extra confirmations and times out', async () => {
+  const confirmed = {
+    confirmed: true,
+    block_height: 700_000,
+    block_hash: '0'.repeat(64),
+    block_time: 1_700_000_000,
+  };
+  let heightCalls = 0;
+  const fetch = async (url: string): Promise<MockRes> => {
+    const path = url.slice(NODE_URL.length);
+    if (path === `/tx/${TAPROOT_TX}/status`) return okRes(confirmed);
+    if (path === '/blocks/tip/height') {
+      heightCalls++;
+      return okRes(heightCalls < 2 ? '700000' : '700002');
+    }
+    return errRes(400, 'Bad Request');
+  };
+  const net = new EsploraProvider(fetch, NODE_URL);
+  const status = await net.waitForTx(TAPROOT_TX, { confirmations: 3, pollIntervalMs: 1 });
+  deepStrictEqual(status.block, 700_000);
+  deepStrictEqual(heightCalls, 2);
+  const pending = new EsploraProvider(async () => okRes({ confirmed: false }), NODE_URL);
+  await rejects(
+    () => pending.waitForTx(TAPROOT_TX, { pollIntervalMs: 1, timeoutMs: 5 }),
+    new EsploraError('waitForTx: timeout')
+  );
+  let calls = 0;
+  const bounded = new EsploraProvider(async () => {
+    calls++;
+    return okRes({ confirmed: false });
+  }, NODE_URL);
+  await rejects(
+    () => bounded.waitForTx(TAPROOT_TX, { pollIntervalMs: 80, timeoutMs: 20 }),
+    new EsploraError('waitForTx: timeout')
+  );
+  deepStrictEqual(calls, 1);
+  let release!: (res: MockRes) => void;
+  let signal: AbortSignal | undefined;
+  const stalled = new EsploraProvider((_url, opts) => {
+    signal = opts?.signal;
+    return new Promise<MockRes>((resolve) => (release = resolve));
+  }, NODE_URL);
+  const wait = stalled.waitForTx(TAPROOT_TX, { timeoutMs: 10, pollIntervalMs: 1 });
+  const settled = wait.then(
+    () => 'resolved' as const,
+    (error: unknown) => error
+  );
+  const early = await Promise.race([
+    settled,
+    new Promise<'still pending'>((resolve) => setTimeout(() => resolve('still pending'), 40)),
+  ]);
+  // Release a transport that ignores AbortSignal so the test leaves no pending work.
+  release(okRes({ confirmed: true, block_height: 1 }));
+  await settled;
+  deepStrictEqual(early, new EsploraError('waitForTx: timeout'));
+  deepStrictEqual(signal?.aborted, true);
+});
+
+// Regression tests.
+const TXID_01 = '00'.repeat(31) + '01';
+const privA = hex.decode('02'.repeat(32));
+
+// Stub Esplora transport: routes map path -> response body.
+const mkFetch =
+  (routes: Record<string, { json?: unknown; text?: string }>) => async (url: string) => {
+    const r = routes[url.replace('http://e', '')];
+    return {
+      ok: !!r,
+      status: r ? 200 : 404,
+      json: async () => r?.json,
+      text: async () => r?.text ?? 'not found',
+    };
+  };
+// Consensus-valid tx with a version outside the standard [-1, 0, 1, 2, 3] set.
+const weirdVersionTx = () => {
+  const spend = p2wpkh(pubECDSA(privA));
+  const raw = RawTx.encode({
+    version: 305419896, // 0x12345678
+    segwitFlag: false,
+    inputs: [
+      {
+        txid: hex.decode(TXID_01),
+        index: 0,
+        finalScriptSig: new Uint8Array(0),
+        sequence: 4294967295,
+      },
+    ],
+    outputs: [{ amount: 1000n, script: spend.script }],
+    lockTime: 0,
+  } as any);
+  return { spend, raw, txid: hex.encode(sha256x2(raw).reverse()) };
+};
+
+should('Esplora txInfo parses non-standard tx versions', async () => {
+  // Fixed issue: parseRawTx did not pass allowUnknownVersion, so txInfo/transfers
+  // failed on consensus-valid history with versions outside [-1, 0, 1, 2, 3].
+  const { spend, raw, txid } = weirdVersionTx();
+  const net = new EsploraProvider(
+    mkFetch({
+      [`/tx/${txid}`]: {
+        json: {
+          txid,
+          version: 305419896,
+          locktime: 0,
+          size: raw.length,
+          weight: raw.length * 4,
+          fee: 0,
+          vin: [{ txid: TXID_01, vout: 0 }],
+          vout: [{ scriptpubkey: hex.encode(spend.script), value: 1000 }],
+          status: { confirmed: false },
+        },
+      },
+      [`/tx/${txid}/hex`]: { text: hex.encode(raw) },
+    }) as any,
+    'http://e'
+  );
+  const info = await net.txInfo(txid);
+  deepStrictEqual(info.version, 305419896);
+  deepStrictEqual(info.raw, hex.encode(raw));
+});
+
+should('Esplora unspent() verifies fetched prev-tx hex', async () => {
+  // Fixed issue: unlike txInfo/transfers, unspent() never checked that the raw hex
+  // served for /tx/:txid/hex is actually that transaction, so balance and
+  // nonWitnessUtxo came from whatever the backend chose to return.
+  const { spend, raw, txid } = weirdVersionTx();
+  const addr = spend.address!;
+  const wrongTxid = '11'.repeat(32); // served raw hashes to `txid`, not this
+  await rejects(
+    () =>
+      new EsploraProvider(
+        mkFetch({
+          [`/address/${addr}/utxo`]: { json: [{ txid: wrongTxid, vout: 0 }] },
+          [`/tx/${wrongTxid}/hex`]: { text: hex.encode(raw) },
+        }) as any,
+        'http://e'
+      ).unspent(addr),
+    /wrong raw txid/
+  );
+  const ok = await new EsploraProvider(
+    mkFetch({
+      [`/address/${addr}/utxo`]: { json: [{ txid, vout: 0 }] },
+      [`/tx/${txid}/hex`]: { text: hex.encode(raw) },
+    }) as any,
+    'http://e'
+  ).unspent(addr);
+  deepStrictEqual(ok.balance, 1000n);
+  deepStrictEqual(ok.utxo.length, 1);
+});
+
+should('Esplora transfers() detects pagination cursor loops', async () => {
+  // Hardening: a backend that ignores the /txs/chain/:txid cursor and returns the
+  // same full page forever used to make transfers() loop until out of memory.
+  const addr = p2wpkh(pubECDSA(privA)).address!;
+  const page = Array.from({ length: 25 }, (_, i) => ({
+    txid: i.toString(16).padStart(64, '0'),
+    version: 2,
+    locktime: 0,
+    size: 100,
+    weight: 400,
+    fee: 0,
+    vin: [],
+    vout: [],
+    status: { confirmed: true, block_height: 10, block_hash: '22'.repeat(32), block_time: 1 },
+  }));
+  const sameForever = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => page,
+    text: async () => '',
+  });
+  await rejects(
+    () => new EsploraProvider(sameForever as any, 'http://e').transfers(addr),
+    /pagination cursor loop/
+  );
+});
 
 should.runWhen(import.meta.url);

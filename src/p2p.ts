@@ -42,6 +42,9 @@ const MINUS_3_SQRT = Fp.sqrt(Fp.create(BigInt(-3)));
 const _3n = BigInt(3);
 const _4n = BigInt(4);
 const _7n = BigInt(7);
+// Precomputed 1/2 mod p: turns the frequent "divide by 2" steps of XSwiftEC/XSwiftECInv
+// into single multiplications instead of one modular inversion per call.
+const INV_2 = Fp.inv(Fp.create(_2n));
 // This is the "lift_x(x) succeeds" predicate for field-normalized x values.
 // Raw x >= p would need the full BIP340 range check before reducing modulo p.
 const isValidX = (x: bigint) => FpIsSquare(Fp, Fp.add(Fp.mul(Fp.mul(x, x), x), _7n));
@@ -91,7 +94,7 @@ export const elligatorSwift = /* @__PURE__ */ Object.freeze({
       const r = trySqrt(Fp.mul(Fp.neg(s), Fp.add(Fp.mul(_4n, t0), t1)));
       if (r === undefined) return; // [2 condition]
       if (ellCase & 1 && Fp.is0(r)) return;
-      v = Fp.div(Fp.add(Fp.neg(u), Fp.div(r, s)), _2n); // v = (-u + r / s) / 2
+      v = Fp.mul(Fp.add(Fp.neg(u), Fp.div(r, s)), INV_2); // v = (-u + r / s) / 2
     }
     const w = trySqrt(s);
     if (w === undefined) return; // [3 condition]
@@ -99,7 +102,7 @@ export const elligatorSwift = /* @__PURE__ */ Object.freeze({
     const t0 = last & 1 ? Fp.add(_1n, MINUS_3_SQRT) : Fp.sub(_1n, MINUS_3_SQRT);
     const w0 = last === 0 || last === 5 ? Fp.neg(w) : w; // -w | w
     // w0 * (u * t0 / 2 + v)
-    return Fp.mul(w0, Fp.add(Fp.div(Fp.mul(u, t0), _2n), v));
+    return Fp.mul(w0, Fp.add(Fp.mul(Fp.mul(u, t0), INV_2), v));
   },
   // Encode public key (point or x coordinate bigint) into 64-byte pseudorandom encoding
   // BIP324 samples encodings for x(P), so callers must pass a curve X coordinate in 0..p-1;
@@ -109,11 +112,18 @@ export const elligatorSwift = /* @__PURE__ */ Object.freeze({
     // so encode() must reject out-of-range x instead of silently reducing a different bigint modulo p.
     if (!Fp.isValid(x))
       throw new RangeError('elligatorSwift.encode: expected x coordinate in range 0..p-1');
+    // Off-curve x cannot round-trip: decode() only returns lift_x-able candidates, so
+    // the loop below would silently emit an encoding of a *different* public key.
+    if (!isValidX(x))
+      throw new RangeError('elligatorSwift.encode: expected x coordinate of a curve point');
     // 200k test cycles per keygen: avg=4 max=48
     // seems too much, but same as for reference implementation
     while (true) {
-      // random scalar 1..Fp.ORDER
-      const u = Fp.create(Fp.fromBytes(secp256k1.utils.randomSecretKey()));
+      // Random field element 1..p-1: BIP324 samples u over the whole field (the previous
+      // secret-key sampler silently restricted u to 1..n-1); decode() remaps u = 0, so
+      // zero cannot round-trip and is skipped.
+      const u = Fp.create(Fp.fromBytes(randomBytes(32), true));
+      if (Fp.is0(u)) continue;
       const ellCase = randomBytes(1)[0] & 7; // [0..8)
       const t = elligatorSwift._inv(x, u, ellCase);
       if (!t) continue;
@@ -140,9 +150,11 @@ export const elligatorSwift = /* @__PURE__ */ Object.freeze({
     // try different cases
     let res = Fp.add(u, Fp.mul(Fp.mul(y, y), _4n)); // u + 4 * Y ** 2,
     if (isValidX(res)) return Fp.toBytes(res) as TRet<Uint8Array>;
-    res = Fp.div(Fp.sub(Fp.div(Fp.neg(x), y), u), _2n); // (-X / Y - u) / 2
+    // X / Y is shared by the remaining candidates; computing it once saves an inversion.
+    const xDivY = Fp.div(x, y);
+    res = Fp.mul(Fp.sub(Fp.neg(xDivY), u), INV_2); // (-X / Y - u) / 2
     if (isValidX(res)) return Fp.toBytes(res) as TRet<Uint8Array>;
-    res = Fp.div(Fp.sub(Fp.div(x, y), u), _2n); // (X / Y - u) / 2
+    res = Fp.mul(Fp.sub(xDivY, u), INV_2); // (X / Y - u) / 2
     if (isValidX(res)) return Fp.toBytes(res) as TRet<Uint8Array>;
     throw new Error('elligatorSwift: cannot decode public key');
   },
@@ -173,6 +185,10 @@ export const elligatorSwift = /* @__PURE__ */ Object.freeze({
   ): TRet<Uint8Array> => {
     // BIP324 Shared secret computation hashes "the exactly 64-byte public keys'
     // encodings sent over the wire", so both ElligatorSwift inputs must be 64 bytes here.
+    // Initiator/responder ordering decides the hash-input order, so require a real boolean
+    // instead of letting arbitrary truthy values pick a side.
+    if (typeof initiating !== 'boolean')
+      throw new TypeError('"initiating" expected boolean, got type=' + typeof initiating);
     const ours = abytes(publicKeyOurs, 64, 'publicKeyOurs');
     const theirs = abytes(publicKeyTheirs, 64, 'publicKeyTheirs');
     const ecdhPoint = elligatorSwift.getSharedSecret(privateKeyOurs, theirs);

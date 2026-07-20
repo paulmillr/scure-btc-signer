@@ -4,6 +4,8 @@ import * as bip32 from '@scure/bip32';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
+import { mergeKeyMap, PSBTInput, PSBTInputCoder, PSBTOutputCoder } from '../src/psbt.ts';
+import { pubECDSA } from '../src/utils.ts';
 import { default as psbtV } from './vectors/psbt_vectors.js';
 
 describe('bip174-psbt', () => {
@@ -293,6 +295,101 @@ should('bip174-psbt: PSBT unknown keys', () => {
   const psbt2 = btc.Transaction.fromPSBT(psbtWithAllowUnknown.toPSBT());
   deepStrictEqual(psbt2.outputs[0].unknown, unknown.concat(unknownNext));
   deepStrictEqual(psbt2.inputs[0].unknown, unknown.concat(unknownNext));
+});
+
+// Regression / documentation tests. Tests marked KNOWN ISSUE assert current
+// (buggy or lenient) behavior on purpose: if one starts failing, the underlying
+// issue was fixed — flip the assertion.
+const TXID_01 = '00'.repeat(31) + '01';
+const privA = hex.decode('02'.repeat(32));
+
+should('mergeKeyMap signed-field guard and hex-string bypass', () => {
+  const spend = btc.p2wpkh(pubECDSA(privA));
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: TXID_01,
+    index: 0,
+    witnessUtxo: { amount: 10000n, script: spend.script },
+    sighashType: btc.SigHash.ALL,
+  });
+  tx.addOutput({ script: spend.script, amount: 9000n });
+  tx.signIdx(privA, 0, [btc.SigHash.ALL]);
+  // Guard works for normally-typed values on a signed input.
+  throws(() => tx.updateInput(0, { sighashType: btc.SigHash.SINGLE }));
+  deepStrictEqual(tx.getInput(0).sighashType, btc.SigHash.ALL);
+  // KNOWN ISSUE: the hex-string convenience branch decodes before the
+  // "Cannot change signed field" comparison runs, bypassing the guard.
+  tx.updateInput(0, { sighashType: '03000000' } as any);
+  deepStrictEqual(tx.getInput(0).sighashType, btc.SigHash.SINGLE);
+});
+
+should('mergeKeyMap keyed-field conflicts still throw', () => {
+  // Keyed fields are not affected by the hex-string bypass: same key with a
+  // different value must conflict no matter how the update is delivered.
+  const pub = pubECDSA(privA);
+  const der1 = { fingerprint: 0x11223344, path: [1] };
+  const der2 = { fingerprint: 0x11223344, path: [2] };
+  throws(() =>
+    mergeKeyMap(
+      PSBTInput,
+      { bip32Derivation: [[pub, der2]] } as any,
+      { bip32Derivation: [[pub, der1]] } as any
+    )
+  );
+  const merged = mergeKeyMap(
+    PSBTInput,
+    { bip32Derivation: [[pub, der1]] } as any,
+    { bip32Derivation: [[pub, der1]] } as any
+  ) as any;
+  deepStrictEqual(merged.bip32Derivation.length, 1);
+});
+
+should('PSBT encode sorts caller unknown array in place', () => {
+  // KNOWN ISSUE: encodeStream sorts value.unknown with Array.prototype.sort,
+  // mutating the caller's array (ordering only; the row set is unchanged).
+  const row = (key: number) =>
+    [{ type: 0xf0, key: new Uint8Array([key]) }, new Uint8Array([0xaa])] as any;
+  const unknown = [row(2), row(1)];
+  PSBTInputCoder.encode({ unknown } as any);
+  deepStrictEqual(
+    unknown.map((u) => u[0].key[0]),
+    [1, 2]
+  );
+});
+
+should('schnorr signature length validation in PSBT fields', () => {
+  PSBTInputCoder.encode({ tapKeySig: new Uint8Array(64).fill(1) } as any);
+  throws(() => PSBTInputCoder.encode({ tapKeySig: new Uint8Array(63).fill(1) } as any));
+  throws(() => PSBTInputCoder.encode({ tapKeySig: new Uint8Array(66).fill(1) } as any));
+  // KNOWN ISSUE (leniency): 65-byte signature with trailing sighash byte 0x00 is
+  // accepted, though BIP341 requires the 64-byte form for the default hash type.
+  const sig65 = new Uint8Array(65).fill(1);
+  sig65[64] = 0x00;
+  PSBTInputCoder.encode({ tapKeySig: sig65 } as any);
+});
+
+should('tapTree DFS/completeness validation and leniencies', () => {
+  const leaf = (depth: number, version = 0xc0) => ({
+    depth,
+    version,
+    script: new Uint8Array([0x51]),
+  });
+  // Valid complete trees.
+  PSBTOutputCoder.encode({ tapTree: [leaf(0)] } as any);
+  PSBTOutputCoder.encode({ tapTree: [leaf(1), leaf(2), leaf(2)] } as any);
+  // Incomplete tree: single leaf at depth 1 leaves a missing sibling.
+  throws(() => PSBTOutputCoder.encode({ tapTree: [leaf(1)] } as any));
+  // Not a DFS walk: three leaves cannot all sit at depth 1.
+  throws(() => PSBTOutputCoder.encode({ tapTree: [leaf(1), leaf(1), leaf(1)] } as any));
+  // KNOWN ISSUE (leniency): depth beyond BIP341's 128 limit is accepted
+  // (caterpillar tree: depths 1..129 plus a second depth-129 leaf).
+  const deep = [];
+  for (let i = 1; i <= 129; i++) deep.push(leaf(i));
+  deep.push(leaf(129));
+  PSBTOutputCoder.encode({ tapTree: deep } as any);
+  // KNOWN ISSUE (leniency): leaf version with the parity bit set is accepted here,
+  // while the tapLeafScript validator rejects it.
+  PSBTOutputCoder.encode({ tapTree: [leaf(0, 0xc1)] } as any);
 });
 
 should.runWhen(import.meta.url);

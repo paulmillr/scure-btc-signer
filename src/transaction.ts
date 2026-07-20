@@ -10,7 +10,6 @@ import {
   RawInput,
   RawOutput,
   RawTx,
-  RawWitness,
   Script,
   scriptPushLen,
   VarBytes,
@@ -389,12 +388,15 @@ function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
       throw new Error(`Transation options wrong type: ${k}=${v} (${typeof v})`);
   }
   // 0 and -1 happens in tests
+  // With allowUnknownVersion any numeric version is fine; the ternary was inverted
+  // before 2026-07 (audit), which made the option throw for every numeric version.
   if (
     _opts.allowUnknownVersion
-      ? typeof _opts.version === 'number'
+      ? typeof _opts.version !== 'number'
       : ![-1, 0, 1, 2, 3].includes(_opts.version)
   )
     throw new Error(`Unknown version: ${_opts.version}`);
+  P.I32LE.encode(_opts.version); // Validate the signed transaction-version wire domain.
   if (_opts.customScripts !== undefined) {
     const cs = _opts.customScripts;
     if (!Array.isArray(cs)) {
@@ -441,6 +443,9 @@ function validateInput(i: TArg<psbt.TransactionInput>): TRet<PSBTInputs> {
         allowUnknownOutputs: true,
         disableScriptCheck: true,
         allowUnknownInputs: true,
+        // Consensus does not restrict nVersion; a previous tx with a non-standard
+        // version is still spendable and its txid must still be verifiable.
+        allowUnknownVersion: true,
       });
       const txid = hex.encode(_i.txid);
       // BIP174 requires the provided nonWitnessUtxo to hash to the prevout txid even when the
@@ -900,27 +905,33 @@ export class Transaction {
 
   // Info utils
   get hasWitnesses(): boolean {
-    let out = false;
     for (const i of this.inputs)
-      if (i.finalScriptWitness && i.finalScriptWitness.length) out = true;
-    return out;
+      if (i.finalScriptWitness && i.finalScriptWitness.length) return true;
+    return false;
   }
   // https://en.bitcoin.it/wiki/Weight_units
   get weight(): number {
     if (!this.isFinal) throw new Error('Transaction is not finalized');
+    // Serialized length of VarBytes(data) without allocating the encoded copy
+    const varLen = (dataLen: number) => CompactSizeLen.encode(dataLen).length + dataLen;
+    const hasWitnesses = this.hasWitnesses;
     let out = 32;
     // Outputs
     const outputs = this.outputs.map(outputBeforeSign);
     out += 4 * CompactSizeLen.encode(this.outputs.length).length;
-    for (const o of outputs) out += 32 + 4 * VarBytes.encode(o.script).length;
+    for (const o of outputs) out += 32 + 4 * varLen(o.script.length);
     // Inputs
-    if (this.hasWitnesses) out += 2;
+    if (hasWitnesses) out += 2;
     out += 4 * CompactSizeLen.encode(this.inputs.length).length;
     for (const i of this.inputs) {
-      out += 160 + 4 * VarBytes.encode(i.finalScriptSig || P.EMPTY).length;
+      out += 160 + 4 * varLen((i.finalScriptSig || P.EMPTY).length);
       // Once segwit serialization is active, every input contributes one witness vector, including
       // legacy inputs whose empty vector still encodes as a single zero-item-count byte.
-      if (this.hasWitnesses) out += RawWitness.encode(i.finalScriptWitness || []).length;
+      if (hasWitnesses) {
+        const witness = i.finalScriptWitness || [];
+        out += CompactSizeLen.encode(witness.length).length;
+        for (const w of witness) out += varLen(w.length);
+      }
     }
     return out;
   }
@@ -1192,8 +1203,7 @@ export class Transaction {
     if (idx >= this.inputs.length) throw new Error(`Invalid input idx=${idx}`);
     u.aarray(amount, 'amount');
     u.aarray(prevOutScript, 'prevOutScript');
-    if (this.inputs.length !== amount.length)
-      throw new Error(`Invalid amounts array=${amount}`);
+    if (this.inputs.length !== amount.length) throw new Error(`Invalid amounts array=${amount}`);
     if (this.inputs.length !== prevOutScript.length)
       throw new Error(`Invalid prevOutScript array=${prevOutScript}`);
     const out: Bytes[] = [

@@ -26,8 +26,8 @@
   "scripts": {
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}",
-    "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
-    "check": "npx --no @paulmillr/jsbt check package.json",
+    "bundle": "npx --no @paulmillr/jsbt bundle",
+    "check": "npx --no @paulmillr/jsbt check",
     "benchmark": "node benchmark/index.ts",
     "benchmark:network": "node benchmark/network.ts",
     "format": "prettier --write src test/*.test.*",

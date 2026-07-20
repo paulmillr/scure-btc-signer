@@ -1,7 +1,12 @@
+import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { hex } from '@scure/base';
 import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import * as btcUtils from '../src/utils.ts';
+
+// Regression tests.
+const privA = hex.decode('02'.repeat(32));
 
 should('Packed CompactSize', () => {
   const CASES = [
@@ -267,6 +272,73 @@ should('combinations', () => {
       combLen
     );
   }
+});
+
+should('CompactSize boundaries and minimality', () => {
+  // Pins each encoding-width boundary across the hoisted-limits refactor.
+  const vectors: [bigint, string][] = [
+    [0n, '00'],
+    [0xfcn, 'fc'],
+    [0xfdn, 'fdfd00'],
+    [0xffffn, 'fdffff'],
+    [0x10000n, 'fe00000100'],
+    [0xffffffffn, 'feffffffff'],
+    [0x100000000n, 'ff0000000001000000'],
+    [0xffffffffffffffffn, 'ffffffffffffffffff'],
+  ];
+  for (const [num, exp] of vectors) {
+    deepStrictEqual(hex.encode(btc.CompactSize.encode(num)), exp, `encode(${num})`);
+    deepStrictEqual(btc.CompactSize.decode(hex.decode(exp)), num, `decode(${exp})`);
+  }
+  throws(() => btc.CompactSize.encode(-1n));
+  throws(() => btc.CompactSize.encode(2n ** 64n));
+  // Non-minimal encodings must reject (BIP-174 requirement).
+  throws(() => btc.CompactSize.decode(hex.decode('fd0100')));
+  throws(() => btc.CompactSize.decode(hex.decode('fe01000000')));
+  throws(() => btc.CompactSize.decode(hex.decode('ff0100000000000000')));
+});
+
+should('low-R grinding always yields 32-byte DER r', () => {
+  // Pins the hoisted LOW_R_BOUND refactor: ground signatures must never need the
+  // 33-byte padded DER r form, and must remain valid ECDSA signatures.
+  const pub = btcUtils.pubECDSA(privA);
+  let unGroundHighRSeen = false;
+  for (let i = 0; i < 16; i++) {
+    const hash = btcUtils.sha256(new Uint8Array([i]));
+    const plain = secp256k1.Signature.fromBytes(btcUtils.signECDSA(hash, privA), 'der');
+    if (plain.r >= 2n ** 255n) unGroundHighRSeen = true; // control: grinding has work to do
+    const sig = btcUtils.signECDSA(hash, privA, true);
+    deepStrictEqual(sig[0], 0x30);
+    deepStrictEqual(sig[2], 0x02);
+    deepStrictEqual(sig[3] <= 32, true, `DER r length for i=${i}`);
+    const parsed = secp256k1.Signature.fromBytes(sig, 'der');
+    deepStrictEqual(secp256k1.verify(parsed.toBytes(), hash, pub, { prehash: false }), true);
+  }
+  deepStrictEqual(unGroundHighRSeen, true);
+});
+
+should('taproot tweak priv/pub consistency and BIP341 H constant', () => {
+  // pubSchnorr(taprootTweakPrivKey(k)) must equal taprootTweakPubkey(pubSchnorr(k))
+  // for both internal-key parities, and key-path signatures must verify under the
+  // tweaked output key.
+  const parities = new Set<number>();
+  for (const c of ['02', '03', '04', '05']) {
+    const priv = hex.decode(c.repeat(32));
+    const pub = btcUtils.pubSchnorr(priv);
+    const [tweakedPub, parity] = btcUtils.taprootTweakPubkey(pub, new Uint8Array(0));
+    parities.add(parity);
+    const tweakedPriv = btcUtils.taprootTweakPrivKey(priv);
+    deepStrictEqual(btcUtils.pubSchnorr(tweakedPriv), tweakedPub);
+    const msg = btcUtils.sha256(pub);
+    const sig = btcUtils.signSchnorr(msg, tweakedPriv, new Uint8Array(32));
+    deepStrictEqual(schnorr.verify(sig, msg, tweakedPub), true);
+  }
+  deepStrictEqual([...parities].sort(), [0, 1]); // both branches exercised
+  // The unspendable internal key is the fixed BIP341 "nothing up my sleeve" H point.
+  deepStrictEqual(
+    hex.encode(btcUtils.TAPROOT_UNSPENDABLE_KEY),
+    '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
+  );
 });
 
 should.runWhen(import.meta.url);

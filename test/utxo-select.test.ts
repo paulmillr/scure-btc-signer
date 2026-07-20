@@ -5,6 +5,7 @@ import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import type { EstimatorOpts } from '../src/utxo.ts';
+import { pubECDSA } from '../src/utils.ts';
 
 describe('UTXO Select', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
@@ -1691,6 +1692,31 @@ describe('UTXO Select', () => {
       /"output.amount" expected non-negative bigint, got -1/
     );
   });
+});
+
+// Regression test.
+const TXID_01 = '00'.repeat(31) + '01';
+const privA = hex.decode('02'.repeat(32));
+
+should('selectUTXO "all" fails on insufficient funds instead of negative fee', () => {
+  // Fixed issue: 'all' used to return the selection unconditionally, so result()
+  // reported fee = total - amount (negative) or threw the internal
+  // 'Estimator.result: negative change' error when alwaysChange was set.
+  const spend = btc.p2wpkh(pubECDSA(privA));
+  const inputs = [
+    { txid: TXID_01, index: 0, witnessUtxo: { amount: 1000n, script: spend.script } },
+  ];
+  const outputs = [{ address: spend.address!, amount: 5000n }];
+  const opts = { feePerByte: 1n, changeAddress: spend.address!, createTx: false };
+  deepStrictEqual(btc.selectUTXO(inputs, outputs, 'all', opts), undefined);
+  deepStrictEqual(
+    btc.selectUTXO(inputs, outputs, 'all', { ...opts, alwaysChange: true }),
+    undefined
+  );
+  // Sufficient funds still select; sub-dust leftover becomes fee, never negative.
+  const ok = btc.selectUTXO(inputs, [{ address: spend.address!, amount: 500n }], 'all', opts);
+  deepStrictEqual(ok!.change, false);
+  deepStrictEqual(ok!.fee, 500n); // total(1000) - amount(500), change below dust threshold
 });
 
 should.runWhen(import.meta.url);

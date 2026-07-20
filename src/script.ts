@@ -116,22 +116,20 @@ export function ScriptNum(bytesLimit = 6, forceMinimal = false): P.CoderType<big
       if (len > bytesLimit)
         throw new Error(`ScriptNum: number (${len}) bigger than limit=${bytesLimit}`);
       if (len === 0) return _0n;
+      // Read the payload once instead of peeking for the minimality check and
+      // then re-reading it byte-by-byte through the Reader.
+      const data = r.bytes(len);
       if (forceMinimal) {
-        const data = r.bytes(len, true);
         // MSB is zero (without sign bit) -> not minimally encoded
-        if ((data[data.length - 1] & 0x7f) === 0) {
+        if ((data[len - 1] & 0x7f) === 0) {
           // exception
-          if (len <= 1 || (data[data.length - 2] & 0x80) === 0)
+          if (len <= 1 || (data[len - 2] & 0x80) === 0)
             throw new Error('Non-minimally encoded ScriptNum');
         }
       }
-      let last = 0;
       let res = _0n;
-      for (let i = 0; i < len; ++i) {
-        last = r.byte();
-        res |= BigInt(last) << (_8n * BigInt(i));
-      }
-      if (last >= 0x80) {
+      for (let i = 0; i < len; ++i) res |= BigInt(data[i]) << (_8n * BigInt(i));
+      if (data[len - 1] >= 0x80) {
         res &= (_2n ** BigInt(len * 8) - _1n) >> _1n;
         res = -res;
       }
@@ -163,7 +161,9 @@ export function OpToNum(
   if (isBytes(op)) {
     try {
       const val = ScriptNum(bytesLimit, forceMinimal).decode(op);
-      if (val > Number.MAX_SAFE_INTEGER) return;
+      // Symmetric safe-integer bound: large negative values would otherwise
+      // coerce through Number() with silent precision loss.
+      if (val > Number.MAX_SAFE_INTEGER || val < -Number.MAX_SAFE_INTEGER) return;
       return Number(val);
     } catch (e) {
       return;
@@ -221,8 +221,11 @@ export const Script: TRet<P.CoderType<ScriptType>> = /* @__PURE__ */ (() =>
         aarray(value, 'value');
         for (let o of value) {
           if (typeof o === 'string') {
-            if (OP[o] === undefined) throw new Error(`Unknown opcode=${o}`);
-            w.byte(OP[o]);
+            const op = OP[o];
+            // OP is a plain object, so inherited Object.prototype keys ('toString',
+            // 'constructor', ...) are not opcodes and must be rejected here too.
+            if (typeof op !== 'number') throw new Error(`Unknown opcode=${o}`);
+            w.byte(op);
             continue;
           } else if (typeof o === 'number') {
             if (o === 0x00) {
@@ -297,19 +300,16 @@ export const CompactSize: P.CoderType<bigint> = /* @__PURE__ */ (() => {
   const limits: Record<number, [number, number, bigint, bigint]> = {
     0xfd: [0xfd, 2, BigInt(0xfd), BigInt(0xffff)],
     0xfe: [0xfe, 4, BigInt(0x10000), BigInt(0xffffffff)],
-    0xff: [
-      0xff,
-      8,
-      BigInt(0x100000000),
-      BigInt('0xffffffffffffffff'),
-    ],
+    0xff: [0xff, 8, BigInt(0x100000000), BigInt('0xffffffffffffffff')],
   };
+  // Hoisted: Object.values() would otherwise allocate a fresh array on every encode.
+  const limitsList = Object.values(limits);
   return Object.freeze(
     P.wrap({
       encodeStream: (w: P.Writer, value: bigint) => {
         if (typeof value === 'number') value = BigInt(value);
         if (_0n <= value && value <= COMPACT_DIRECT_MAX) return w.byte(Number(value));
-        for (const [flag, bytes, start, stop] of Object.values(limits)) {
+        for (const [flag, bytes, start, stop] of limitsList) {
           if (start > value || value > stop) continue;
           w.byte(flag);
           for (let i = 0; i < bytes; i++) w.byte(Number((value >> (_8n * BigInt(i))) & U8_MAX));

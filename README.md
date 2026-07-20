@@ -49,6 +49,40 @@ For React Native, you may need a [polyfill for crypto.getRandomValues](https://g
 import * as btc from '@scure/btc-signer';
 ```
 
+### Quickstart
+
+Create a Taproot address, build a transaction spending one of its UTXOs, sign and finalize it:
+
+```ts
+import * as btc from '@scure/btc-signer';
+import { hex } from '@scure/base';
+
+const privKey = hex.decode('a1547d0a01c9acb2b8a4128f97bbcd74d9a5750a9a3d1571ee3d9840b41d1fbb');
+const pubKey = btc.utils.pubSchnorr(privKey);
+
+// Taproot payment for a single key. Also check out p2wpkh, p2sh, p2wsh & others below
+const spend = btc.p2tr(pubKey);
+console.log(spend.address);
+// bc1pkw4e67whvet7q6xa854tstt7kjn9f7n3gqvyjqznezqwux0gnzhsrtlvy3
+
+const tx = new btc.Transaction();
+tx.addInput({
+  ...spend, // adds tapInternalKey & other fields required for signing
+  txid: '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858',
+  index: 0,
+  witnessUtxo: { script: spend.script, amount: 100_000n }, // amounts are always bigint sats
+});
+tx.addOutputAddress(spend.address!, 90_000n); // leftover 10k sats become the fee
+tx.sign(privKey);
+tx.finalize();
+
+console.log(tx.id);
+// 927bc3441c7b376a83913b534bf10430139d9f64d83cbc38eb3a4e24cce54dc5
+console.log(tx.hex); // ready to broadcast, e.g. via net.ts EsploraProvider
+```
+
+The rest of the docs cover every payment type, PSBT workflows, UTXO selection and more:
+
 - [Payments](#payments)
   - [P2PK Pay To Public Key](#p2pk-pay-to-public-key)
   - [P2PKH Public Key Hash](#p2pkh-public-key-hash)
@@ -1039,7 +1073,11 @@ import * as btc from '@scure/btc-signer';
 import { EsploraProvider } from '@scure/btc-signer/net.js';
 import { pubECDSA } from '@scure/btc-signer/utils.js';
 const net = new EsploraProvider(fetch, 'http://127.0.0.1:3000');
-// Methods: `height`, `blockInfo`, `fee`, `balance`, `txCount`, `sendTx`, `txInfo`, `unspent`, `transfers`.
+// Methods: `height`, `blockInfo`, `fee`, `balance`, `txCount`, `sendTx`, `waitForTx`, `txInfo`,
+// `unspent`, `transfers`, `history`, `historyMulti`.
+// Transient backend failures (429/5xx, dropped connections) are retried with backoff on GETs.
+// Long scans accept `signal` (AbortSignal) and `onProgress`; raw-tx fan-out is
+// bounded by `concurrency` (default 8).
 
 // Get latest block.
 async function latestBlock() {
@@ -1052,6 +1090,27 @@ async function latestBlock() {
 async function addressTransactions(address: string) {
   const txs = await net.transfers(address, { limit: 10 });
   return txs.map((tx) => ({ txid: tx.txid, block: tx.block, fee: tx.info.fee }));
+}
+
+// Stream history instead of buffering it: rows arrive newest-first while pages
+// are fetched, and stopping early also stops fetching.
+async function streamHistory(address: string) {
+  for await (const tx of net.history(address, { onProgress: (p) => console.log(p.percent) })) {
+    if (tx.block !== undefined && tx.block < 800_000) break;
+    console.log(tx.txid, tx.transfers);
+  }
+}
+
+// Merged history for a set of addresses (HD wallets): one txid-deduplicated
+// stream; each row lists the watched addresses participating in it.
+async function walletHistory(addresses: string[]) {
+  for await (const tx of net.historyMulti(addresses)) console.log(tx.txid, tx.addresses);
+}
+
+// Broadcast, then wait for confirmation.
+async function sendAndWait(rawTx: string) {
+  const txid = await net.sendTx(rawTx);
+  return await net.waitForTx(txid, { confirmations: 2, timeoutMs: 3_600_000 });
 }
 
 // Get UTXOs, select inputs, and sign. Call with a key that controls funded UTXOs.

@@ -29,11 +29,18 @@ export type P2Ret = {
 };
 
 // Pay to Anchor (P2A)
+// BIP433 Pay-to-Anchor witness program bytes; the scriptPubKey is `OP_1 <0x4e73>`.
+const P2A_PROGRAM = /* @__PURE__ */ Uint8Array.from([0x4e, 0x73]);
 type OutP2AType = { type: 'p2a'; script: Bytes };
 const OutP2A: Coder<OptScript, OutP2AType | undefined> = {
   encode(from: TArg<ScriptType>): TRet<OutP2AType | undefined> {
     // BIP433 defines P2A as the exact OP_1 <0x4e73> scriptPubKey.
-    if (from.length !== 2 || from[0] !== 1 || !u.isBytes(from[1]) || hex.encode(from[1]) !== '4e73')
+    if (
+      from.length !== 2 ||
+      from[0] !== 1 ||
+      !u.isBytes(from[1]) ||
+      !u.equalBytes(from[1], P2A_PROGRAM)
+    )
       return;
     return { type: 'p2a', script: Script.encode(from) } as TRet<OutP2AType | undefined>;
   },
@@ -41,7 +48,7 @@ const OutP2A: Coder<OptScript, OutP2AType | undefined> = {
     if (to.type !== 'p2a') return;
     // The decoded object keeps `script` for caller convenience, but the `p2a`
     // tag always canonicalizes back to the fixed BIP433 script.
-    return [1, hex.decode('4e73')] as TRet<OptScript>;
+    return [1, Uint8Array.from(P2A_PROGRAM)] as TRet<OptScript>;
   },
 };
 
@@ -87,8 +94,9 @@ const OutPKH: Coder<OptScript, OutPKHType | undefined> = {
   encode(from: TArg<ScriptType>): TRet<OutPKHType | undefined> {
     if (from.length !== 5 || from[0] !== 'DUP' || from[1] !== 'HASH160' || !u.isBytes(from[2]))
       return;
-    // OutScript validates that the pushed HASH160 is exactly 20 bytes.
-    // This child matcher only recognizes the canonical P2PKH opcode skeleton.
+    // Require the exact 20-byte HASH160 here so near-miss scripts fall through
+    // to OutUnknown instead of throwing in the OutScript validator on decode.
+    if (from[2].length !== 20) return;
     if (from[3] !== 'EQUALVERIFY' || from[4] !== 'CHECKSIG') return;
     return { type: 'pkh', hash: from[2] } as TRet<OutPKHType | undefined>;
   },
@@ -105,8 +113,9 @@ const OutSH: Coder<OptScript, OutSHType | undefined> = {
   encode(from: TArg<ScriptType>): TRet<OutSHType | undefined> {
     if (from.length !== 3 || from[0] !== 'HASH160' || !u.isBytes(from[1]) || from[2] !== 'EQUAL')
       return;
-    // OutScript validates that the pushed HASH160 is exactly 20 bytes.
-    // This child matcher only recognizes the canonical P2SH opcode skeleton.
+    // Require the exact 20-byte HASH160 here so near-miss scripts fall through
+    // to OutUnknown instead of throwing in the OutScript validator on decode.
+    if (from[1].length !== 20) return;
     return { type: 'sh', hash: from[1] } as TRet<OutSHType | undefined>;
   },
   // OutScript validates `sh.hash` before this branch emits the canonical
@@ -159,9 +168,12 @@ const OutMS: Coder<OptScript, OutMSType | undefined> = {
     if (typeof m !== 'number' || typeof n !== 'number') return;
     const pubkeys = from.slice(1, -2);
     if (n !== pubkeys.length) return;
-    for (const pub of pubkeys) if (!u.isBytes(pub)) return;
-    // OutScript validates pubkey encodings and `0 < m <= n <= 16`.
-    // This child matcher only recognizes the canonical CHECKMULTISIG skeleton.
+    // Require valid ECDSA pubkeys and `0 < m <= n` here so near-miss
+    // CHECKMULTISIG scripts (garbage keys, degenerate 0-of-0) fall through to
+    // OutUnknown instead of throwing in the OutScript validator on decode.
+    // Script.decode only yields 0..16 for opcode numbers, so n <= 16 holds.
+    for (const pub of pubkeys) if (!u.isBytes(pub) || !isValidPubkey(pub, u.PubT.ecdsa)) return;
+    if (!Number.isSafeInteger(m) || m < 1 || m > n) return;
     // We don't need n here because it is the same as pubkeys.length.
     return { type: 'ms', m, pubkeys: pubkeys as Bytes[] } as TRet<OutMSType | undefined>;
   },
@@ -182,6 +194,10 @@ const OutTR: Coder<OptScript, OutTRType | undefined> = {
     // BIP341 assigns native taproot meaning only to version 1 with a 32-byte x-only program;
     // other OP_1 program lengths remain reserved future witness programs and should fall through.
     if (from.length !== 2 || from[0] !== 1 || !u.isBytes(from[1]) || from[1].length !== 32) return;
+    // A 32-byte v1 program with an off-curve x coordinate is a fundable but
+    // taproot-unspendable output; classify it as unknown instead of throwing
+    // in the OutScript validator on decode.
+    if (!isValidPubkey(from[1], u.PubT.schnorr)) return;
     return { type: 'tr', pubkey: from[1] } as TRet<OutTRType | undefined>;
   },
   // OutScript validates `tr.pubkey` before this branch emits the canonical
@@ -243,9 +259,13 @@ const OutTRMS: Coder<OptScript, OutTRMSType | undefined> = {
         if (elm !== (i === 1 ? 'CHECKSIG' : 'CHECKSIGADD')) return;
         continue;
       }
-      if (!u.isBytes(elm)) return;
+      // Require actual Schnorr pubkeys here (same as tr_ns) so near-miss
+      // CHECKSIGADD scripts fall through to OutUnknown instead of throwing
+      // in the OutScript validator on decode.
+      if (!u.isBytes(elm) || !isValidPubkey(elm, u.PubT.schnorr)) return;
       pubkeys.push(elm);
     }
+    if (!Number.isSafeInteger(m) || m < 1 || m > pubkeys.length || pubkeys.length > 999) return;
     return { type: 'tr_ms', pubkeys, m } as TRet<OutTRMSType | undefined>;
   },
   decode: (to: TArg<OutTRMSType>): TRet<OptScript> => {
@@ -785,7 +805,14 @@ function checkTaprootScript(
     // disable custom. All custom scripts for taproot should have prefix 'tr_'
     if (customScripts) {
       const cs = P.apply(Script, P.coders.match(customScripts));
-      const c = cs.decode(script);
+      let c;
+      // match() throws when no custom coder matches; treat that as "not a custom
+      // script" so the allowUnknownOutputs escape below stays reachable.
+      try {
+        c = cs.decode(script);
+      } catch (e) {
+        c = undefined;
+      }
       if (c !== undefined) {
         if (!u.astring(c.type, 'c.type').startsWith('tr_'))
           throw new Error(`P2TR: invalid custom type=${c.type}`);
@@ -1086,18 +1113,20 @@ export function p2tr(
     );
     const tapMerkleRoot = hashedTree.hash;
     const [tweakedPubkey, parity] = u.taprootTweakPubkey(pubKey, tapMerkleRoot);
+    const tapLeafScript: NonNullable<TransactionInput['tapLeafScript']> = [];
     const leaves = taprootWalkTree(hashedTree).map((l) => {
       const version = tapLeafVersion(l.version);
-      return {
-        ...l,
-        // Leaf versions are stored as the base even byte; only the control block adds the
-        // output-key parity bit required by BIP 341 script-path spending.
-        controlBlock: TaprootControlBlock.encode({
-          version: version + parity,
-          internalKey: pubKey,
-          merklePath: l.path,
-        }),
+      // Leaf versions are stored as the base even byte; only the control block adds the
+      // output-key parity bit required by BIP 341 script-path spending.
+      const controlBlock = {
+        version: version + parity,
+        internalKey: pubKey,
+        merklePath: l.path,
       };
+      // Skip an encode/decode copy for performance; callers must treat returned metadata as
+      // immutable.
+      tapLeafScript.push([controlBlock, u.concatBytes(l.script, new Uint8Array([version]))]);
+      return { ...l, controlBlock: TaprootControlBlock.encode(controlBlock) };
     });
     return {
       type: 'tr',
@@ -1108,10 +1137,7 @@ export function p2tr(
       // PSBT stuff
       tapInternalKey: pubKey,
       leaves,
-      tapLeafScript: leaves.map((l) => [
-        TaprootControlBlock.decode(l.controlBlock),
-        u.concatBytes(l.script, new Uint8Array([tapLeafVersion(l.version)])),
-      ]),
+      tapLeafScript,
       tapMerkleRoot,
     } as const as TRet<Extends<P2TR_TREE, P2Ret>>;
   } else {
@@ -1455,6 +1481,8 @@ export function Address(network: BTC_NETWORK = NETWORK): TRet<P.Coder<AddressVal
       if (type === 'wpkh') return programToWitness(0, from.hash, network);
       else if (type === 'wsh') return programToWitness(0, from.hash, network);
       else if (type === 'tr') return programToWitness(1, from.pubkey, network);
+      // BIP433 P2A is the fixed v1 witness program 0x4e73 ('bc1pfeessrawgf').
+      else if (type === 'p2a') return programToWitness(1, P2A_PROGRAM, network);
       else if (type === 'pkh') return formatKey(from.hash, [network.pubKeyHash]);
       else if (type === 'sh') return formatKey(from.hash, [network.scriptHash]);
       throw new Error(`Unknown address type=${type}`);
@@ -1483,8 +1511,10 @@ export function Address(network: BTC_NETWORK = NETWORK): TRet<P.Coder<AddressVal
           return { type: 'wpkh', hash: data } as TRet<AddressValue>;
         else if (version === 1 && data.length === 32)
           return { type: 'tr', pubkey: data } as TRet<AddressValue>;
+        else if (version === 1 && u.equalBytes(data, P2A_PROGRAM))
+          return { type: 'p2a', script: Script.encode([1, data]) } as TRet<AddressValue>;
         // Future witness versions can still be valid addresses, but this helper
-        // only returns typed descriptors for recognized v0 and taproot templates.
+        // only returns typed descriptors for recognized v0, taproot and P2A templates.
         else throw new Error('Unknown witness program');
       }
       const data = base58check.decode(address);
