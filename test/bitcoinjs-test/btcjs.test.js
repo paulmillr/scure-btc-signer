@@ -1,6 +1,6 @@
 import { base64, hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../../index.js';
 import * as utils from './utils.js';
@@ -10,7 +10,7 @@ import { default as f_script } from './vectors/bitcoinjs/script.json' with { typ
 import { default as f_script_number } from './vectors/bitcoinjs/script_number.json' with { type: 'json' };
 import { default as f_transaction } from './vectors/bitcoinjs/transaction.json' with { type: 'json' };
 
-should('version is int32le', () => {
+it('version is int32le', () => {
   const txHex = 'ffffffff0000ffffffff';
   const tx = btc.Transaction.fromRaw(hex.decode(txHex));
   deepStrictEqual(-1, tx.version);
@@ -19,7 +19,7 @@ should('version is int32le', () => {
 
 for (let i = 0; i < f_transaction.valid.length; i++) {
   const v = f_transaction.valid[i];
-  should(`Transaction/valid(${i}): ${v.description}`, () => {
+  it(`Transaction/valid(${i}): ${v.description}`, () => {
     const opts = {
       allowUnknownOutputs: i === 4 || i === 19,
       disableScriptCheck: i === 4 || i === 19,
@@ -50,13 +50,13 @@ for (let i = 0; i < f_transaction.valid.length; i++) {
   });
 }
 
-should(`Transaction/invalid`, () => {
+it(`Transaction/invalid`, () => {
   throws(() => btc.RawTx.decode(hex.decode(t.hex)));
 });
 
 for (let i = 0; i < f_script.valid.length; i++) {
   const v = f_script.valid[i];
-  should(`Script/valid(${i}): ${v.description}`, () => {
+  it(`Script/valid(${i}): ${v.description}`, () => {
     const fa = utils.fromASM(v.asm);
     const encoded = hex.encode(btc.Script.encode(fa));
     deepStrictEqual(encoded, v.script);
@@ -66,7 +66,7 @@ for (let i = 0; i < f_script.valid.length; i++) {
 
 for (let i = 0; i < f_script_number.length; i++) {
   const v = f_script_number[i];
-  should(`ScriptNum(${i})`, () => {
+  it(`ScriptNum(${i})`, () => {
     deepStrictEqual(hex.encode(btc.ScriptNum().encode(v.number)), v.hex, 'encode');
     deepStrictEqual(Number(btc.ScriptNum().decode(hex.decode(v.hex))), v.number, 'decode');
   });
@@ -74,7 +74,7 @@ for (let i = 0; i < f_script_number.length; i++) {
 
 for (let i = 0; i < f_transaction.hashForSignature.length; i++) {
   const v = f_transaction.hashForSignature[i];
-  should(`Transaction/hashForSignature(${i}): ${v.description}`, () => {
+  it(`Transaction/hashForSignature(${i}): ${v.description}`, () => {
     const opts = {
       allowUnknownOutputs: [0, 1, 2, 3, 4].includes(i),
     };
@@ -87,7 +87,7 @@ for (let i = 0; i < f_transaction.hashForSignature.length; i++) {
 
 for (let i = 0; i < f_transaction.hashForWitnessV0.length; i++) {
   const v = f_transaction.hashForWitnessV0[i];
-  should(`Transaction/hashForWitnessV0(${i}): ${v.description}`, () => {
+  it(`Transaction/hashForWitnessV0(${i}): ${v.description}`, () => {
     const tx = btc.Transaction.fromRaw(hex.decode(v.txHex));
     const script = btc.Script.encode(utils.fromASM(v.script));
     const preimage = hex.encode(tx.preimageWitnessV0(v.inIndex, script, v.type, BigInt(v.value)));
@@ -97,7 +97,7 @@ for (let i = 0; i < f_transaction.hashForWitnessV0.length; i++) {
 
 for (let i = 0; i < f_transaction.taprootSigning.length; i++) {
   const v = f_transaction.taprootSigning[i];
-  should(`Transaction/hashForWitnessV1(${i}): ${v.description}`, () => {
+  it(`Transaction/hashForWitnessV1(${i}): ${v.description}`, () => {
     const opts = {
       allowUnknownOutputs: i === 0,
       disableScriptCheck: i === 0,
@@ -117,7 +117,7 @@ for (let i = 0; i < f_address.standard.length; i++) {
   if ([11, 12, 13].includes(i)) continue;
   const v = f_address.standard[i];
   const address = v.base58check || v.bech32;
-  should(`Address/parseAddress(${i}): ${address}/${v.network}`, () => {
+  it(`Address/parseAddress(${i}): ${address}/${v.network}`, () => {
     const script = btc.Script.encode(utils.fromASM(v.script));
     const net = utils.getNet(v.network);
     deepStrictEqual(
@@ -129,7 +129,7 @@ for (let i = 0; i < f_address.standard.length; i++) {
 
 for (let i = 0; i < f_address.invalid.toOutputScript.length; i++) {
   const v = f_address.invalid.toOutputScript[i];
-  should(`Address/parseAddress(${i}, invalid): ${v.address}`, () => {
+  it(`Address/parseAddress(${i}, invalid): ${v.address}`, () => {
     throws(() => btc.OutScript.encode(btc.Address(v.network).decode(v.address)));
   });
 }
@@ -205,7 +205,7 @@ const SIGN_CASES = [
 // KxnAnQh6UJBxLF8Weup77yn8tWhLHhDhnXeyJuzmmcZA5aRdMJni
 for (let i = 0; i < SIGN_CASES.length; i++) {
   const v = SIGN_CASES[i];
-  should(`PSBT sign(${i})`, () => {
+  it(`PSBT sign(${i})`, () => {
     const opts = {
       bip174jsCompat: true,
     };
@@ -220,7 +220,7 @@ for (let i = 0; i < SIGN_CASES.length; i++) {
 
 for (let i = 0; i < psbt.signInput.checks.length; i++) {
   const v = psbt.signInput.checks[i];
-  should(`PSBT signInput(${i}): ${v.description}`, () => {
+  it(`PSBT signInput(${i}): ${v.description}`, () => {
     for (const k of ['shouldSign', 'shouldThrow']) {
       const item = v[k];
       if (!item) continue;
@@ -528,7 +528,7 @@ const FINALIZE_CASES1 = [
 ];
 for (let i = 0; i < FINALIZE_CASES1.length; i++) {
   const v = FINALIZE_CASES1[i];
-  should(`PSBT finalize1(${i}): ${v.type}`, () => {
+  it(`PSBT finalize1(${i}): ${v.type}`, () => {
     if (v.witnessUtxo) {
       v.witnessUtxo.script = hex.decode(v.witnessUtxo.script);
       v.witnessUtxo.amount = BigInt(v.witnessUtxo.value);
@@ -558,7 +558,7 @@ for (let i = 0; i < FINALIZE_CASES1.length; i++) {
 
 for (let i = 0; i < psbt.bip174.extractor.length; i++) {
   const v = psbt.bip174.extractor[i];
-  should(`PSBT/extract(${i})`, () => {
+  it(`PSBT/extract(${i})`, () => {
     const tx = btc.Transaction.fromPSBT(base64.decode(v.psbt));
     deepStrictEqual(hex.encode(tx.extract()), v.transaction);
   });
@@ -567,7 +567,7 @@ for (let i = 0; i < psbt.bip174.extractor.length; i++) {
 const FINALIZE_CASES = psbt.finalizeAllInputs.concat(psbt.bip174.finalizer);
 for (let i = 0; i < FINALIZE_CASES.length; i++) {
   const v = FINALIZE_CASES[i];
-  should(`PSBT finalize(${i}): ${v.type}`, () => {
+  it(`PSBT finalize(${i}): ${v.type}`, () => {
     const [before, after] = [v.psbt, v.result].map(base64.decode);
     const tx = btc.Transaction.fromPSBT(before);
     tx.finalize();
@@ -604,7 +604,7 @@ const PSBT_SIGN_HD = [
 
 for (let i = 0; i < PSBT_SIGN_HD.length; i++) {
   const v = PSBT_SIGN_HD[i];
-  should(`PSBT sign (HDKey): ${i}`, () => {
+  it(`PSBT sign (HDKey): ${i}`, () => {
     const opts = {
       bip174jsCompat: true,
     };
@@ -617,7 +617,7 @@ for (let i = 0; i < PSBT_SIGN_HD.length; i++) {
 
 for (let i = 0; i < psbt.signInputHD.checks.length; i++) {
   const v = psbt.signInputHD.checks[i];
-  should(`PSBT sign (HDKey): ${v.description}`, () => {
+  it(`PSBT sign (HDKey): ${v.description}`, () => {
     if (v.shouldSign) {
       const t = v.shouldSign;
       const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt));

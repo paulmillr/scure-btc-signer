@@ -1,9 +1,9 @@
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { HDKey } from '@scure/bip32/index.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { base64, bech32m, createBase58check, hex } from '@scure/base';
+import { HDKey } from '@scure/bip32/index.js';
 import * as P from 'micro-packed';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { checkScript, tapLeafHash } from '../src/payment.ts';
@@ -27,7 +27,7 @@ const XPub = P.struct({
 });
 const xpubPSBT = () => _RawPSBTV0.decode(hex.decode(PSBT_GLOBAL_XPUB_HEX));
 
-should('BTC: parseAddress', () => {
+it('BTC: parseAddress', () => {
   const CASES = [
     // https://github.com/bitcoinjs/bitcoinjs-lib/issues/925
     ['1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP', '76a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac'],
@@ -47,7 +47,7 @@ should('BTC: parseAddress', () => {
 });
 const ADDR_1 = '1C6Rc3w25VHud3dLDamutaqfKWqhrLRTaD';
 
-should('BTC: Bech32 addresses', () => {
+it('BTC: Bech32 addresses', () => {
   const priv = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   deepStrictEqual(btc.WIF().encode(priv), 'KwFfNUhSDaASSAwtG7ssQM1uVX8RgX5GHWnnLfhfiQDigjioWXHH');
   deepStrictEqual(btc.getAddress('wpkh', priv), 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw');
@@ -55,16 +55,16 @@ should('BTC: Bech32 addresses', () => {
   deepStrictEqual(btc.p2wpkh(pub).address, 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw');
 });
 
-should('WIF.encode rejects non-32-byte private keys', () => {
+it('WIF.encode rejects non-32-byte private keys', () => {
   throws(() => btc.WIF().encode(new Uint8Array(31)));
   throws(() => btc.WIF().encode(new Uint8Array(33)));
 });
 
-should('BTC: bip32Path depth limit', () => {
+it('BTC: bip32Path depth limit', () => {
   throws(() => btc.bip32Path('m' + '/0'.repeat(256)));
 });
 
-should('cloneDeep unsupported symbol type', () => {
+it('cloneDeep unsupported symbol type', () => {
   let err: Error | undefined;
   throws(
     () => cloneDeep(Symbol('x') as never),
@@ -76,7 +76,7 @@ should('cloneDeep unsupported symbol type', () => {
   deepStrictEqual(err?.message, 'cloneDeep: unknown type=symbol');
 });
 
-should('getPrevOut rejects out-of-range nonWitnessUtxo indexes', () => {
+it('getPrevOut rejects out-of-range nonWitnessUtxo indexes', () => {
   const prev = btc.RawTx.decode(
     btc.RawTx.encode({
       version: 2,
@@ -97,7 +97,7 @@ should('getPrevOut rejects out-of-range nonWitnessUtxo indexes', () => {
   throws(() => getPrevOut({ nonWitnessUtxo: prev, index: 3 }), /index/i);
 });
 
-should('RawTx rejects superfluous witness serialization', () => {
+it('RawTx rejects superfluous witness serialization', () => {
   throws(
     () =>
       btc.RawTx.encode({
@@ -128,7 +128,7 @@ should('RawTx rejects superfluous witness serialization', () => {
   );
 });
 
-should('validateInput keeps accepting a matching non-final nonWitnessUtxo in toPSBT', () => {
+it('validateInput keeps accepting a matching non-final nonWitnessUtxo in toPSBT', () => {
   const nonWitnessUtxo = btc.RawTx.decode(
     btc.RawTx.encode({
       version: 2,
@@ -161,43 +161,40 @@ should('validateInput keeps accepting a matching non-final nonWitnessUtxo in toP
   deepStrictEqual(typeof tx.toPSBT(0), 'object');
 });
 
-should(
-  'validateInput keeps the historical display-order txid convention for nonWitnessUtxo checks',
-  () => {
-    const nonWitnessUtxo = btc.RawTx.decode(
-      btc.RawTx.encode({
-        version: 2,
-        lockTime: 0,
-        segwitFlag: false,
-        inputs: [
-          {
-            txid: new Uint8Array(32).fill(9),
-            index: 0,
-            finalScriptSig: P.EMPTY,
-            sequence: 0xffffffff,
-          },
-        ],
-        outputs: [{ amount: 5n, script: Uint8Array.of(0x51) }],
-      })
-    );
-    const prevTx = btc.Transaction.fromRaw(btc.RawTx.encode(nonWitnessUtxo), {
-      allowUnknownOutputs: true,
-    });
-    const tx = new btc.Transaction({ allowUnknownOutputs: true });
-    tx.addInput(
-      {
-        nonWitnessUtxo,
-        txid: hex.decode(prevTx.hash),
-        index: 0,
-      },
-      true
-    );
-    tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n }, true);
-    throws(() => tx.toPSBT(0), /wrong txid/);
-  }
-);
+it('validateInput keeps the historical display-order txid convention for nonWitnessUtxo checks', () => {
+  const nonWitnessUtxo = btc.RawTx.decode(
+    btc.RawTx.encode({
+      version: 2,
+      lockTime: 0,
+      segwitFlag: false,
+      inputs: [
+        {
+          txid: new Uint8Array(32).fill(9),
+          index: 0,
+          finalScriptSig: P.EMPTY,
+          sequence: 0xffffffff,
+        },
+      ],
+      outputs: [{ amount: 5n, script: Uint8Array.of(0x51) }],
+    })
+  );
+  const prevTx = btc.Transaction.fromRaw(btc.RawTx.encode(nonWitnessUtxo), {
+    allowUnknownOutputs: true,
+  });
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput(
+    {
+      nonWitnessUtxo,
+      txid: hex.decode(prevTx.hash),
+      index: 0,
+    },
+    true
+  );
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n }, true);
+  throws(() => tx.toPSBT(0), /wrong txid/);
+});
 
-should('validateInput rejects mismatched txid even when nonWitnessUtxo parses as non-final', () => {
+it('validateInput rejects mismatched txid even when nonWitnessUtxo parses as non-final', () => {
   const nonWitnessUtxo = btc.RawTx.decode(
     btc.RawTx.encode({
       version: 2,
@@ -220,32 +217,29 @@ should('validateInput rejects mismatched txid even when nonWitnessUtxo parses as
   throws(() => tx.toPSBT(0), /wrong txid/);
 });
 
-should(
-  'PSBTv2 PREVIOUS_TXID uses standard byte order on the wire and display-order bytes internally',
-  () => {
-    const display = '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858';
-    const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
-    const spend = btc.p2wpkh(pub);
+it('PSBTv2 PREVIOUS_TXID uses standard byte order on the wire and display-order bytes internally', () => {
+  const display = '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858';
+  const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
+  const spend = btc.p2wpkh(pub);
 
-    const tx = new btc.Transaction();
-    tx.addInput({
-      txid: hex.decode(display),
-      index: 0,
-      witnessUtxo: { script: spend.script, amount: 2n },
-    });
-    tx.addOutput({ script: spend.script, amount: 1n });
-    const psbt = tx.toPSBT(2);
-    deepStrictEqual(
-      hex.encode(psbt),
-      '70736274ff01020402000000010401010105010101fb04020000000001011f020000000000000016001479b000887626b294a914501a4cd226b58b235983010e2058e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd75010f0400000000011004ffffffff000103080100000000000000010416001479b000887626b294a914501a4cd226b58b23598300'
-    );
-    deepStrictEqual(hex.encode(RawPSBTV2.decode(psbt).inputs[0].txid), display);
-    const imported = btc.Transaction.fromPSBT(psbt);
-    deepStrictEqual(hex.encode(imported.getInput(0).txid), display);
-  }
-);
+  const tx = new btc.Transaction();
+  tx.addInput({
+    txid: hex.decode(display),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  const psbt = tx.toPSBT(2);
+  deepStrictEqual(
+    hex.encode(psbt),
+    '70736274ff01020402000000010401010105010101fb04020000000001011f020000000000000016001479b000887626b294a914501a4cd226b58b235983010e2058e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd75010f0400000000011004ffffffff000103080100000000000000010416001479b000887626b294a914501a4cd226b58b23598300'
+  );
+  deepStrictEqual(hex.encode(RawPSBTV2.decode(psbt).inputs[0].txid), display);
+  const imported = btc.Transaction.fromPSBT(psbt);
+  deepStrictEqual(hex.encode(imported.getInput(0).txid), display);
+});
 
-should('legacy sighash preserves non-minimal push bytes when removing CODESEPARATOR', () => {
+it('legacy sighash preserves non-minimal push bytes when removing CODESEPARATOR', () => {
   const tx = new btc.Transaction({ allowUnknownInputs: true, allowUnknownOutputs: true });
   (tx as any).inputs = [
     { txid: new Uint8Array(32), index: 0, finalScriptSig: new Uint8Array(), sequence: 0xffffffff },
@@ -270,7 +264,7 @@ should('legacy sighash preserves non-minimal push bytes when removing CODESEPARA
   );
 });
 
-should('preimageWitnessV0 rejects invalid input indexes', () => {
+it('preimageWitnessV0 rejects invalid input indexes', () => {
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
   tx.addInput({
     txid: new Uint8Array(32),
@@ -288,7 +282,7 @@ should('preimageWitnessV0 rejects invalid input indexes', () => {
   );
 });
 
-should('preimageWitnessV1 rejects invalid input indexes', () => {
+it('preimageWitnessV1 rejects invalid input indexes', () => {
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
   tx.addInput({
     txid: new Uint8Array(32),
@@ -306,7 +300,7 @@ should('preimageWitnessV1 rejects invalid input indexes', () => {
   );
 });
 
-should('inputBeforeSign', () => {
+it('inputBeforeSign', () => {
   const txid = new Uint8Array(32).fill(1);
   deepStrictEqual(inputBeforeSign({ txid, index: 3 }), {
     txid,
@@ -324,11 +318,11 @@ should('inputBeforeSign', () => {
   );
 });
 
-should('SigHash omits invalid DEFAULT_ANYONECANPAY alias', () => {
+it('SigHash omits invalid DEFAULT_ANYONECANPAY alias', () => {
   deepStrictEqual('DEFAULT_ANYONECANPAY' in btc.SigHash, false);
 });
 
-should('taproot signing rejects undefined SIGHASH_DEFAULT|ANYONECANPAY (0x80)', () => {
+it('taproot signing rejects undefined SIGHASH_DEFAULT|ANYONECANPAY (0x80)', () => {
   const priv = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const pub = btc.utils.pubSchnorr(priv);
   const tr = btc.p2tr(pub);
@@ -344,7 +338,7 @@ should('taproot signing rejects undefined SIGHASH_DEFAULT|ANYONECANPAY (0x80)', 
   throws(() => tx.signIdx(priv, 0, [0x80]), /SigHash|sighash|hash_type|0x80/i);
 });
 
-should('PSBTv2 rejects negative output amounts', () => {
+it('PSBTv2 rejects negative output amounts', () => {
   const script = new Uint8Array([0x51]);
   throws(() => new btc.Transaction().addOutput({ script, amount: -1n }));
   const psbt = hex.decode(
@@ -353,7 +347,7 @@ should('PSBTv2 rejects negative output amounts', () => {
   throws(() => btc.Transaction.fromPSBT(psbt));
 });
 
-should('GlobalXPUB', () => {
+it('GlobalXPUB', () => {
   const badKey = new Uint8Array(33);
   badKey[0] = 0x02;
   // Exact BIP32 invalid public vectors plus one malformed `ser_P(K)` mutation of the bundled PSBT xpub.
@@ -416,7 +410,7 @@ should('GlobalXPUB', () => {
   }
 });
 
-should('PSBTInputCoder rejects tapBip32Derivation entries with invalid x-only pubkeys', () => {
+it('PSBTInputCoder rejects tapBip32Derivation entries with invalid x-only pubkeys', () => {
   throws(() =>
     PSBTInputCoder.encode({
       tapBip32Derivation: [
@@ -432,7 +426,7 @@ should('PSBTInputCoder rejects tapBip32Derivation entries with invalid x-only pu
   );
 });
 
-should('PSBTInputCoder rejects duplicate keyed entries in one map', () => {
+it('PSBTInputCoder rejects duplicate keyed entries in one map', () => {
   const pk = hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
   throws(() =>
     PSBTInputCoder.encode({
@@ -448,7 +442,7 @@ should('PSBTInputCoder rejects duplicate keyed entries in one map', () => {
   throws(() => PSBTInputCoder.decode(raw));
 });
 
-should('PSBTOutputCoder rejects duplicate keyed entries in one map', () => {
+it('PSBTOutputCoder rejects duplicate keyed entries in one map', () => {
   throws(() =>
     PSBTOutputCoder.encode({
       proprietary: [
@@ -462,7 +456,7 @@ should('PSBTOutputCoder rejects duplicate keyed entries in one map', () => {
 
 const tapLeaf = (depth, opcode) => ({ depth, version: 0xc0, script: Uint8Array.of(opcode) });
 
-should('PSBTOutputCoder rejects invalid tapTree tuples', () => {
+it('PSBTOutputCoder rejects invalid tapTree tuples', () => {
   throws(() => PSBTOutputCoder.encode({ tapTree: [] }));
   const bad = [tapLeaf(2, 0x51), tapLeaf(1, 0x52), tapLeaf(2, 0x53)];
   const before = bad.map(({ depth, version, script }) => ({
@@ -477,7 +471,7 @@ should('PSBTOutputCoder rejects invalid tapTree tuples', () => {
   );
 });
 
-should('RawPSBTV2 rejects invalid tapTree tuples', () => {
+it('RawPSBTV2 rejects invalid tapTree tuples', () => {
   const base = () => ({
     global: { version: 2, txVersion: 2, inputCount: 1, outputCount: 1 },
     inputs: [{ txid: Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? 1 : 0)), index: 0 }],
@@ -491,7 +485,7 @@ should('RawPSBTV2 rejects invalid tapTree tuples', () => {
   throws(() => RawPSBTV2.encode(bad));
 });
 
-should('BTC: P2PKH addresses', () => {
+it('BTC: P2PKH addresses', () => {
   const priv = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   deepStrictEqual(btc.WIF().encode(priv), 'KwFfNUhSDaASSAwtG7ssQM1uVX8RgX5GHWnnLfhfiQDigjioWXHH');
   deepStrictEqual(btc.getAddress('pkh', priv), ADDR_1);
@@ -499,7 +493,7 @@ should('BTC: P2PKH addresses', () => {
   deepStrictEqual(btc.p2pkh(pub).address, ADDR_1);
 });
 
-should('LTC address parsing (GH-112)', () => {
+it('LTC address parsing (GH-112)', () => {
   const ltc = {
     bech32: 'ltc',
     pubKeyHash: 0x30,
@@ -541,7 +535,7 @@ const TX_TEST_INPUTS = [
 const RAW_TX_HEX =
   '01000000033edaa6c4e0740ae334dbb5857dd8c6faf6ea5196760652ad7033ed9031c261c00000000000ffffffff0d9ae8a4191b3ba5a2b856c21af0f7a4feb97957ae80725ef38a933c906519a20000000000ffffffffc7a4a37d38c2b0de3d3b3e8d8e8a331977c12532fc2a4632df27a89c311ee2fa0000000000ffffffff030a000000000000001976a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac320000000000000017a914a860f76561c85551594c18eecceffaee8c4822d7875d00000000000000160014e8df018c7e326cc253faac7e46cdc51e68542c4200000000';
 
-should('BTC: tx (from P2PKH)', async () => {
+it('BTC: tx (from P2PKH)', async () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const opts = { version: 1, allowLegacyWitnessUtxo: true };
   const tx = new btc.Transaction(opts);
@@ -573,7 +567,7 @@ should('BTC: tx (from P2PKH)', async () => {
   deepStrictEqual(tx2.weight, 2196);
 });
 
-should('BTC: tx (from bech32)', async () => {
+it('BTC: tx (from bech32)', async () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const tx32 = new btc.Transaction({ version: 1 });
   for (const [address, amount] of TX_TEST_OUTPUTS) tx32.addOutputAddress(address, amount);
@@ -598,7 +592,7 @@ should('BTC: tx (from bech32)', async () => {
   deepStrictEqual(tx32.weight, 1244);
 });
 
-should('getAddress', () => {
+it('getAddress', () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   deepStrictEqual(btc.getAddress('pkh', privKey), ADDR_1); // P2PKH (legacy address)
   deepStrictEqual(btc.getAddress('wpkh', privKey), 'bc1q0xcqpzrky6eff2g52qdye53xkk9jxkvrh6yhyw'); // SegWit V0 address
@@ -608,7 +602,7 @@ should('getAddress', () => {
   ); // TapRoot KeyPathSpend
 });
 
-should('WIF', () => {
+it('WIF', () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   deepStrictEqual(
     btc.WIF().encode(privKey),
@@ -620,7 +614,7 @@ should('WIF', () => {
   );
 });
 
-should('Script', () => {
+it('Script', () => {
   deepStrictEqual(hex.encode(btc.Script.encode([-1])), '4f');
   deepStrictEqual(btc.Script.decode(hex.decode('4f')), ['1NEGATE']);
   deepStrictEqual(
@@ -653,7 +647,7 @@ should('Script', () => {
   );
 });
 
-should('OutScript', () => {
+it('OutScript', () => {
   deepStrictEqual(
     btc.OutScript.decode(
       hex.decode(
@@ -711,7 +705,7 @@ should('OutScript', () => {
   }
 });
 
-should('P2A output type', () => {
+it('P2A output type', () => {
   // Test script encoding/decoding
   const p2aScript = hex.decode('51024e73');
   const decoded = btc.OutScript.decode(p2aScript);
@@ -736,7 +730,7 @@ should('P2A output type', () => {
   });
 });
 
-should('payTo API', () => {
+it('payTo API', () => {
   // cross-checked with bitcoinjs-lib manually
   const uncompressed = hex.decode(
     '04ad90e5b6bc86b3ec7fac2c5fbda7423fc8ef0d58df594c773fa05e2c281b2bfe877677c668bd13603944e34f4818ee03cadd81a88542b8b4d5431264180e2c28'
@@ -1016,7 +1010,7 @@ should('payTo API', () => {
   });
 });
 
-should('checkScript rejects stray wrapper metadata', () => {
+it('checkScript rejects stray wrapper metadata', () => {
   const pk = hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
   const pkh = btc.p2pkh(pk);
   const wpkh = btc.p2wpkh(pk);
@@ -1043,13 +1037,13 @@ should('checkScript rejects stray wrapper metadata', () => {
   checkScript(shWshPkh.script, shWshPkh.redeemScript, shWshPkh.witnessScript);
 });
 
-should('p2wsh rejects nested wsh', () => {
+it('p2wsh rejects nested wsh', () => {
   const pk = hex.decode('0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
   const inner = btc.p2wsh(btc.p2pkh(pk));
   throws(() => btc.p2wsh(inner));
 });
 
-should('Transaction input/output', () => {
+it('Transaction input/output', () => {
   const tx = new btc.Transaction();
   // Input
   tx.addInput({ txid: new Uint8Array(32), index: 0 });
@@ -1231,7 +1225,7 @@ should('Transaction input/output', () => {
   });
 });
 
-should('TapRoot sanity check', () => {
+it('TapRoot sanity check', () => {
   const taproot = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const taproot2 = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
   const compressed = hex.decode(
@@ -1311,7 +1305,7 @@ should('TapRoot sanity check', () => {
   );
 });
 
-should('tapLeafHash rejects non-byte and parity-bit leaf versions', () => {
+it('tapLeafHash rejects non-byte and parity-bit leaf versions', () => {
   const script = new Uint8Array([0x51]);
   throws(() => tapLeafHash(script, 0xc1));
   throws(() => tapLeafHash(script, 256));
@@ -1319,7 +1313,7 @@ should('tapLeafHash rejects non-byte and parity-bit leaf versions', () => {
   throws(() => tapLeafHash(script, 193.5));
 });
 
-should('Multisig sanity check', () => {
+it('Multisig sanity check', () => {
   const compressed = hex.decode(
     '030000000000000000000000000000000000000000000000000000000000000001'
   );
@@ -1352,7 +1346,7 @@ should('Multisig sanity check', () => {
   throws(() => btc.p2tr_ms(2, [compressed, compressed2, compressed3]));
 });
 
-should('Big transaction regtest validation', () => {
+it('Big transaction regtest validation', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
   // - p2sh_p2pk
   // - p2wsh-p2pk
@@ -1719,7 +1713,7 @@ should('Big transaction regtest validation', () => {
   );
 });
 
-should('SignatureHash tests', () => {
+it('SignatureHash tests', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
   const tx = new btc.Transaction({
     allowLegacyWitnessUtxo: true,
@@ -1815,7 +1809,7 @@ should('SignatureHash tests', () => {
   );
 });
 
-should('taproot single array as script', () => {
+it('taproot single array as script', () => {
   const A = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const B = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
   const C = hex.decode('1212121212121212121212121212121212121212121212121212121212121212');
@@ -1870,7 +1864,7 @@ should('taproot single array as script', () => {
   );
 });
 
-should('Finalize negative fee', () => {
+it('Finalize negative fee', () => {
   const opts = { version: 1, allowLegacyWitnessUtxo: true };
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const pub = secp256k1.getPublicKey(privKey, true);
@@ -1910,7 +1904,7 @@ should('Finalize negative fee', () => {
   }
 });
 
-should('Issue #13', () => {
+it('Issue #13', () => {
   const keypairFromSecret = (hexSecretKey) => {
     const secretKey = hex.decode(hexSecretKey);
     const schnorrPublicKey = secp256k1_schnorr.getPublicKey(secretKey);
@@ -1988,7 +1982,7 @@ should('Issue #13', () => {
   );
 });
 
-should('TapRoot export version', () => {
+it('TapRoot export version', () => {
   const opts = {};
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   // without taproot
@@ -2051,7 +2045,7 @@ should('TapRoot export version', () => {
   }
 });
 
-should('big multisig (real)', () => {
+it('big multisig (real)', () => {
   // https://gist.github.com/AdamISZ/9b2395ddcb43890d9611df99287cfe6b
   // -> https://www.blockchain.com/explorer/transactions/btc/7393096d97bfee8660f4100ffd61874d62f9a65de9fb6acf740c4c386990ef73
 
@@ -2096,7 +2090,7 @@ should('big multisig (real)', () => {
   deepStrictEqual(tx.id, '7393096d97bfee8660f4100ffd61874d62f9a65de9fb6acf740c4c386990ef73');
 });
 
-should('Signed fields', () => {
+it('Signed fields', () => {
   const opts = {};
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 
@@ -2202,7 +2196,7 @@ should('Signed fields', () => {
   tx.updateOutput(0, { amount: 121n });
 });
 
-should('finalized inputs must be reopened before further mutation', () => {
+it('finalized inputs must be reopened before further mutation', () => {
   const priv = new Uint8Array(32).fill(1);
   const pub = btc.utils.pubSchnorr(priv);
   const spend = btc.p2tr(pub);
@@ -2223,7 +2217,7 @@ should('finalized inputs must be reopened before further mutation', () => {
   deepStrictEqual(tx.outputsLength, 2);
 });
 
-should('Transaction.signIdx signs taproot HD inputs from tapBip32Derivation', () => {
+it('Transaction.signIdx signs taproot HD inputs from tapBip32Derivation', () => {
   const aux = new Uint8Array(32);
   const path = "m/86'/0'/0'/0/0";
   const mk = () => {
@@ -2255,7 +2249,7 @@ should('Transaction.signIdx signs taproot HD inputs from tapBip32Derivation', ()
   deepStrictEqual(hd.tx.inputs[0].tapKeySig, raw.tx.inputs[0].tapKeySig);
 });
 
-should('Transaction.signIdx skips unrelated same-fingerprint taproot derivation entries', () => {
+it('Transaction.signIdx skips unrelated same-fingerprint taproot derivation entries', () => {
   const aux = new Uint8Array(32);
   const goodPath = "m/86'/0'/0'/0/0";
   const badPath = "m/86'/0'/0'/0/1";
@@ -2296,7 +2290,7 @@ should('Transaction.signIdx skips unrelated same-fingerprint taproot derivation 
   deepStrictEqual(hd.tx.inputs[0].tapKeySig, raw.tx.inputs[0].tapKeySig);
 });
 
-should('Transaction.signIdx matches Bitcoin Core taproot HD oracle fixture', () => {
+it('Transaction.signIdx matches Bitcoin Core taproot HD oracle fixture', () => {
   // Fixed Bitcoin Core fixture with `{ master_fingerprint: e2867bb6, path: m/86h/1h/0h/0/0 }`.
   const psbt =
     'cHNidP8BAF4CAAAAAXqgVMKuHPSe1PNaRBM+vml6xWEoKul8PSkT34RuE+LeAQAAAAD/////AfC59QUAAAAAIlEgJyurNEwQux0PJCD9kNgqHc3u9QOIZmiWt89MqeUxnI4AAAAAAAEBKwDh9QUAAAAAIlEg1Gvw0cMHojWU/9oWCLI9f6pGuidxyamI8LcfqhAnSoQhFuJlIiKuyvCNm0kZF3/0aCOxAf5es9djLpiR2DiONzKGGQDihnu2VgAAgAEAAIAAAACAAAAAAAAAAAABFyDiZSIirsrwjZtJGRd/9GgjsQH+XrPXYy6Ykdg4jjcyhgAA';
@@ -2310,7 +2304,7 @@ should('Transaction.signIdx matches Bitcoin Core taproot HD oracle fixture', () 
   deepStrictEqual(hex.encode(tx.extract()), raw);
 });
 
-should('Transaction.signIdx preserves allowedSighash when deriving HD child keys', () => {
+it('Transaction.signIdx preserves allowedSighash when deriving HD child keys', () => {
   const path = "m/84'/0'/0'/0/0";
   const mk = () => {
     const master = HDKey.fromMasterSeed(new Uint8Array(32).fill(9));
@@ -2336,7 +2330,7 @@ should('Transaction.signIdx preserves allowedSighash when deriving HD child keys
   deepStrictEqual(hd.tx.inputs[0].partialSig, raw.tx.inputs[0].partialSig);
 });
 
-should('Transaction.signIdx skips unrelated same-fingerprint bip32 derivation entries', () => {
+it('Transaction.signIdx skips unrelated same-fingerprint bip32 derivation entries', () => {
   const path = "m/84'/0'/0'/0/0";
   const badPath = "m/84'/0'/0'/0/1";
   const mk = () => {
@@ -2365,7 +2359,7 @@ should('Transaction.signIdx skips unrelated same-fingerprint bip32 derivation en
   deepStrictEqual(hd.tx.inputs[0].partialSig, raw.tx.inputs[0].partialSig);
 });
 
-should('have proper vsize for cloned transactions (gh-18)', () => {
+it('have proper vsize for cloned transactions (gh-18)', () => {
   const opts = {};
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   // setup taproot tx
@@ -2393,22 +2387,19 @@ should('have proper vsize for cloned transactions (gh-18)', () => {
   deepStrictEqual(tx.vsize, 183);
 });
 
-should(
-  'weight includes empty witness vectors for legacy inputs once any input has witness data',
-  () => {
-    const tx = new btc.Transaction({ allowUnknownOutputs: true });
-    tx.addInput({ txid: new Uint8Array(32), index: 0, sequence: 0xfffffffe });
-    tx.addInput({ txid: new Uint8Array(32).fill(1), index: 1, sequence: 0xfffffffe });
-    tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n });
-    tx.inputs[0].finalScriptSig = Uint8Array.of(1);
-    tx.inputs[1].finalScriptWitness = [Uint8Array.of(2)];
-    const stripped = tx.toBytes(true, false).length;
-    const total = tx.toBytes(true, true).length;
-    deepStrictEqual(tx.weight, stripped * 4 + (total - stripped));
-  }
-);
+it('weight includes empty witness vectors for legacy inputs once any input has witness data', () => {
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({ txid: new Uint8Array(32), index: 0, sequence: 0xfffffffe });
+  tx.addInput({ txid: new Uint8Array(32).fill(1), index: 1, sequence: 0xfffffffe });
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n });
+  tx.inputs[0].finalScriptSig = Uint8Array.of(1);
+  tx.inputs[1].finalScriptWitness = [Uint8Array.of(2)];
+  const stripped = tx.toBytes(true, false).length;
+  const total = tx.toBytes(true, true).length;
+  deepStrictEqual(tx.weight, stripped * 4 + (total - stripped));
+});
 
-should('vsize rounds up the full BIP 141 weight for mixed legacy+segwit inputs', () => {
+it('vsize rounds up the full BIP 141 weight for mixed legacy+segwit inputs', () => {
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
   tx.addInput({ txid: new Uint8Array(32), index: 0, sequence: 0xfffffffe });
   tx.addInput({ txid: new Uint8Array(32).fill(1), index: 1, sequence: 0xfffffffe });
@@ -2421,7 +2412,7 @@ should('vsize rounds up the full BIP 141 weight for mixed legacy+segwit inputs',
   deepStrictEqual(tx.vsize, Math.ceil(expectedWeight / 4));
 });
 
-should('clone transaction with identical opts', () => {
+it('clone transaction with identical opts', () => {
   const opts = {
     version: 0,
     lockTime: 0,
@@ -2478,18 +2469,15 @@ should('clone transaction with identical opts', () => {
   deepStrictEqual(clone2.opts, opts2);
 });
 
-should(
-  'Transaction constructor does not mutate caller opts when normalizing deprecated aliases',
-  () => {
-    const opts = { allowUnknowInput: true, allowUnknowOutput: false };
-    const tx = new btc.Transaction(opts);
-    deepStrictEqual(tx.opts.allowUnknownInputs, true);
-    deepStrictEqual(tx.opts.allowUnknownOutputs, false);
-    deepStrictEqual(opts, { allowUnknowInput: true, allowUnknowOutput: false });
-  }
-);
+it('Transaction constructor does not mutate caller opts when normalizing deprecated aliases', () => {
+  const opts = { allowUnknowInput: true, allowUnknowOutput: false };
+  const tx = new btc.Transaction(opts);
+  deepStrictEqual(tx.opts.allowUnknownInputs, true);
+  deepStrictEqual(tx.opts.allowUnknownOutputs, false);
+  deepStrictEqual(opts, { allowUnknowInput: true, allowUnknowOutput: false });
+});
 
-should('return immutable outputs/inputs', () => {
+it('return immutable outputs/inputs', () => {
   const privKey1 = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const P1 = secp256k1.getPublicKey(privKey1, true);
   const wpkh = btc.p2wpkh(P1);
@@ -2549,7 +2537,7 @@ should('return immutable outputs/inputs', () => {
   // console.log('O', tx.outputs[1], o1);
 });
 
-should('Transaction.addInput detaches caller-owned byte arrays', () => {
+it('Transaction.addInput detaches caller-owned byte arrays', () => {
   const txid = new Uint8Array(32).fill(0x11);
   const script = Uint8Array.of(0x51);
   const wit = Uint8Array.of(1, 2, 3);
@@ -2572,7 +2560,7 @@ should('Transaction.addInput detaches caller-owned byte arrays', () => {
   });
 });
 
-should('Transaction.updateInput detaches caller-owned byte arrays', () => {
+it('Transaction.updateInput detaches caller-owned byte arrays', () => {
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
   tx.addInput({ txid: new Uint8Array(32).fill(0x11), index: 0 });
   tx.addOutput({ amount: 1n, script: Uint8Array.of(0x51) });
@@ -2596,7 +2584,7 @@ should('Transaction.updateInput detaches caller-owned byte arrays', () => {
   });
 });
 
-should('Transaction.addOutput detaches caller-owned script bytes', () => {
+it('Transaction.addOutput detaches caller-owned script bytes', () => {
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
   const script = Uint8Array.of(0x51);
   tx.addOutput({ amount: 1n, script });
@@ -2607,7 +2595,7 @@ should('Transaction.addOutput detaches caller-owned script bytes', () => {
   });
 });
 
-should('Transaction.updateOutput detaches caller-owned script bytes', () => {
+it('Transaction.updateOutput detaches caller-owned script bytes', () => {
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
   tx.addOutput({ amount: 1n, script: Uint8Array.of(0x51) });
   const script = Uint8Array.of(0x52);
@@ -2619,7 +2607,7 @@ should('Transaction.updateOutput detaches caller-owned script bytes', () => {
   });
 });
 
-should('error on internalKey inside leaf script (gh-51)', () => {
+it('error on internalKey inside leaf script (gh-51)', () => {
   const A = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const B = hex.decode('0202020202020202020202020202020202020202020202020202020202020202');
   // Disabled by default
@@ -2631,7 +2619,7 @@ should('error on internalKey inside leaf script (gh-51)', () => {
   btc.p2tr(A, btc.p2tr_ns(2, [A, B]), undefined, true);
 });
 
-should('combine PSBT (gh-56)', () => {
+it('combine PSBT (gh-56)', () => {
   // Alice keys
   const privAlice = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const pubAlice = secp256k1.getPublicKey(privAlice, true);
@@ -2707,7 +2695,7 @@ should('combine PSBT (gh-56)', () => {
   );
 });
 
-should('PSBTCombine upgrades same-transaction inputs to the highest PSBT version', () => {
+it('PSBTCombine upgrades same-transaction inputs to the highest PSBT version', () => {
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
   const spend = btc.p2wpkh(pub);
   const tx = new btc.Transaction();
@@ -2729,7 +2717,7 @@ should('PSBTCombine upgrades same-transaction inputs to the highest PSBT version
   }
 });
 
-should('Transaction.combine rejects different PSBTv2 transactions', () => {
+it('Transaction.combine rejects different PSBTv2 transactions', () => {
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(7), true);
   const spend = btc.p2wpkh(pub);
   const mk = (fill: number) => {
@@ -2745,7 +2733,7 @@ should('Transaction.combine rejects different PSBTv2 transactions', () => {
   throws(() => mk(1).combine(mk(2)));
 });
 
-should('representable PSBTv2 state downgrades back to PSBTv0', () => {
+it('representable PSBTv2 state downgrades back to PSBTv0', () => {
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
   const spend = btc.p2wpkh(pub);
   const tx = new btc.Transaction();
@@ -2763,7 +2751,7 @@ should('representable PSBTv2 state downgrades back to PSBTv0', () => {
   deepStrictEqual(mixed.toPSBT(0), v0);
 });
 
-should('PSBTv2-only globals still reject PSBTv0 export', () => {
+it('PSBTv2-only globals still reject PSBTv0 export', () => {
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
   const spend = btc.p2wpkh(pub);
   const tx = new btc.Transaction();
@@ -2778,7 +2766,7 @@ should('PSBTv2-only globals still reject PSBTv0 export', () => {
   throws(() => psbt.toPSBT(0), /txModifiable/);
 });
 
-should('PSBT downgrade preserves proprietary globals', () => {
+it('PSBT downgrade preserves proprietary globals', () => {
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
   const spend = btc.p2wpkh(pub);
   const tx = new btc.Transaction();
@@ -2796,7 +2784,7 @@ should('PSBT downgrade preserves proprietary globals', () => {
   );
 });
 
-should('unspendable output (gh-66)', () => {
+it('unspendable output (gh-66)', () => {
   const txid = '20a3c79e7e421122036e0efafcf5414840b5295e7ae479e1af488d17f12d9734';
   const raw =
     '0200000000013167379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900000000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d0c00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900100000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900200000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d0d00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900300000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900400000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d0e00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900500000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900600000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d0f00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900700000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900800000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1000000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900900000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900a00000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1100000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900b00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900c00000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1200000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900d00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900e00000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1300000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb900f00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901000000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1400000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901100000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901200000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1500000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901300000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901400000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1600000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901500000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901600000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1700000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901700000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901800000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1800000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901900000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901a00000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1900000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901b00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901c00000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1a00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901d00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901e00000000fdffffffe20552513fa9c13bb70ef8b92e105edacb363a9b30ad3607f3140bf8f176f87d1b00000000fdffffff67379d26247821a34be7c9dcde43200b328d28acc22156a7cc8ac761450cfb901f00000000fdffffff3749d825e257cd52ccc2a89bad291c6452e6bf7e69d0e2a7cd63f11461687ee40000000000fdffffff424a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b4a01000000000000225120b1c3834f21d7e95869f1b6b65eac5d9129dc2795694c8cbb03ceb699397ec71a4a01000000000000225120944e04ac2a882234387776fc6c87c6cb8f53c922f866a3cf1bd5d2221ad33c2b57b60000000000001600144fbc978ef8cade3c44cf2913068f42c6a2cd0d6a00000000000000001a6a184d6164652062792070756e6b6c79206861742d73686f652e02473044022015f979f65dc32c16ad1d5542606625eb376be418bdbfc9b02583a163cd12781502201a5402866e2a20e35a6a719378cec9c3ed3fc57dfbc25fa665e7f5e09ce54ba00121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02483045022100c002e107572d16dd2cfaab74000f1ab5fc5482eead1cc3c8a8f53a50484a3e7402205e32986703575b163c6f8ed740456960a13943a35e6f15478f750b31be3ff98801210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b024730440220576ecf223e95d321773f7609390fdbb2a518346287a02d56206439c375d8fba00220711e661d2ddf28bb6f8dc671873c82c3c4edd76d7d5b8e10d18c141409763f2b012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe02483045022100acb54345476adc31f77e66f3da997d607a70daf3c8c130f461a704245b861b2a0220404146fae6d61ec06ee1d89211b947463ac827f62b82fb478db9c849ff50fdbb0121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02473044022058069f36baba9837fe3ad4224337758f0f91395df707565a0916d34c235e5c4e0220574c39eeb8179abfd5e5744d9451931632eec7d04607117480e3491770edae2301210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b024730440220228f40b66d8ba9c326aa8dfce77b5ee08eab37df2c8737e39f924f46bd4c611d02204903c178030a455c40ca17652d4767144e337f34f70f7b72572a86f3cc83987c012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe0247304402206bdf80b911f689eabc57a883c41dc1cd5d58ebb2595fccc770c4f53a43ccc909022020bfeeab675bdc5ced9441547121740829356835aa42748da584006510072fe70121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02483045022100e365a8955195b3c8534066805ff8c4ea3988e410b03a34654b0bc4c10638313d022077ee390f8f7c43fa2e0a308dfa8a1cbd74c9e4a7def160c30bc27baad3d602e401210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100ff6c29c7db69e9b387b198a2db730ee946a005d2c841283708bb124ed043e723022011ad44f1aa588e237363c65f1f8b8702b9df0932c8f2dc9d84acb7d156633523012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe0248304502210091d2b314e6ab9ac6ed0bd68b2d0fea1d9f840b298bd345416f785b773fb6decf02206e5c9f9cde9b08f239bdae7af0c31700efb22ff174e3de8df3f0bb38824cacff0121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb024830450221008e06ad8e2d3c291f7b5a240cd8bfa807d5d9d1114928170115de544c41042cf002206a55e59daa6e49f2a5da5be2c6be0bf8d5fedf5e14c8170b94558b875a0dd5aa01210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100bc134ebeab7a5772e56584960802f42e2b20e56ffd241c366e116e242b1d9508022026bd211f0c814839da20963e06f93cd73c808e19e3d238772309102e696fbd4b012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe02473044022052fdb0b6a024b995f001417a6752452ffe1b8291fd9d35f9471061a7efe17977022008b934718e3f2620b69cbdaac820bfe4aaaea44189d859d3556b278251ee99c20121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02483045022100df5b9e1fdf995c5778bd6711b51443693a19882a4bc22e1b93daa8002a7e1cd5022064cae579394bf5250b83b5362187775c40c119c1a44eae7bda2bafce966eeb5c01210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100d6ef2483dce5e6791ba5107754a41e1c5619f5e5b6bcd7125683021d9727823d022065aa7dccf20550e1976e043a51e284d1b18a100d646524909b4f99ef50f77768012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe024830450221009794f68537673144ea7692fd4ca57212f1304852d3c9b6176b14bb22b98b7ab302205327486a1c0fb54b466338fa71744d645126b8870b50f6c8aea4f0b2b53264f80121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02483045022100a7acc12ebe4954deba2bb2a0353d04ac5555f8f94cd0bac220027c0f04b011c20220463487071e837abb4fdcfed727c8ae73bea3ebee9f04e8e47b095b8a0a71720501210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100a8b5ab5c46f49db4eda39c53257f2b4e2d1822ace53a8824152791791d0fc70002200f9bfc6cbfdb55995d8557ba2ef71675e019659103b1689be3454c62d8e5e418012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe024730440220772c213b83f0f9cdd8b56fe7947348fb9b2515bf3a5c5275c7870c42abddff29022030a86d58ae51369d6a849e3a59bd20e1929b47c47da9edda114b41371b6160c40121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb0247304402200ce0981d16835df771c8a6fb0df012892cf42c01546385950242a6abdb2a7fac02202b7864e2fb13097407da3e50c76c54d446d458a77e7c186dcadba8edc25b342001210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100959946fd9c332a33343494a77307d36bc1a5564007324e27198f10b350fcea1e022003a445e7aac892d0ae8a885c653cb729ebc8c0f48c38ab04c68af2436aa9b7fb012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe02473044022051e0425e76890c1237ef674689d44b344a922478384ee134874f55fd8b488e7302205ec714ee6d4aa7f2e12ad7739998c925df3846a52f04c00c74e6d610ea19f1d60121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb024730440220569841ba76c19dd26ab139f474420760cb84275c55d9c7521a41f2445ec3afc2022054133b247bbe7859c631c462c89919bf10f86dacc55634993d5cd35f00d3266201210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02473044022021c9644da6e674c8b0ec4e43406579dfcd759a8fec6dbe90751f0892d9afd1c2022058430222ea197c00bb6396b8e617e59117c77c3702071851016d56dadde56057012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe02483045022100b19f494874c1c08488e04e5eb930c5f25fd5d670f5262931e9bc65f47a8d3882022056283772313ae575181a492976e31f3059b7ca6cb79bee8df84bf4aaad2141c50121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02473044022038a247dcf96d700ee36f9b73fadadd973dae0912014d8f3fc5675a4cdc05dca2022051e30ce8018969047619f7304380f5ae9c9b6ad47471df6727388369cec247db01210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100af017d14fb94c84ca70c3bfbbd1abdeb99707daf0ec66297e774ca8e1616914302203bfabf256f6407262498f6d577688d35cc9bd0cb3b338488f10337a25da1fee6012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe024830450221008fa212802e2c97ea5757b8a28753fab80d02c9f1a21c1d57cb7e837a9c8ac11202206f4e772b5945758f13e5f14eca23fd3657d531d2a84e492f55306ddf19aedbb00121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02483045022100a5a586c1bd1f576c2d5dec1bf99585ceb5df09bffd7d0e33f5a90ca5f0d5a61b02204893e5d08b1f89c55b89cbea8cad6baada1ce8c39565b1b145bb14561c715f7d01210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100dea2ff00d0ccfa1054e81efab1df4b8615184e42fd4b26351b3afc4a838f8ac602205e938bb35cf5e7afa5ba5fdf3405c9db6b07f6dfeeefb21fe926c0e5b7621336012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe0248304502210087770fa1cf2900da3564c3875fc37f7746407b0eb8b8666332f20b873b85479c02205ae1921d003df15f580301702a7e2a57de8aa5a10c9711acccba50ab3709f9ae0121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02473044022048f26ffa9469ea84a43248db1e2968e6b9d4fea0a8552e9b8f64974670e064ef02203772d79513de5c39f57da736132d7db1056993cf4cb9ea1931a86182a22773aa01210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02473044022062fd02d4faa2c06bc402bc64be669f9bc6fe7601118a451abdb047711d561d0902200631dfcc91bc0671ff5577ccfdb7915966fc3db5dce20dec0d6173991b3576f0012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe02463043021f499aa771517a68bac153aa641285bd014b6f76ea2ca7db54b045a11fdb7fd30220789e34577bf029b38971ce63936af70406115145be5564d8c93a2d3827db74c80121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb0247304402205ff7833f29ae30e5fbf3c7073a943ecb6473f933dfedf3e6defcd86759ab407e022033ed5e6e0534cfc4d9d88f3bca93880127a349007f63cc3620cbc2288beb3aa301210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b0247304402206411bb4c93040b845563309670345e425c31a86d6e66180853f4eb7849891ee70220649722a07e2f0f643f7cc8a0443d14b17a5991d601101e2aad1b23c16f2575fa012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe024830450221009c9d31754cca08b06788212529e8f064bd17b3af05d98f28486881af608c6c7d0220714aeb43513a5875eee09548ac78d5579b36acc25852e63805a8324fdfe148ad0121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02473044022000e44a613826c6d826afdb1efd45c1632fd2aa70435016b7c6ad37deb5cce455022044d31a242248923dba20fb7933de5706d18037c3a7bd1eae34fa5dd42d7b05a101210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b024730440220747e1b2e1563ad1e4c752109b606d2434e2038663281f83abf849c7da06ecdbf022033f1b3714373c31d66ae9bb524fd1437a56346168a55e9ac05d78f773b43bb68012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe024830450221009fcc2c33e105ba071e050c5d13464da4e6896ae95fc1f3a305952cb66aa7884402207eb9b4edd4ca8dadc2a06199e654495c3296c95906d93fc2bbd65c494b93f5940121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb02483045022100c0a02e45e9d74e0ac493e10315cfeb8d385b21d9be34076a1ba78b0d9937056102201924e1f9fd9dca37b95bf236a150aa7dc0817ef5ab75cbf7c64336cbcec942eb01210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b02483045022100e77ab4670534be5081f6a80c4015700324aea5d98a420a0e636bea6e978adaf302201d37022e1342c9eb1d82391b021a93db917bab96bc694891c9565efc41c838bb012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe0247304402203633cc69b988f4fe3fef734decb1f4e944ff4286a7fa59e69396eb43366c1f0a022020c48e4fa4c43902af8681767ba3bb73e4b6f6be83df31229d40ff33f4f314410121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb024830450221008d006aa8f87133d5dec24599fb9fb67f4a3e1a268a03fd7bb00e8d2f2073c6d402200dc60fb82d72ea10719d946e1e0466ce461e0a5b6f5c4e7a8d836b5c115df35301210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b0247304402202368e603c0b6f259a59466a4974a3b3e84463bb1b8fc6c9c06683d9957b9d8fb02201562f9ae150918792e7432ebc467a5b079fa059c673983d4081404d95d29295d012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe02473044022061e8804cc557c06e40d7669272af58f7ea1e8146435ed6929738f939ba1696b1022006271f638883b7fe8948bc14a67f76d6fdf966f75f7b9931e55d621c9b866b4b0121035624f768e1f7501ec53dddc4f63a28df7ecff3990b9dba70b68f506ad4abfafb024730440220415e28a600a18990b7d948e99f5aae10c3198a70e234cf7555d94a6d704b484402205778ecbc21f7202294474c9efa0ca13dbaae7a6f5788938d0b8a082b848d174801210319b83b65599b2044d89f3faa0a7c2daa26579189d569903a4e579e48d8f0c09b024730440220244380165afb1e606f99312f80999913e8e7056495f5ad5df5f41fddc620e66e02207d22fb6f534bd34f96a9c9efe95ad317dc1f34353b5506dbb873b2cdac849907012102f0ac2ea13d6d6ae550b0fbab903ee947fa8633deae769b2abbb9c03d7541aefe02483045022100b0fe157c98af951f235a908a54d49c20292191651a76301619d3dd2128c849e80220304889622b352c96f7fb14d64f84a620027e5641d7369ce1555c5bf49114807401210285d1eefbe8761c89a54623df8779cf326aa61084d84adeba47a838a761b81ebe00000000';
@@ -2809,7 +2797,7 @@ should('unspendable output (gh-66)', () => {
     newTx.addInput({ txid, index, nonWitnessUtxo: raw });
 });
 
-should('getOutputAddress', () => {
+it('getOutputAddress', () => {
   const tx = new btc.Transaction();
   for (const [address, amount] of TX_TEST_OUTPUTS) {
     const idx = tx.addOutputAddress(address, amount);
@@ -2817,7 +2805,7 @@ should('getOutputAddress', () => {
   }
 });
 
-should('GH-100: end-of-buffer psbt', () => {
+it('GH-100: end-of-buffer psbt', () => {
   const psbt = new btc.Transaction();
   psbt.addOutput({
     amount: BigInt(10000),
@@ -2843,7 +2831,7 @@ should('GH-100: end-of-buffer psbt', () => {
   // cannot be parsed by bitcoin-cli
 });
 
-should('GH-101: TAP_BIP32_DERIVATION', () => {
+it('GH-101: TAP_BIP32_DERIVATION', () => {
   const opts = {};
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   // setup taproot tx
@@ -2953,7 +2941,7 @@ should('GH-101: TAP_BIP32_DERIVATION', () => {
   );
 });
 
-should('GH-20: verify transaction hash', () => {
+it('GH-20: verify transaction hash', () => {
   const psbt = base64.decode(
     'cHNidP8BAJoCAAAAAljoeiG1ba8MI76OcHBFbDNvfLqlyHV5JPVFiHuyq911AAAAAAD/////g40EJ9DsZQpoqka7CwmK6kQiwHGyyng1Kgd5WdB86h0BAAAAAP////8CcKrwCAAAAAAWABTYXCtx0AYLCcmIauuBXlCZHdoSTQDh9QUAAAAAFgAUAK6pouXw+HaliN9VRuh0LR2HAI8AAAAAAAEAuwIAAAABqtc5MQGL0l+ErkALaISL4J23BurCrBgpi6vucatlb4sAAAAASEcwRAIgWPb8fGoz4bMVSNSByCbAFb0wE1qtQs1neQ2rZtKtJDsCIEoc7SYExnNbY5PltBaR3XiwDwxZQvufdRhW+qk4FX26Af7///8CgPD6AgAAAAAXqRQPuUY0IWlrgsgzryQceMF9295JNIfQ8gonAQAAABepFCnKdPigj4GZlCgYXJe12FLkBj9hh2UAAAAiAgLath/0mhTban0CsM0fu3j8SxgxK1tOVNrk26L7/vU210gwRQIhAPYQOLMI3B2oZaNIUnRvAVdyk0IIxtJEVDk82ZvfIhd3AiAFbmdaZ1ptCgK4WxTl4pB02KJam1dgvqKBb2YZEKAG6gEBAwQBAAAAAQRHUiEClYO/Oa4KYJdHrRma3dY0+mEIVZ1sXNObTCGD8auW4H8hAtq2H/SaFNtqfQKwzR+7ePxLGDErW05U2uTbovv+9TbXUq4iBgKVg785rgpgl0etGZrd1jT6YQhVnWxc05tMIYPxq5bgfxDZDGpPAAAAgAAAAIAAAACAIgYC2rYf9JoU22p9ArDNH7t4/EsYMStbTlTa5Nui+/71NtcQ2QxqTwAAAIAAAACAAQAAgAABASAAwusLAAAAABepFLf1+vQOPUClpFmx2zU18rcvqSHohyICAjrdkE89bc9Z3bkGsN7iNSm3/7ntUOXoYVGSaGAiHw5zRzBEAiBl9FulmYtZon/+GnvtAWrx8fkNVLOqj3RQql9WolEDvQIgf3JHA60e25ZoCyhLVtT/y4j3+3Weq74IqjDym4UTg9IBAQMEAQAAAAEEIgAgjCNTFzdDtZXftKB7crqOQuN5fadOh/59nXSX47ICiQABBUdSIQMIncEMesbbVPkTKa9hczPbOIzq0MIx9yM3nRuZAwsC3CECOt2QTz1tz1nduQaw3uI1Kbf/ue1Q5ehhUZJoYCIfDnNSriIGAjrdkE89bc9Z3bkGsN7iNSm3/7ntUOXoYVGSaGAiHw5zENkMak8AAACAAAAAgAMAAIAiBgMIncEMesbbVPkTKa9hczPbOIzq0MIx9yM3nRuZAwsC3BDZDGpPAAAAgAAAAIACAACAACICA6mkw39ZltOqJdusa1cK8GUDlEkpQkYLNUdT7Z7spYdxENkMak8AAACAAAAAgAQAAIAAIgICf2OZdX0u/1WhNq0CxoSxg4tlVuXxtrNCgqlLa1AFEJYQ2QxqTwAAAIAAAACABQAAgAA='
   );
@@ -3009,7 +2997,7 @@ const weirdVersionTx = () => {
   return { spend, raw, txid: hex.encode(sha256x2(raw).reverse()) };
 };
 
-should('weight matches serialized size (segwit)', () => {
+it('weight matches serialized size (segwit)', () => {
   const spend = btc.p2wpkh(pubECDSA(privA));
   const tx = new btc.Transaction();
   tx.addInput({
@@ -3024,7 +3012,7 @@ should('weight matches serialized size (segwit)', () => {
   checkWeight(tx);
 });
 
-should('weight matches serialized size (legacy, no witness)', () => {
+it('weight matches serialized size (legacy, no witness)', () => {
   const spend = btc.p2pkh(pubECDSA(privA));
   const prev = legacyPrevTx(spend.script, 10000n);
   const tx = new btc.Transaction();
@@ -3036,7 +3024,7 @@ should('weight matches serialized size (legacy, no witness)', () => {
   checkWeight(tx);
 });
 
-should('weight matches serialized size (mixed legacy+segwit inputs)', () => {
+it('weight matches serialized size (mixed legacy+segwit inputs)', () => {
   // The legacy input must still contribute one empty witness vector (a single zero
   // byte) once segwit serialization is active for the transaction.
   const spendLegacy = btc.p2pkh(pubECDSA(privA));
@@ -3057,7 +3045,7 @@ should('weight matches serialized size (mixed legacy+segwit inputs)', () => {
   checkWeight(tx);
 });
 
-should('Script.decode rejects malformed PUSHDATA4 (stripCodeSeparator gate)', () => {
+it('Script.decode rejects malformed PUSHDATA4 (stripCodeSeparator gate)', () => {
   // stripCodeSeparator's own length reader breaks on PUSHDATA4 lengths with the top
   // bit set (signed-shift overflow; declared length -5 below would rewind its cursor).
   // It is unreachable only because signing always runs Script.decode on the same
@@ -3067,7 +3055,7 @@ should('Script.decode rejects malformed PUSHDATA4 (stripCodeSeparator gate)', ()
   throws(() => btc.Script.decode(hex.decode('4e05000000ffff')));
 });
 
-should('OutScript near-miss scripts decode as unknown', () => {
+it('OutScript near-miss scripts decode as unknown', () => {
   // Fixed issue: scripts matching a known skeleton but failing semantic checks
   // (bad pubkeys, degenerate m/n, wrong hash sizes, off-curve x-only keys) used
   // to throw from OutScript.decode instead of classifying as 'unknown', which
@@ -3099,14 +3087,14 @@ should('OutScript near-miss scripts decode as unknown', () => {
   throws(() => btc.OutScript.encode({ type: 'tr_ms', m: 3, pubkeys: [xa, xb] } as any));
 });
 
-should('near-miss multisig prevout classifies as unknown input', () => {
+it('near-miss multisig prevout classifies as unknown input', () => {
   const script = btc.Script.encode([1, badPub33, 1, 'CHECKMULTISIG']);
   const inputType = btc.getInputType({ witnessUtxo: { amount: 1n, script } } as any, true);
   deepStrictEqual(inputType.type, 'unknown');
   deepStrictEqual(inputType.txType, 'legacy');
 });
 
-should('P2A address support', () => {
+it('P2A address support', () => {
   // Fixed issue: OutScript supported P2A but Address() did not, so
   // getOutputAddress/addOutputAddress failed on pay-to-anchor outputs.
   const script = hex.decode('51024e73');
@@ -3123,7 +3111,7 @@ should('P2A address support', () => {
   deepStrictEqual(tx.getOutputAddress(0), 'bc1pfeessrawgf');
 });
 
-should('Script.encode rejects inherited Object.prototype keys', () => {
+it('Script.encode rejects inherited Object.prototype keys', () => {
   // Fixed issue: OP['toString'] etc. resolve to inherited functions, not opcodes;
   // they used to reach the byte writer and fail with a confusing internal error.
   for (const key of ['toString', 'constructor', '__proto__', 'hasOwnProperty', 'valueOf'])
@@ -3131,7 +3119,7 @@ should('Script.encode rejects inherited Object.prototype keys', () => {
   deepStrictEqual(hex.encode(btc.Script.encode(['DUP'])), '76');
 });
 
-should('OpToNum rejects unsafe negative integers', () => {
+it('OpToNum rejects unsafe negative integers', () => {
   // Fixed issue: only the positive Number.MAX_SAFE_INTEGER bound was checked, so
   // large negative ScriptNums coerced through Number() with silent precision loss.
   deepStrictEqual(OpToNum(btc.ScriptNum(9).encode(-(2n ** 60n)), 9), undefined);
@@ -3140,7 +3128,7 @@ should('OpToNum rejects unsafe negative integers', () => {
   deepStrictEqual(OpToNum(5), 5);
 });
 
-should('ScriptNum minimal-encoding enforcement', () => {
+it('ScriptNum minimal-encoding enforcement', () => {
   // Pins the single-read decode refactor, including the minimality checks.
   const min = btc.ScriptNum(6, true);
   throws(() => min.decode(hex.decode('00'))); // non-minimal zero
@@ -3152,7 +3140,7 @@ should('ScriptNum minimal-encoding enforcement', () => {
   deepStrictEqual(min.decode(hex.decode('8000')), 128n); // high magnitude needs padding byte
 });
 
-should('allowUnknownVersion accepts non-standard versions', () => {
+it('allowUnknownVersion accepts non-standard versions', () => {
   // Fixed issue: the validateOpts ternary was inverted, so the option threw for
   // EVERY numeric version (even standard ones) — it had never worked.
   const tx = new btc.Transaction({ version: 5, allowUnknownVersion: true });
@@ -3171,4 +3159,4 @@ should('allowUnknownVersion accepts non-standard versions', () => {
   deepStrictEqual(parsed.id, txid);
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

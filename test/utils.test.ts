@@ -1,6 +1,6 @@
 import { schnorr, secp256k1 } from '@noble/curves/secp256k1.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import * as btcUtils from '../src/utils.ts';
@@ -8,7 +8,7 @@ import * as btcUtils from '../src/utils.ts';
 // Regression tests.
 const privA = hex.decode('02'.repeat(32));
 
-should('Packed CompactSize', () => {
+it('Packed CompactSize', () => {
   const CASES = [
     [20n, 1, [0x14]],
     [32n, 1, [0x20]],
@@ -36,7 +36,7 @@ should('Packed CompactSize', () => {
   throws(() => CompactSize.decode([0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]));
 });
 
-should('cmp', () => {
+it('cmp', () => {
   // From python
   const CASES = [
     [[0], [0], 0],
@@ -58,22 +58,22 @@ should('cmp', () => {
   throws(() => btc.utils.compareBytes('x' as any, new Uint8Array()), TypeError);
 });
 
-should('utils validator constructors', () => {
+it('utils validator constructors', () => {
   throws(() => btcUtils.validatePubkey(new Uint8Array(32), btcUtils.PubT.ecdsa), RangeError);
   throws(() => btcUtils.validatePubkey(new Uint8Array(33), btcUtils.PubT.schnorr), RangeError);
   throws(() => btcUtils.validatePubkey(new Uint8Array(33), 99 as any), TypeError);
 });
 
-should('reverseObject handles string values that match Object prototype names', () => {
+it('reverseObject handles string values that match Object prototype names', () => {
   deepStrictEqual({ ...btcUtils.reverseObject({ a: 'toString' }) }, { toString: 'a' });
   deepStrictEqual({ ...btcUtils.reverseObject({ a: 'hasOwnProperty' }) }, { hasOwnProperty: 'a' });
 });
 
-should('signECDSA rejects non-32-byte hashes', () => {
+it('signECDSA rejects non-32-byte hashes', () => {
   throws(() => btcUtils.signECDSA(Uint8Array.of(1, 2, 3), btcUtils.randomPrivateKeyBytes()));
 });
 
-should('taprootTweakPrivKey rejects non-32-byte secret keys', () => {
+it('taprootTweakPrivKey rejects non-32-byte secret keys', () => {
   const key = (len: number) => {
     const out = new Uint8Array(len);
     out[len - 1] = 1;
@@ -84,7 +84,7 @@ should('taprootTweakPrivKey rejects non-32-byte secret keys', () => {
   throws(() => btcUtils.taprootTweakPrivKey(key(1), new Uint8Array()));
 });
 
-should('taprootTweakPubkey rejects non-32-byte x-only pubkeys', () => {
+it('taprootTweakPubkey rejects non-32-byte x-only pubkeys', () => {
   const sk = Uint8Array.from(Array.from({ length: 32 }, (_, i) => i + 1));
   const pub = btcUtils.pubSchnorr(sk);
   throws(() => btcUtils.taprootTweakPubkey(Uint8Array.of(1), new Uint8Array()));
@@ -92,7 +92,7 @@ should('taprootTweakPubkey rejects non-32-byte x-only pubkeys', () => {
   throws(() => btcUtils.taprootTweakPubkey(Uint8Array.from([0, ...pub]), new Uint8Array()));
 });
 
-should('cmpBig', () => {
+it('cmpBig', () => {
   const CASES = [
     [0n, 0n, 0],
     [0n, 1n, -1],
@@ -102,7 +102,7 @@ should('cmpBig', () => {
     deepStrictEqual(btc._cmpBig(l, r), ret, `l=${l} r=${r} ret=${ret}`);
 });
 
-should('combinations', () => {
+it('combinations', () => {
   // Looks ok, but still have a feeling like there is off by one bug lying around.
   throws(() => btc.combinations(0, ['A', 'B', 'C']));
   throws(() => btc.combinations(-1, ['A', 'B', 'C']));
@@ -274,7 +274,7 @@ should('combinations', () => {
   }
 });
 
-should('CompactSize boundaries and minimality', () => {
+it('CompactSize boundaries and minimality', () => {
   // Pins each encoding-width boundary across the hoisted-limits refactor.
   const vectors: [bigint, string][] = [
     [0n, '00'],
@@ -298,7 +298,7 @@ should('CompactSize boundaries and minimality', () => {
   throws(() => btc.CompactSize.decode(hex.decode('ff0100000000000000')));
 });
 
-should('low-R grinding always yields 32-byte DER r', () => {
+it('low-R grinding always yields 32-byte DER r', () => {
   // Pins the hoisted LOW_R_BOUND refactor: ground signatures must never need the
   // 33-byte padded DER r form, and must remain valid ECDSA signatures.
   const pub = btcUtils.pubECDSA(privA);
@@ -317,7 +317,7 @@ should('low-R grinding always yields 32-byte DER r', () => {
   deepStrictEqual(unGroundHighRSeen, true);
 });
 
-should('taproot tweak priv/pub consistency and BIP341 H constant', () => {
+it('taproot tweak priv/pub consistency and BIP341 H constant', () => {
   // pubSchnorr(taprootTweakPrivKey(k)) must equal taprootTweakPubkey(pubSchnorr(k))
   // for both internal-key parities, and key-path signatures must verify under the
   // tweaked output key.
@@ -341,4 +341,4 @@ should('taproot tweak priv/pub consistency and BIP341 H constant', () => {
   );
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

@@ -1,4 +1,4 @@
-import { should } from '@paulmillr/jsbt/test.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
@@ -142,7 +142,7 @@ const fakeConfirmedTx = (txid: string) => ({
   },
 });
 
-should('EsploraProvider: real replay for height, block, fees, tx count, tx info', async () => {
+it('EsploraProvider: real replay for height, block, fees, tx count, tx info', async () => {
   const net = provider(NET_BASIC);
   const height = await net.height();
   deepStrictEqual(typeof height, 'number');
@@ -220,7 +220,7 @@ should('EsploraProvider: real replay for height, block, fees, tx count, tx info'
   });
 });
 
-should('EsploraProvider: real replay for signer-ready unspent outputs', async () => {
+it('EsploraProvider: real replay for signer-ready unspent outputs', async () => {
   // This exact mainnet UTXO was later spent; keep the signer-ready shape check on the capture.
   const unspent = await replayProvider(NET_UNSPENT).unspent('18qZ8FJho16xzNqQrPouobhyH4hf4uqZrj');
   deepStrictEqual(
@@ -244,7 +244,7 @@ should('EsploraProvider: real replay for signer-ready unspent outputs', async ()
   );
 });
 
-should('EsploraProvider: caller metadata makes wrapped unspent selectable', async () => {
+it('EsploraProvider: caller metadata makes wrapped unspent selectable', async () => {
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   const spend = p2sh(p2wpkh(pubECDSA(privKey)));
   const funding = new Transaction({ disableScriptCheck: true });
@@ -298,7 +298,7 @@ should('EsploraProvider: caller metadata makes wrapped unspent selectable', asyn
   );
 });
 
-should('EsploraProvider: real replay for taproot transfers and running balances', async () => {
+it('EsploraProvider: real replay for taproot transfers and running balances', async () => {
   const net = provider(NET_TRANSFERS_TAPROOT);
   const transfers = await net.transfers(TAPROOT_ADDR);
   deepStrictEqual(transfers, [
@@ -357,7 +357,7 @@ should('EsploraProvider: real replay for taproot transfers and running balances'
   ]);
 });
 
-should('EsploraProvider: real replay for empty block-filtered transfer range', async () => {
+it('EsploraProvider: real replay for empty block-filtered transfer range', async () => {
   deepStrictEqual(
     await provider(NET_TRANSFERS_TAPROOT).transfers(TAPROOT_ADDR, {
       fromBlock: 722428,
@@ -367,7 +367,7 @@ should('EsploraProvider: real replay for empty block-filtered transfer range', a
   );
 });
 
-should('EsploraProvider: real replay for transfer pagination options', async () => {
+it('EsploraProvider: real replay for transfer pagination options', async () => {
   const net = provider(NET_OLD_HISTORY);
   const all = await net.transfers(OLD_ADDR);
   const cursorInFirstPage = '5c448fc9f4101f99c063f956bbac6394fc497684e2844ec448461d4c391eba08';
@@ -654,7 +654,7 @@ should('EsploraProvider: real replay for transfer pagination options', async () 
   deepStrictEqual(actual, expected);
 });
 
-should('EsploraProvider: transfer limit keeps already-loaded latest page stable', async () => {
+it('EsploraProvider: transfer limit keeps already-loaded latest page stable', async () => {
   const rawTxs = Array.from({ length: 50 }, (_, i) => fakeRawTx(i));
   const txids = rawTxs.map((i) => i.txid);
   const replay: Record<string, string> = Object.fromEntries(
@@ -671,44 +671,41 @@ should('EsploraProvider: transfer limit keeps already-loaded latest page stable'
   deepStrictEqual(latest50.slice(-25), latest25);
 });
 
-should(
-  'EsploraProvider: captured transfer pages compose without losing boundary transactions',
-  async () => {
-    const net = provider({ ...NET_OLD_HISTORY, ...NET_PAGINATION_BOUNDARY });
-    const all = await net.transfers(OLD_ADDR);
-    const check = async (total: number, part: number) => {
-      const expected = all.slice(-total);
-      const latest = await net.transfers(OLD_ADDR, { limit: total });
-      const newest = await net.transfers(OLD_ADDR, { limit: part });
-      const older = await net.transfers(OLD_ADDR, { afterTxid: newest[0].txid, limit: part });
-      const merged = [...older, ...newest];
-      deepStrictEqual(
-        {
-          expected: expected.length,
-          latest: latest.length,
-          newest: newest.length,
-          older: older.length,
-          latestTxids: latest.map((tx) => tx.txid),
-          mergedTxids: merged.map((tx) => tx.txid),
-          merged,
-        },
-        {
-          expected: total,
-          latest: total,
-          newest: part,
-          older: part,
-          latestTxids: expected.map((tx) => tx.txid),
-          mergedTxids: expected.map((tx) => tx.txid),
-          merged: latest,
-        }
-      );
-    };
-    await check(50, 25);
-    await check(60, 30);
-  }
-);
+it('EsploraProvider: captured transfer pages compose without losing boundary transactions', async () => {
+  const net = provider({ ...NET_OLD_HISTORY, ...NET_PAGINATION_BOUNDARY });
+  const all = await net.transfers(OLD_ADDR);
+  const check = async (total: number, part: number) => {
+    const expected = all.slice(-total);
+    const latest = await net.transfers(OLD_ADDR, { limit: total });
+    const newest = await net.transfers(OLD_ADDR, { limit: part });
+    const older = await net.transfers(OLD_ADDR, { afterTxid: newest[0].txid, limit: part });
+    const merged = [...older, ...newest];
+    deepStrictEqual(
+      {
+        expected: expected.length,
+        latest: latest.length,
+        newest: newest.length,
+        older: older.length,
+        latestTxids: latest.map((tx) => tx.txid),
+        mergedTxids: merged.map((tx) => tx.txid),
+        merged,
+      },
+      {
+        expected: total,
+        latest: total,
+        newest: part,
+        older: part,
+        latestTxids: expected.map((tx) => tx.txid),
+        mergedTxids: expected.map((tx) => tx.txid),
+        merged: latest,
+      }
+    );
+  };
+  await check(50, 25);
+  await check(60, 30);
+});
 
-should('EsploraProvider: transfers afterTxid follows Esplora cursors', async () => {
+it('EsploraProvider: transfers afterTxid follows Esplora cursors', async () => {
   const rawTxs = Array.from({ length: 99 }, (_, i) => fakeRawTx(i));
   const txids = rawTxs.map((i) => i.txid);
   const tx = (txid: string, i: number) => ({
@@ -767,7 +764,7 @@ should('EsploraProvider: transfers afterTxid follows Esplora cursors', async () 
   );
 });
 
-should('EsploraProvider: archived replay for old unspent vector', async () => {
+it('EsploraProvider: archived replay for old unspent vector', async () => {
   const net = provider(NET_OLD_UNSPENT);
   const feePerByte = await net.fee();
   const unspent = await net.unspent(OLD_ADDR);
@@ -798,7 +795,7 @@ should('EsploraProvider: archived replay for old unspent vector', async () => {
   }
 });
 
-should('EsploraProvider: archived replay for old history vector', async () => {
+it('EsploraProvider: archived replay for old history vector', async () => {
   const net = provider(NET_OLD_HISTORY_WITH_BALANCE);
   const [balance, transfers] = await Promise.all([net.balance(OLD_ADDR), net.transfers(OLD_ADDR)]);
   const diff = calcTransfersDiff(transfers);
@@ -873,7 +870,7 @@ should('EsploraProvider: archived replay for old history vector', async () => {
   );
 });
 
-should('EsploraProvider: archived replay for old filtered history vector', async () => {
+it('EsploraProvider: archived replay for old filtered history vector', async () => {
   const transfers = await provider(NET_OLD_HISTORY).transfers(OLD_ADDR, {
     fromBlock: 507209,
     // Ranges are inclusive here; the old Electrum test treated block 511604 as the far edge.
@@ -925,7 +922,7 @@ should('EsploraProvider: archived replay for old filtered history vector', async
   ]);
 });
 
-should('EsploraProvider: sendTx reports backend rejection', async () => {
+it('EsploraProvider: sendTx reports backend rejection', async () => {
   const body = 'sendrawtransaction RPC error -25: bad-txns-inputs-missingorspent';
   const calls: unknown[] = [];
   const fetch = async (url: string, opts = {}) => {
@@ -950,7 +947,7 @@ should('EsploraProvider: sendTx reports backend rejection', async () => {
   ]);
 });
 
-should('EsploraProvider: rejects mismatched tx metadata and raw txids', async () => {
+it('EsploraProvider: rejects mismatched tx metadata and raw txids', async () => {
   const wrong = '1'.repeat(64);
   await rejects(
     () =>
@@ -972,7 +969,7 @@ should('EsploraProvider: rejects mismatched tx metadata and raw txids', async ()
   );
 });
 
-should('EsploraProvider: validates broadcast result txid', async () => {
+it('EsploraProvider: validates broadcast result txid', async () => {
   const fetch = async () => ({
     ok: true,
     status: 200,
@@ -985,7 +982,7 @@ should('EsploraProvider: validates broadcast result txid', async () => {
   );
 });
 
-should('EsploraProvider: request preserves transport and body errors', async () => {
+it('EsploraProvider: request preserves transport and body errors', async () => {
   const fetchError = new Error('network down');
   await rejects(
     () =>
@@ -1012,34 +1009,31 @@ should('EsploraProvider: request preserves transport and body errors', async () 
   );
 });
 
-should(
-  'EsploraProvider: balance parses bigint amount fields without bigint HTTP values',
-  async () => {
-    const fetch = async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        chain_stats: {
-          funded_txo_sum: '9007199254740993',
-          spent_txo_sum: '9007199254740991',
-          tx_count: 2,
-        },
-        mempool_stats: {
-          funded_txo_sum: 3,
-          spent_txo_sum: 1,
-          tx_count: 1,
-        },
-      }),
-      text: async () => '',
-    });
-    deepStrictEqual(await new EsploraProvider(fetch, NODE_URL).balance(TAPROOT_ADDR), {
-      symbol: 'BTC',
-      decimals: 8,
-      balance: 4n,
-      txCount: 3,
-    });
-  }
-);
+it('EsploraProvider: balance parses bigint amount fields without bigint HTTP values', async () => {
+  const fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => ({
+      chain_stats: {
+        funded_txo_sum: '9007199254740993',
+        spent_txo_sum: '9007199254740991',
+        tx_count: 2,
+      },
+      mempool_stats: {
+        funded_txo_sum: 3,
+        spent_txo_sum: 1,
+        tx_count: 1,
+      },
+    }),
+    text: async () => '',
+  });
+  deepStrictEqual(await new EsploraProvider(fetch, NODE_URL).balance(TAPROOT_ADDR), {
+    symbol: 'BTC',
+    decimals: 8,
+    balance: 4n,
+    txCount: 3,
+  });
+});
 
 // Plain path-routed fetch mock for the streaming/retry/abort tests; the
 // replay-based tests above keep exercising the captured mainnet vectors.
@@ -1077,14 +1071,14 @@ const collect = async <T>(gen: AsyncGenerator<T, void>): Promise<T[]> => {
   return out;
 };
 
-should('EsploraProvider: retries transient GET failures', async () => {
+it('EsploraProvider: retries transient GET failures', async () => {
   let calls = 0;
   const fetch = async () => (++calls < 3 ? errRes(503, 'Service Unavailable') : okRes('123'));
   deepStrictEqual(await new EsploraProvider(fetch, NODE_URL).height(), 123);
   deepStrictEqual(calls, 3);
 });
 
-should('EsploraProvider: retries browser fetch failures', async () => {
+it('EsploraProvider: retries browser fetch failures', async () => {
   let calls = 0;
   const fetch = async () => {
     if (++calls === 1) throw new TypeError('Failed to fetch');
@@ -1094,7 +1088,7 @@ should('EsploraProvider: retries browser fetch failures', async () => {
   deepStrictEqual(calls, 2);
 });
 
-should('EsploraProvider: retries transient body-parse failures', async () => {
+it('EsploraProvider: retries transient body-parse failures', async () => {
   // A proxy can serve an HTML error page with status 200; the failure only
   // surfaces at res.json() and must back off like a status failure.
   let calls = 0;
@@ -1117,7 +1111,7 @@ should('EsploraProvider: retries transient body-parse failures', async () => {
   deepStrictEqual(calls, 3);
 });
 
-should('EsploraProvider: waitForTx aborts promptly during the poll sleep', async () => {
+it('EsploraProvider: waitForTx aborts promptly during the poll sleep', async () => {
   // A signal aborted before sleep() is entered fires no 'abort' event; the
   // upfront aborted check must reject instead of waiting out pollIntervalMs.
   const controller = new AbortController();
@@ -1135,7 +1129,7 @@ should('EsploraProvider: waitForTx aborts promptly during the poll sleep', async
   deepStrictEqual(Date.now() - start < 5_000, true);
 });
 
-should('EsploraProvider: does not retry non-transient or POST failures', async () => {
+it('EsploraProvider: does not retry non-transient or POST failures', async () => {
   let getCalls = 0;
   const badRequest = async () => {
     getCalls++;
@@ -1152,7 +1146,7 @@ should('EsploraProvider: does not retry non-transient or POST failures', async (
   deepStrictEqual(postCalls, 1);
 });
 
-should('EsploraProvider: errors carry HTTP status and path', async () => {
+it('EsploraProvider: errors carry HTTP status and path', async () => {
   const net = new EsploraProvider(async () => errRes(404, 'Not Found'), NODE_URL);
   await rejects(
     () => net.height(),
@@ -1165,7 +1159,7 @@ should('EsploraProvider: errors carry HTTP status and path', async () => {
   );
 });
 
-should('EsploraProvider: unspent fetches each funding transaction once', async () => {
+it('EsploraProvider: unspent fetches each funding transaction once', async () => {
   const funding = new Transaction({ disableScriptCheck: true });
   funding.addOutputAddress(OLD_ADDR, 1n);
   funding.addOutputAddress(OLD_ADDR, 2n);
@@ -1190,7 +1184,7 @@ should('EsploraProvider: unspent fetches each funding transaction once', async (
   deepStrictEqual(calls.filter((call) => call === `GET /tx/${funding.id}/hex`).length, 1);
 });
 
-should('EsploraProvider: unspent bounds raw-tx fetch concurrency', async () => {
+it('EsploraProvider: unspent bounds raw-tx fetch concurrency', async () => {
   const rawTxs = Array.from({ length: 10 }, (_, i) => fakeRawTx(i));
   const byTxid = new Map(rawTxs.map(({ txid, raw }) => [txid, raw]));
   let inFlight = 0;
@@ -1214,7 +1208,7 @@ should('EsploraProvider: unspent bounds raw-tx fetch concurrency', async () => {
   deepStrictEqual(maxInFlight <= 2, true);
 });
 
-should('EsploraProvider: unspent stops raw-tx fan-out after a failure', async () => {
+it('EsploraProvider: unspent stops raw-tx fan-out after a failure', async () => {
   const rawTxs = Array.from({ length: 10 }, (_, i) => fakeRawTx(i));
   let started = 0;
   const fetch = async (url: string): Promise<MockRes> => {
@@ -1236,7 +1230,7 @@ should('EsploraProvider: unspent stops raw-tx fan-out after a failure', async ()
   deepStrictEqual(started <= 3, true);
 });
 
-should('EsploraProvider: history streams newest-first and stops fetching early', async () => {
+it('EsploraProvider: history streams newest-first and stops fetching early', async () => {
   const rawTxs = Array.from({ length: 50 }, (_, i) => fakeRawTx(i));
   const txids = rawTxs.map((i) => i.txid);
   const routes: Record<string, unknown> = Object.fromEntries(
@@ -1264,7 +1258,7 @@ should('EsploraProvider: history streams newest-first and stops fetching early',
   deepStrictEqual(calls.filter((call) => call.includes('/hex')).length, 25);
 });
 
-should('EsploraProvider: history reports exact scan progress', async () => {
+it('EsploraProvider: history reports exact scan progress', async () => {
   const rawTxs = Array.from({ length: 50 }, (_, i) => fakeRawTx(i));
   const txids = rawTxs.map((i) => i.txid);
   const routes: Record<string, unknown> = Object.fromEntries(
@@ -1290,7 +1284,7 @@ should('EsploraProvider: history reports exact scan progress', async () => {
   });
 });
 
-should('EsploraProvider: scans abort via AbortSignal', async () => {
+it('EsploraProvider: scans abort via AbortSignal', async () => {
   const controller = new AbortController();
   const reason = new Error('stop scan');
   controller.abort(reason);
@@ -1306,7 +1300,7 @@ should('EsploraProvider: scans abort via AbortSignal', async () => {
   deepStrictEqual(calls, 0);
 });
 
-should('EsploraProvider: history observes aborts between buffered rows', async () => {
+it('EsploraProvider: history observes aborts between buffered rows', async () => {
   const txs = [fakeRawTx(0), fakeRawTx(1)];
   const routes = Object.fromEntries(txs.map((tx) => [`/tx/${tx.txid}/hex`, tx.raw]));
   routes[`/address/${OLD_ADDR}/txs`] = txs.map((tx) => fakeConfirmedTx(tx.txid));
@@ -1321,7 +1315,7 @@ should('EsploraProvider: history observes aborts between buffered rows', async (
   await rejects(() => stream.next(), reason);
 });
 
-should('EsploraProvider: historyMulti merges watched addresses into one stream', async () => {
+it('EsploraProvider: historyMulti merges watched addresses into one stream', async () => {
   const mk = (outputs: { address: string; value: bigint }[], index: number) => {
     const tx = new Transaction({ disableScriptCheck: true });
     for (const { address, value } of outputs) tx.addOutputAddress(address, value);
@@ -1414,37 +1408,34 @@ should('EsploraProvider: historyMulti merges watched addresses into one stream',
   );
 });
 
-should(
-  'EsploraProvider: historyMulti yields a resolved head before advancing its stream',
-  async () => {
-    const txs = Array.from({ length: 25 }, (_, i) => fakeRawTx(i));
-    const routes = Object.fromEntries(txs.map((tx) => [`/tx/${tx.txid}/hex`, tx.raw]));
-    routes[`/address/${OLD_ADDR}/txs`] = txs.map((tx) => fakeConfirmedTx(tx.txid));
-    const nextPath = `/address/${OLD_ADDR}/txs/chain/${txs[24].txid}`;
-    const failure = new EsploraError(`GET ${nextPath} failed 404 Not Found`, {
-      status: 404,
-      path: nextPath,
-    });
-    const scan = async (multi: boolean) => {
-      const net = new EsploraProvider(routed(routes), NODE_URL);
-      const stream = multi ? net.historyMulti([OLD_ADDR]) : net.history(OLD_ADDR);
-      const rows: string[] = [];
-      await rejects(async () => {
-        for await (const row of stream) rows.push(row.txid);
-      }, failure);
-      return rows;
-    };
-    // One full page makes both public APIs fail on the same following-page request.
-    const history = await scan(false);
-    deepStrictEqual(
-      history,
-      txs.map((tx) => tx.txid)
-    );
-    deepStrictEqual(await scan(true), history);
-  }
-);
+it('EsploraProvider: historyMulti yields a resolved head before advancing its stream', async () => {
+  const txs = Array.from({ length: 25 }, (_, i) => fakeRawTx(i));
+  const routes = Object.fromEntries(txs.map((tx) => [`/tx/${tx.txid}/hex`, tx.raw]));
+  routes[`/address/${OLD_ADDR}/txs`] = txs.map((tx) => fakeConfirmedTx(tx.txid));
+  const nextPath = `/address/${OLD_ADDR}/txs/chain/${txs[24].txid}`;
+  const failure = new EsploraError(`GET ${nextPath} failed 404 Not Found`, {
+    status: 404,
+    path: nextPath,
+  });
+  const scan = async (multi: boolean) => {
+    const net = new EsploraProvider(routed(routes), NODE_URL);
+    const stream = multi ? net.historyMulti([OLD_ADDR]) : net.history(OLD_ADDR);
+    const rows: string[] = [];
+    await rejects(async () => {
+      for await (const row of stream) rows.push(row.txid);
+    }, failure);
+    return rows;
+  };
+  // One full page makes both public APIs fail on the same following-page request.
+  const history = await scan(false);
+  deepStrictEqual(
+    history,
+    txs.map((tx) => tx.txid)
+  );
+  deepStrictEqual(await scan(true), history);
+});
 
-should('EsploraProvider: waitForTx polls status until confirmed', async () => {
+it('EsploraProvider: waitForTx polls status until confirmed', async () => {
   const confirmed = {
     confirmed: true,
     block_height: 700_000,
@@ -1470,7 +1461,7 @@ should('EsploraProvider: waitForTx polls status until confirmed', async () => {
   deepStrictEqual(statusCalls, 3);
 });
 
-should('EsploraProvider: waitForTx polls through transient outages', async () => {
+it('EsploraProvider: waitForTx polls through transient outages', async () => {
   const confirmed = {
     confirmed: true,
     block_height: 700_000,
@@ -1499,7 +1490,7 @@ should('EsploraProvider: waitForTx polls through transient outages', async () =>
   deepStrictEqual(badCalls, 1);
 });
 
-should('EsploraProvider: waitForTx waits for extra confirmations and times out', async () => {
+it('EsploraProvider: waitForTx waits for extra confirmations and times out', async () => {
   const confirmed = {
     confirmed: true,
     block_height: 700_000,
@@ -1592,7 +1583,7 @@ const weirdVersionTx = () => {
   return { spend, raw, txid: hex.encode(sha256x2(raw).reverse()) };
 };
 
-should('Esplora txInfo parses non-standard tx versions', async () => {
+it('Esplora txInfo parses non-standard tx versions', async () => {
   // Fixed issue: parseRawTx did not pass allowUnknownVersion, so txInfo/transfers
   // failed on consensus-valid history with versions outside [-1, 0, 1, 2, 3].
   const { spend, raw, txid } = weirdVersionTx();
@@ -1620,7 +1611,7 @@ should('Esplora txInfo parses non-standard tx versions', async () => {
   deepStrictEqual(info.raw, hex.encode(raw));
 });
 
-should('Esplora unspent() verifies fetched prev-tx hex', async () => {
+it('Esplora unspent() verifies fetched prev-tx hex', async () => {
   // Fixed issue: unlike txInfo/transfers, unspent() never checked that the raw hex
   // served for /tx/:txid/hex is actually that transaction, so balance and
   // nonWitnessUtxo came from whatever the backend chose to return.
@@ -1649,7 +1640,7 @@ should('Esplora unspent() verifies fetched prev-tx hex', async () => {
   deepStrictEqual(ok.utxo.length, 1);
 });
 
-should('Esplora transfers() detects pagination cursor loops', async () => {
+it('Esplora transfers() detects pagination cursor loops', async () => {
   // Hardening: a backend that ignores the /txs/chain/:txid cursor and returns the
   // same full page forever used to make transfers() loop until out of memory.
   const addr = p2wpkh(pubECDSA(privA)).address!;
@@ -1676,4 +1667,4 @@ should('Esplora transfers() detects pagination cursor loops', async () => {
   );
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

@@ -1,11 +1,11 @@
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
-import type { EstimatorOpts } from '../src/utxo.ts';
 import { pubECDSA } from '../src/utils.ts';
+import type { EstimatorOpts } from '../src/utxo.ts';
 
 describe('UTXO Select', () => {
   const regtest = { bech32: 'bcrt', pubKeyHash: 0x6f, scriptHash: 0xc4 };
@@ -382,7 +382,7 @@ describe('UTXO Select', () => {
     { address: btc.p2tr(undefined, [btc.p2tr_pk(P8S)], regtest).address, amount: 1n },
     { address: btc.p2tr(P7S, [btc.p2tr_pk(P8S)], regtest).address, amount: 1n },
   ];
-  should('estimate size', () => {
+  it('estimate size', () => {
     const t = (inputs, outputs, diff = 0, trLeafSize) => {
       const name = `${names[inputs[0].name]}/${names[outputs[0].name]}`;
       const FEE = 3n;
@@ -539,7 +539,7 @@ describe('UTXO Select', () => {
     t([INPUTS[6]], [OUTPUTS[13]]);
   });
 
-  should('estimating size of custom scripts', () => {
+  it('estimating size of custom scripts', () => {
     const customScripts = [
       {
         encode(from) {
@@ -627,7 +627,7 @@ describe('UTXO Select', () => {
     deepStrictEqual(tx.weight, s.weight);
   });
 
-  should('estimator', () => {
+  it('estimator', () => {
     const inp = (i, amount) => ({
       ...INPUTS[i],
       witnessUtxo: { ...INPUTS[i].witnessUtxo, amount: BigInt(amount) },
@@ -654,7 +654,7 @@ describe('UTXO Select', () => {
     deepStrictEqual(est.newest, [6, 5, 4, 3, 2, 1, 0]);
   });
 
-  should('accumulate', () => {
+  it('accumulate', () => {
     const inputs = [];
     let inputsTotalAmount = 0n;
     for (let i = 0; i < 25; i++) {
@@ -1028,7 +1028,7 @@ describe('UTXO Select', () => {
     });
   });
 
-  should('bip69/inputs', () => {
+  it('bip69/inputs', () => {
     // from bip69
     const INP1 = [
       ['0e53ec5dfb2cb8a71fec32dc9a634a35b7e24799295ddd5278217822e0b31f57', 0],
@@ -1179,7 +1179,7 @@ describe('UTXO Select', () => {
     );
   });
 
-  should('example', () => {
+  it('example', () => {
     const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
     const pubKey = secp256k1.getPublicKey(privKey, true);
     const spend = btc.p2wpkh(pubKey, regtest);
@@ -1250,7 +1250,7 @@ describe('UTXO Select', () => {
     // real tx fee, can be bigger than estimated, since we expect signatures of maximal size
     deepStrictEqual(tx.fee, 394n);
   });
-  should('requiredInputs', () => {
+  it('requiredInputs', () => {
     const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
     const pubKey = secp256k1.getPublicKey(privKey, true);
     const spend = btc.p2wpkh(pubKey, regtest);
@@ -1356,7 +1356,7 @@ describe('UTXO Select', () => {
     ]);
   });
   // Dust (GH-107)
-  should('drop dust outputs', () => {
+  it('drop dust outputs', () => {
     const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
     const pubKey = secp256k1.getPublicKey(privKey, true);
     const spend = btc.p2wpkh(pubKey, regtest);
@@ -1419,7 +1419,7 @@ describe('UTXO Select', () => {
       { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
     ]);
   });
-  should('Estimator accepts bigint dust opts', () => {
+  it('Estimator accepts bigint dust opts', () => {
     const opts = {
       feePerByte: 100n,
       changeAddress: 'bcrt1pea3850rzre54e53eh7suwmrwc66un6nmu9npd7eqrhd6g4lh8uqsxcxln8',
@@ -1430,7 +1430,7 @@ describe('UTXO Select', () => {
     new btc._Estimator([], [], opts);
     deepStrictEqual(opts.dust, 200n);
   });
-  should('add change outputs if more than dust', () => {
+  it('add change outputs if more than dust', () => {
     const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
     const pubKey = secp256k1.getPublicKey(privKey, true);
     const spend = btc.p2wpkh(pubKey, regtest);
@@ -1478,7 +1478,7 @@ describe('UTXO Select', () => {
       { address: '2MvpbAgedBzJUBZWesDwdM7p3FEkBEwq3n3', amount: 200_000n },
     ]);
   });
-  should('GH-122', async () => {
+  it('GH-122', async () => {
     const P2PKH_SCRIPT = hex.decode('76a914168b992bcfc44050310b3a94bd0771136d0b28d188ac');
     const requiredInput = {
       sequence: 4294967295,
@@ -1570,7 +1570,7 @@ describe('UTXO Select', () => {
     if (!selected) throw new Error('selection failed unexpectedly');
     return { priv, selected };
   };
-  should('Estimator.accumulate accounts for 253-input CompactSize boundary', () => {
+  it('Estimator.accumulate accounts for 253-input CompactSize boundary', () => {
     const { est, inputs, output } = compactSizeBoundary();
     const acc = est.accumulate(est.oldest);
     const tx = new btc.Transaction({ network: regtest });
@@ -1583,18 +1583,15 @@ describe('UTXO Select', () => {
       { count: 253, fee: 14603n, weight: tx.weight }
     );
   });
-  should(
-    'Estimator.accumulate all mode recomputes fee after input-count CompactSize boundary',
-    () => {
-      const { est } = compactSizeBoundary();
-      const acc = est.accumulate(est.oldest, false, true, true);
-      deepStrictEqual(
-        { count: acc.indices.length, fee: acc.fee, weight: acc.weight },
-        { count: 253, fee: 14603n, weight: 58412 }
-      );
-    }
-  );
-  should('Estimator reports the actual fee and weight when dust suppresses change', () => {
+  it('Estimator.accumulate all mode recomputes fee after input-count CompactSize boundary', () => {
+    const { est } = compactSizeBoundary();
+    const acc = est.accumulate(est.oldest, false, true, true);
+    deepStrictEqual(
+      { count: acc.indices.length, fee: acc.fee, weight: acc.weight },
+      { count: 253, fee: 14603n, weight: 58412 }
+    );
+  });
+  it('Estimator reports the actual fee and weight when dust suppresses change', () => {
     const { priv, selected } = resultBoundary();
     deepStrictEqual(selected.change, false);
     deepStrictEqual(selected.outputs, [{ script: selected.outputs[0].script, amount: 100n }]);
@@ -1605,7 +1602,7 @@ describe('UTXO Select', () => {
       { fee: selected.tx.fee, weight: selected.tx.weight }
     );
   });
-  should('Estimator alwaysChange keeps the forced change output even below dust', () => {
+  it('Estimator alwaysChange keeps the forced change output even below dust', () => {
     const { priv, selected } = resultBoundary(15_600n, 101n, true);
     deepStrictEqual(selected.change, true);
     deepStrictEqual(selected.outputs.length, 2);
@@ -1620,7 +1617,7 @@ describe('UTXO Select', () => {
       { fee: selected.tx.fee, weight: selected.tx.weight }
     );
   });
-  should('Estimator result metadata matches the built tx across change-policy branches', () => {
+  it('Estimator result metadata matches the built tx across change-policy branches', () => {
     const cases = [
       { inputAmount: 15_600n, amount: 100n, alwaysChange: false, change: false, outputs: [100n] },
       {
@@ -1658,12 +1655,12 @@ describe('UTXO Select', () => {
     'exactBiggest/notARealStrategy',
     'exactBiggest/accumSmallest/notARealStrategy',
   ]) {
-    should(`selectUTXO rejects malformed strategy ${strategy}`, () => {
+    it(`selectUTXO rejects malformed strategy ${strategy}`, () => {
       const { inputs, output, opts } = strategyBoundary();
       throws(() => btc.selectUTXO(inputs, [output], strategy, opts), /wrong strategy/);
     });
   }
-  should(`Estimator rejects feePerByte=-1`, () => {
+  it(`Estimator rejects feePerByte=-1`, () => {
     throws(
       () =>
         new btc._Estimator([], [], {
@@ -1673,7 +1670,7 @@ describe('UTXO Select', () => {
       /"opts.feePerByte" expected non-negative bigint, got -1/
     );
   });
-  should('selectUTXO rejects negative output amounts before tx creation', () => {
+  it('selectUTXO rejects negative output amounts before tx creation', () => {
     const input = {
       txid: new Uint8Array(32).fill(0xaa),
       index: 0,
@@ -1698,7 +1695,7 @@ describe('UTXO Select', () => {
 const TXID_01 = '00'.repeat(31) + '01';
 const privA = hex.decode('02'.repeat(32));
 
-should('selectUTXO "all" fails on insufficient funds instead of negative fee', () => {
+it('selectUTXO "all" fails on insufficient funds instead of negative fee', () => {
   // Fixed issue: 'all' used to return the selection unconditionally, so result()
   // reported fee = total - amount (negative) or threw the internal
   // 'Estimator.result: negative change' error when alwaysChange was set.
@@ -1719,4 +1716,4 @@ should('selectUTXO "all" fails on insufficient funds instead of negative fee', (
   deepStrictEqual(ok!.fee, 500n); // total(1000) - amount(500), change below dust threshold
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

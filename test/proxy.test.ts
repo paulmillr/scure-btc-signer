@@ -1,4 +1,4 @@
-import { should } from '@paulmillr/jsbt/test.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual } from 'node:assert';
@@ -131,7 +131,7 @@ const fakeElectrum = async (handler: (req: Req) => unknown | Promise<unknown>) =
   };
 };
 
-should('test/proxy: serves Esplora-shaped HTTP over Electrum TCP', async () => {
+it('test/proxy: serves Esplora-shaped HTTP over Electrum TCP', async () => {
   const header = blockHeader({
     version: 0x20000000,
     parent: '11'.repeat(32),
@@ -293,7 +293,7 @@ should('test/proxy: serves Esplora-shaped HTTP over Electrum TCP', async () => {
   }
 });
 
-should('test/proxy: preserves genesis block height on cached tx lookups', async () => {
+it('test/proxy: preserves genesis block height on cached tx lookups', async () => {
   const header = blockHeader({
     version: 1,
     parent: '00'.repeat(32),
@@ -369,7 +369,7 @@ should('test/proxy: preserves genesis block height on cached tx lookups', async 
   }
 });
 
-should('test/proxy: propagates unexpected block txid enumeration errors', async () => {
+it('test/proxy: propagates unexpected block txid enumeration errors', async () => {
   const header = blockHeader({
     version: 0x20000000,
     parent: '11'.repeat(32),
@@ -419,7 +419,7 @@ should('test/proxy: propagates unexpected block txid enumeration errors', async 
   }
 });
 
-should('test/proxy: accepts romanz block txid end marker', async () => {
+it('test/proxy: accepts romanz block txid end marker', async () => {
   const header = blockHeader({
     version: 0x20000000,
     parent: '11'.repeat(32),
@@ -479,7 +479,7 @@ should('test/proxy: accepts romanz block txid end marker', async () => {
   }
 });
 
-should('test/proxy: computes address funded and spent sums', async () => {
+it('test/proxy: computes address funded and spent sums', async () => {
   const funding = txRaw(
     [{ txid: new Uint8Array(32), index: 0xffffffff }],
     [{ amount: 6000n, script }]
@@ -552,7 +552,7 @@ should('test/proxy: computes address funded and spent sums', async () => {
   }
 });
 
-should('test/proxy: orders same-block address transactions like Esplora', async () => {
+it('test/proxy: orders same-block address transactions like Esplora', async () => {
   const tx0 = txRaw([{ txid: new Uint8Array(32), index: 0xffffffff }], [{ amount: 6000n, script }]);
   const tx1 = txRaw([{ txid: new Uint8Array(32), index: 0xffffffff }], [{ amount: 7000n, script }]);
   const electrum = await fakeElectrum((req) => {
@@ -603,7 +603,7 @@ should('test/proxy: orders same-block address transactions like Esplora', async 
 });
 
 if (!LIVE_URL && !LIVE_ELECTRUM) {
-  should('EsploraProvider: blockInfo smoke', async () => {
+  it('EsploraProvider: blockInfo smoke', async () => {
     const replay = mftch.replayable(fetch, NET_BASIC, {
       getKey,
       offline: true,
@@ -622,7 +622,7 @@ if (!LIVE_URL && !LIVE_ELECTRUM) {
 }
 
 if (LIVE_URL || LIVE_ELECTRUM) {
-  should('test/proxy: matches Esplora HTTP through raw Electrum', async () => {
+  it('test/proxy: matches Esplora HTTP through raw Electrum', async () => {
     if (!LIVE_URL || !LIVE_ELECTRUM)
       throw new Error('expected ESPLORA_URL and SCURE_BTC_ELECTRUM_URL');
     const body = async (
@@ -702,4 +702,4 @@ if (LIVE_URL || LIVE_ELECTRUM) {
 }
 
 // Keep the proxy smoke test runnable directly without pulling it into cross-runtime package tests.
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

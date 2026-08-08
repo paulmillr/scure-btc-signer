@@ -1,4 +1,4 @@
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 
 import './btcjs.test.js';
 import './btcjs-taproot.test.js';

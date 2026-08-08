@@ -1,11 +1,11 @@
 import { secp256k1, schnorr as secp256k1_schnorr } from '@noble/curves/secp256k1.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import * as P from 'micro-packed';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../src/index.ts';
 
 // Takes 90 sec
-should('big multisig (ours)', () => {
+it('big multisig (ours)', () => {
   // Slow: sign + preimage. We can cache preimage, but sign is more complex
 
   // Limits: p2_ms=20, p2tr_ms/p2tr_ns=999 (stacksize)
@@ -43,4 +43,4 @@ should('big multisig (ours)', () => {
   deepStrictEqual(tx.id, '2687c4795c995431d934432def1cda8264c95920ce404229ca5c21328d7c9bcc');
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

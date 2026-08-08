@@ -1,12 +1,12 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { hexToBytes } from '@noble/curves/utils.js';
-import { should } from '@paulmillr/jsbt/test.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import { default as v340 } from './vectors/bip340.json' with { type: 'json' };
 
 // BIP340 (same as in secp256k1, just to be sure)
 for (const v of v340) {
-  should(`BIP340(schnorr): vector=${v.index}`, async () => {
+  it(`BIP340(schnorr): vector=${v.index}`, async () => {
     const pub = hexToBytes(v['public key']);
     const msg = hexToBytes(v['message']);
     const expSig = hexToBytes(v['signature']);
@@ -30,4 +30,4 @@ for (const v of v340) {
   });
 }
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

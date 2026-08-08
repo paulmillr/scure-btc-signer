@@ -1,13 +1,13 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { default as v341 } from './vectors/bip341.json' with { type: 'json' };
 
 for (let i = 0; i < v341.keyPathSpending.length; i++) {
   const t = v341.keyPathSpending[i];
-  should(`BIP341: TapRoot keyPathSpending(${i})`, () => {
+  it(`BIP341: TapRoot keyPathSpending(${i})`, () => {
     // should not be here
     // ac9a87f5594be208f8532db38cff670c450ed2fea8fcdefcc9a663f78bab962b
     // should be
@@ -51,7 +51,7 @@ for (let i = 0; i < v341.keyPathSpending.length; i++) {
   });
 }
 
-should('BIP341: Taproot controlBlock', () => {
+it('BIP341: Taproot controlBlock', () => {
   const vectors = [
     {
       leaf: 192,
@@ -164,7 +164,7 @@ should('BIP341: Taproot controlBlock', () => {
   }
 });
 
-should('Transaction.finalizeIdx: taproot key-path leaves empty finalScriptSig unset', () => {
+it('Transaction.finalizeIdx: taproot key-path leaves empty finalScriptSig unset', () => {
   const priv = new Uint8Array(32).fill(3);
   const pub = btc.utils.pubSchnorr(priv);
   const spend = btc.p2tr(pub);
@@ -184,7 +184,7 @@ should('Transaction.finalizeIdx: taproot key-path leaves empty finalScriptSig un
 
 for (let i = 0; i < v341.scriptPubKey.length; i++) {
   const v = v341.scriptPubKey[i];
-  should(`BIP341: TapRoot Script(${i})`, () => {
+  it(`BIP341: TapRoot Script(${i})`, () => {
     const res = btc.p2tr(v.given.internalPubkey, v.given.scriptTree, undefined, true);
     deepStrictEqual(
       hex.encode(res.tapMerkleRoot || new Uint8Array(0)),
@@ -204,7 +204,7 @@ for (let i = 0; i < v341.scriptPubKey.length; i++) {
   });
 }
 
-should('BIP341: TaprootListToTree', () => {
+it('BIP341: TaprootListToTree', () => {
   throws(() => btc.taprootListToTree([]), /empty|tree|taproot/i);
   // Single
   deepStrictEqual(btc.taprootListToTree([{ script: 1 }]), { script: 1 });
@@ -228,7 +228,7 @@ should('BIP341: TaprootListToTree', () => {
   );
 });
 
-should('verify unspendable key', () => {
+it('verify unspendable key', () => {
   deepStrictEqual(
     hex.encode(btc.TAPROOT_UNSPENDABLE_KEY),
     '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
@@ -239,7 +239,7 @@ should('verify unspendable key', () => {
 const TXID_01 = '00'.repeat(31) + '01';
 const privC = hex.decode('04'.repeat(32));
 
-should('taproot SIGHASH_SINGLE without matching output', () => {
+it('taproot SIGHASH_SINGLE without matching output', () => {
   const pub = btc.utils.pubSchnorr(privC);
   const spend = btc.p2tr(pub);
   const tx = new btc.Transaction();
@@ -258,7 +258,7 @@ should('taproot SIGHASH_SINGLE without matching output', () => {
   deepStrictEqual(preimage.length, 32);
 });
 
-should('p2tr allowUnknownOutputs works with non-matching customScripts', () => {
+it('p2tr allowUnknownOutputs works with non-matching customScripts', () => {
   // Fixed issue: micro-packed match() throws on no-match, so providing
   // customScripts used to make the allowUnknownOutputs escape unreachable
   // ('match/encode: cannot find match' instead of accepting the leaf).
@@ -272,4 +272,4 @@ should('p2tr allowUnknownOutputs works with non-matching customScripts', () => {
   throws(() => btc.p2tr(pub, leaf as any, undefined, false, [neverMatches as any]));
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

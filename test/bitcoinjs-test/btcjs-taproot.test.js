@@ -1,6 +1,6 @@
 import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../../index.js';
 import { default as tapPsbt } from './vectors/bitcoinjs-taproot/psbt.json' with { type: 'json' };
@@ -25,7 +25,7 @@ function fromASM(asm) {
   return out;
 }
 
-should(`PSBT P2TR finalizeInput`, () => {
+it(`PSBT P2TR finalizeInput`, () => {
   const t = tapPsbt.finalizeInput.finalizeTapleafByHash;
 
   const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt));
@@ -42,7 +42,7 @@ should(`PSBT P2TR finalizeInput`, () => {
 for (let i = 0; i < tapPsbt.bip174.finalizer.length; i++) {
   const t = tapPsbt.bip174.finalizer[i];
   if (!t.isTaproot) continue;
-  should(`PSBT P2TR finalizeInput)(${i}): ${i.description}`, () => {
+  it(`PSBT P2TR finalizeInput)(${i}): ${i.description}`, () => {
     const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt));
     tx.finalize();
     deepStrictEqual(hex.encode(tx.toPSBT()), hex.encode(base64.decode(t.result)));
@@ -54,7 +54,7 @@ for (let i = 0; i < tapPsbt.signInput.checks.length; i++) {
   if (!v.isTaproot) continue;
   // Temporary disabled (non-patched noble-curves)
   if (i === 8 || i === 9) continue;
-  should(`PSBT P2TR sign1(${i}): ${v.description}`, () => {
+  it(`PSBT P2TR sign1(${i}): ${v.description}`, () => {
     const t = v.shouldSign;
     const privKey = btc.WIF().decode(t.WIF);
     const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt));

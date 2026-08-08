@@ -1,7 +1,7 @@
 import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { mergeKeyMap, PSBTInput, PSBTInputCoder, PSBTOutputCoder } from '../src/psbt.ts';
@@ -11,7 +11,7 @@ import { default as psbtV } from './vectors/psbt_vectors.js';
 describe('bip174-psbt', () => {
   for (let i = 0; i < psbtV.length; i++) {
     const v = psbtV[i];
-    should(`PSBTv${v.v2 ? '2' : '0'}(${i}), ${v.invalid ? 'invalid' : 'valid'}: ${v.name}`, () => {
+    it(`PSBTv${v.v2 ? '2' : '0'}(${i}), ${v.invalid ? 'invalid' : 'valid'}: ${v.name}`, () => {
       const tx = hex.decode(v.hex);
       if (v.invalid) {
         if (v.signer) return; // we don't test these, because we have no key for signer
@@ -27,7 +27,7 @@ describe('bip174-psbt', () => {
   }
 });
 
-// should('PSBT combiner', () => {
+// it('PSBT combiner', () => {
 //   // Currently we skip unknown keys. Need to add support?
 //   return;
 //   const opts = { allowUnknowOutput: true };
@@ -60,7 +60,7 @@ describe('bip174-psbt', () => {
 // });
 
 // TODO!!
-should('bip174-psbt: PSBT multisig example', () => {
+it('bip174-psbt: PSBT multisig example', () => {
   const testnet = {
     wif: 0xef,
     bip32: {
@@ -240,7 +240,7 @@ should('bip174-psbt: PSBT multisig example', () => {
   );
 });
 
-should('bip174-psbt: PSBT garbage', () => {
+it('bip174-psbt: PSBT garbage', () => {
   // Parsed by bitcoinjs-lib, however contains garbage inside
   throws(() =>
     btc.Transaction.fromPSBT(
@@ -251,7 +251,7 @@ should('bip174-psbt: PSBT garbage', () => {
   );
 });
 
-should('bip174-psbt: PSBT unknown keys', () => {
+it('bip174-psbt: PSBT unknown keys', () => {
   const tx = hex.decode(
     '70736274ff01009a020000000258e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd750000000000ffffffff838d0427d0ec650a68aa46bb0b098aea4422c071b2ca78352a077959d07cea1d0100000000ffffffff0270aaf00800000000160014d85c2b71d0060b09c9886aeb815e50991dda124d00e1f5050000000016001400aea9a2e5f0f876a588df5546e8742d1d87008f00000000000100bb0200000001aad73931018bd25f84ae400b68848be09db706eac2ac18298babee71ab656f8b0000000048473044022058f6fc7c6a33e1b31548d481c826c015bd30135aad42cd67790dab66d2ad243b02204a1ced2604c6735b6393e5b41691dd78b00f0c5942fb9f751856faa938157dba01feffffff0280f0fa020000000017a9140fb9463421696b82c833af241c78c17ddbde493487d0f20a270100000017a91429ca74f8a08f81999428185c97b5d852e4063f6187650000000107da00473044022074018ad4180097b873323c0015720b3684cc8123891048e7dbcd9b55ad679c99022073d369b740e3eb53dcefa33823c8070514ca55a7dd9544f157c167913261118c01483045022100f61038b308dc1da865a34852746f015772934208c6d24454393cd99bdf2217770220056e675a675a6d0a02b85b14e5e29074d8a25a9b5760bea2816f661910a006ea01475221029583bf39ae0a609747ad199addd634fa6108559d6c5cd39b4c2183f1ab96e07f2102dab61ff49a14db6a7d02b0cd1fbb78fc4b18312b5b4e54dae4dba2fbfef536d752ae0001012000c2eb0b0000000017a914b7f5faf40e3d40a5a459b1db3535f2b72fa921e8870107232200208c2353173743b595dfb4a07b72ba8e42e3797da74e87fe7d9d7497e3b20289030108da0400473044022062eb7a556107a7c73f45ac4ab5a1dddf6f7075fb1275969a7f383efff784bcb202200c05dbb7470dbf2f08557dd356c7325c1ed30913e996cd3840945db12228da5f01473044022065f45ba5998b59a27ffe1a7bed016af1f1f90d54b3aa8f7450aa5f56a25103bd02207f724703ad1edb96680b284b56d4ffcb88f7fb759eabbe08aa30f29b851383d20147522103089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc21023add904f3d6dcf59ddb906b0dee23529b7ffb9ed50e5e86151926860221f0e7352ae00220203a9a4c37f5996d3aa25dbac6b570af0650394492942460b354753ed9eeca5877110d90c6a4f000000800000008004000080002202027f6399757d2eff55a136ad02c684b1838b6556e5f1b6b34282a94b6b5005109610d90c6a4f00000080000000800500008000'
   );
@@ -303,7 +303,7 @@ should('bip174-psbt: PSBT unknown keys', () => {
 const TXID_01 = '00'.repeat(31) + '01';
 const privA = hex.decode('02'.repeat(32));
 
-should('mergeKeyMap signed-field guard and hex-string bypass', () => {
+it('mergeKeyMap signed-field guard and hex-string bypass', () => {
   const spend = btc.p2wpkh(pubECDSA(privA));
   const tx = new btc.Transaction();
   tx.addInput({
@@ -323,7 +323,7 @@ should('mergeKeyMap signed-field guard and hex-string bypass', () => {
   deepStrictEqual(tx.getInput(0).sighashType, btc.SigHash.SINGLE);
 });
 
-should('mergeKeyMap keyed-field conflicts still throw', () => {
+it('mergeKeyMap keyed-field conflicts still throw', () => {
   // Keyed fields are not affected by the hex-string bypass: same key with a
   // different value must conflict no matter how the update is delivered.
   const pub = pubECDSA(privA);
@@ -344,7 +344,7 @@ should('mergeKeyMap keyed-field conflicts still throw', () => {
   deepStrictEqual(merged.bip32Derivation.length, 1);
 });
 
-should('PSBT encode sorts caller unknown array in place', () => {
+it('PSBT encode sorts caller unknown array in place', () => {
   // KNOWN ISSUE: encodeStream sorts value.unknown with Array.prototype.sort,
   // mutating the caller's array (ordering only; the row set is unchanged).
   const row = (key: number) =>
@@ -357,7 +357,7 @@ should('PSBT encode sorts caller unknown array in place', () => {
   );
 });
 
-should('schnorr signature length validation in PSBT fields', () => {
+it('schnorr signature length validation in PSBT fields', () => {
   PSBTInputCoder.encode({ tapKeySig: new Uint8Array(64).fill(1) } as any);
   throws(() => PSBTInputCoder.encode({ tapKeySig: new Uint8Array(63).fill(1) } as any));
   throws(() => PSBTInputCoder.encode({ tapKeySig: new Uint8Array(66).fill(1) } as any));
@@ -368,7 +368,7 @@ should('schnorr signature length validation in PSBT fields', () => {
   PSBTInputCoder.encode({ tapKeySig: sig65 } as any);
 });
 
-should('tapTree DFS/completeness validation and leniencies', () => {
+it('tapTree DFS/completeness validation and leniencies', () => {
   const leaf = (depth: number, version = 0xc0) => ({
     depth,
     version,
@@ -392,4 +392,4 @@ should('tapTree DFS/completeness validation and leniencies', () => {
   PSBTOutputCoder.encode({ tapTree: [leaf(0, 0xc1)] } as any);
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

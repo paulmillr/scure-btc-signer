@@ -1,5 +1,5 @@
+import { it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../src/index.ts';
 
@@ -68,7 +68,7 @@ const BIP67 = [
 
 for (let i = 0; i < BIP67.length; i++) {
   const t = BIP67[i];
-  should(`BIP67(${i})`, () => {
+  it(`BIP67(${i})`, () => {
     const input = t.input.map(hex.decode);
     const sorted = btc._sortPubkeys(input);
     deepStrictEqual(sorted, t.sorted.map(hex.decode));
@@ -78,4 +78,4 @@ for (let i = 0; i < BIP67.length; i++) {
   });
 }
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

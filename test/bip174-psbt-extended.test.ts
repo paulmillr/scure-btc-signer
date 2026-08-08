@@ -1,12 +1,12 @@
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { base64, hex } from '@scure/base';
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { default as rpcPSBT } from './vectors/rpc_psbt.json' with { type: 'json' };
 
 describe('bip174-psbt-extended', () => {
   for (let i = 0; i < rpcPSBT.invalid.length; i++) {
-    should(`invalid vector ${i}`, () => {
+    it(`invalid vector ${i}`, () => {
       throws(() => btc.Transaction.fromPSBT(base64.decode(rpcPSBT.invalid[i])));
     });
   }
@@ -19,7 +19,7 @@ describe('bip174-psbt-extended', () => {
     //                                                                      lockTime   00000000
     if (i === 0) continue;
     if (i === 5) continue;
-    should(`valid vector ${i}`, () => {
+    it(`valid vector ${i}`, () => {
       btc.Transaction.fromPSBT(base64.decode(rpcPSBT.valid[i]));
     });
   }
@@ -36,7 +36,7 @@ describe('bip174-psbt-extended', () => {
       scriptHash: 0xc4,
       wif: 0xef,
     };
-    should(`rpcPSBT(${i}): creator`, () => {
+    it(`rpcPSBT(${i}): creator`, () => {
       const tx = new btc.Transaction();
       // Already reversed
       for (const i of t.inputs) tx.addInput({ txid: hex.decode(i.txid), index: i.vout });
@@ -59,7 +59,7 @@ describe('bip174-psbt-extended', () => {
       scriptHash: 0xc4,
       wif: 0xef,
     };
-    should(`rpcPSBT(${i}): signer`, () => {
+    it(`rpcPSBT(${i}): signer`, () => {
       const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt), { lowR: true });
       // Some inputs should be unsigned, we throw error when signer didn't sign anything
       try {
@@ -74,7 +74,7 @@ describe('bip174-psbt-extended', () => {
     // Index with key: '0f010203040506070809': [Uint8Array],
     // This should be not possible, but it is in test by some reasons
     if (i === 1) continue;
-    should(`rpcPSBT(${i}): combiner`, () => {
+    it(`rpcPSBT(${i}): combiner`, () => {
       const comb = btc.PSBTCombine(t.combine.map(base64.decode));
       // Test case has non-sorted order of keys which makes it different from our test case
       // NOTE: deepStrictEqual ignores order of keys, so this wont' fail. I'm not insane in the end.
@@ -90,7 +90,7 @@ describe('bip174-psbt-extended', () => {
   }
   for (let i = 0; i < rpcPSBT.finalizer.length; i++) {
     const t = rpcPSBT.finalizer[i];
-    should(`rpcPSBT(${i}): finalizer`, () => {
+    it(`rpcPSBT(${i}): finalizer`, () => {
       const tx = btc.Transaction.fromPSBT(base64.decode(t.finalize));
       tx.finalize();
       deepStrictEqual(base64.encode(tx.toPSBT()), t.result);
@@ -99,11 +99,11 @@ describe('bip174-psbt-extended', () => {
 
   for (let i = 0; i < rpcPSBT.extractor.length; i++) {
     const t = rpcPSBT.extractor[i];
-    should(`rpcPSBT(${i}): extractor`, () => {
+    it(`rpcPSBT(${i}): extractor`, () => {
       const tx = btc.Transaction.fromPSBT(base64.decode(t.extract));
       deepStrictEqual(tx.extract(), hex.decode(t.result));
     });
   }
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

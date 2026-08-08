@@ -6,7 +6,7 @@ import {
   hexToBytes,
   hexToNumber,
 } from '@noble/curves/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as fs from 'node:fs';
 import { dirname } from 'node:path';
@@ -29,7 +29,7 @@ const parseCSV = (path) => {
 };
 
 describe('ElligatorSwift', () => {
-  should('packet_encoding_test_vectors', () => {
+  it('packet_encoding_test_vectors', () => {
     for (const t of parseCSV('bip324/packet_encoding_test_vectors.csv')) {
       const inPriv = hexToNumber(t['in_priv_ours']);
       const pubX = secp256k1.Point.BASE.multiply(inPriv)
@@ -57,7 +57,7 @@ describe('ElligatorSwift', () => {
     }
   });
 
-  should('xswiftec_inv_test_vectors', () => {
+  it('xswiftec_inv_test_vectors', () => {
     for (const t of parseCSV('bip324/xswiftec_inv_test_vectors.csv')) {
       const Fp = secp256k1.Point.Fp;
       const u = Fp.create(Fp.fromBytes(hexToBytes(t['u'])));
@@ -77,29 +77,26 @@ describe('ElligatorSwift', () => {
     }
   });
 
-  should('ellswift_decode_test_vectors', () => {
+  it('ellswift_decode_test_vectors', () => {
     for (const t of parseCSV('bip324/ellswift_decode_test_vectors.csv')) {
       deepStrictEqual(bytesToHex(elligatorSwift.decode(hexToBytes(t['ellswift']))), t['x']);
     }
   });
-  should('elligatorSwift.encode rejects x coordinates outside 0..p-1', () => {
+  it('elligatorSwift.encode rejects x coordinates outside 0..p-1', () => {
     const bad = secp256k1.Point.BASE.x + secp256k1.Point.Fp.ORDER;
     throws(() => elligatorSwift.encode(bad), /x|range|public key/i);
   });
-  should(
-    'elligatorSwift.getSharedSecretBip324 requires a 64-byte local ElligatorSwift encoding',
-    () => {
-      const alice = elligatorSwift.keygen();
-      const bob = elligatorSwift.keygen();
-      for (const ours of [new Uint8Array(0), new Uint8Array(63), new Uint8Array(65)]) {
-        throws(
-          () => elligatorSwift.getSharedSecretBip324(alice.privateKey, bob.publicKey, ours, true),
-          /publicKeyOurs|length/i
-        );
-      }
+  it('elligatorSwift.getSharedSecretBip324 requires a 64-byte local ElligatorSwift encoding', () => {
+    const alice = elligatorSwift.keygen();
+    const bob = elligatorSwift.keygen();
+    for (const ours of [new Uint8Array(0), new Uint8Array(63), new Uint8Array(65)]) {
+      throws(
+        () => elligatorSwift.getSharedSecretBip324(alice.privateKey, bob.publicKey, ours, true),
+        /publicKeyOurs|length/i
+      );
     }
-  );
-  should('Example', () => {
+  });
+  it('Example', () => {
     // random, so test more.
     for (let i = 0; i < 100; i++) {
       const alice = elligatorSwift.keygen();
@@ -138,7 +135,7 @@ const privA = hexToBytes('02'.repeat(32));
 const privB = hexToBytes('03'.repeat(32));
 const privC = hexToBytes('04'.repeat(32));
 
-should('elligatorSwift.encode rejects off-curve x coordinates', () => {
+it('elligatorSwift.encode rejects off-curve x coordinates', () => {
   // Fixed issue: x = 0 is not on secp256k1 (y^2 = 7 has no root mod p), yet
   // encode(0n) used to succeed and silently produce an encoding that decodes to a
   // DIFFERENT x — an ElligatorSwift encoding of the wrong public key.
@@ -151,7 +148,7 @@ should('elligatorSwift.encode rejects off-curve x coordinates', () => {
   }
 });
 
-should('elligatorSwift ECDH symmetry and validation', () => {
+it('elligatorSwift ECDH symmetry and validation', () => {
   // End-to-end pin for the encode/decode changes (field-wide u sampling, shared
   // X/Y inversion, INV_2): both sides must derive the same BIP324 shared secret.
   const pubA = elligatorSwift.encode(bytesToNumberBE(pubSchnorr(privA)));
@@ -163,4 +160,4 @@ should('elligatorSwift ECDH symmetry and validation', () => {
   throws(() => elligatorSwift.getSharedSecretBip324(privA, pubB, pubA, 'true' as any));
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

@@ -1,5 +1,5 @@
 import { hex } from '@scure/base';
-import { should } from 'micro-should';
+import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../../index.js';
 import { default as p2tr } from './vectors/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
@@ -32,7 +32,7 @@ for (const type in payments) {
   for (let i = 0; i < payment.valid.length; i++) {
     const t = payment.valid[i];
     const realType = type.replace('_bitgo', '');
-    should(`format: ${type}(${i}): ${t.description}`, () => {
+    it(`format: ${type}(${i}): ${t.description}`, () => {
       if (t.expected.address && t.expected.output) {
         const address = t.expected.address;
         const script = btc.Script.encode(utils.fromASM(t.expected.output));
@@ -70,7 +70,7 @@ for (const type in payments) {
   if (!types[type]) continue;
   for (let i = 0; i < payment.valid.length; i++) {
     const v = payment.valid[i];
-    should(`format(1): ${type}(${i}): ${v.description}`, () => {
+    it(`format(1): ${type}(${i}): ${v.description}`, () => {
       if (type === 'p2tr') return;
       if (v.arguments.pubkey) {
         deepStrictEqual(types[type](hex.decode(v.arguments.pubkey)).address, v.expected.address);

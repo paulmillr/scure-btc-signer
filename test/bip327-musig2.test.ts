@@ -6,7 +6,7 @@ import {
   numberToBytesBE,
   randomBytes,
 } from '@noble/curves/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as musig2 from '../src/musig2.ts';
 import { default as detSignVectors } from './vectors/bip327/det_sign_vectors.json' with { type: 'json' };
@@ -32,7 +32,7 @@ const assertError = (error, cb) => {
 };
 
 describe('BIP327', () => {
-  should('Example', () => {
+  it('Example', () => {
     // MuSig2 Multi-signature for Alice, Bob, and Carol
     // 1. Key Generation (for each signer: Alice, Bob, Carol)
     // - Alice's key generation
@@ -82,7 +82,7 @@ describe('BIP327', () => {
     // Verify the final signature
     deepStrictEqual(schnorr.verify(finalSignature, msg, aggregatePublicKey), true);
   });
-  should('Example (deterministic)', () => {
+  it('Example (deterministic)', () => {
     // 1. Key Generation (for each signer: Alice, Bob, Carol) - Same as before
     // - Alice's key generation
     const aliceSecretKey = randomBytes(32);
@@ -144,11 +144,11 @@ describe('BIP327', () => {
     // 9. Signature Verification (Anyone can verify the final signature)
     deepStrictEqual(schnorr.verify(finalSignature, msg, aggregatePublicKey), true);
   });
-  should('key sorting', () => {
+  it('key sorting', () => {
     const t = keySortVectors;
     deepStrictEqual(musig2.sortKeys(t.pubkeys.map(hexToBytes)), t.sorted_pubkeys.map(hexToBytes));
   });
-  should('validator constructors', () => {
+  it('validator constructors', () => {
     const secretKey = schnorr.utils.randomSecretKey();
     const publicKey = musig2.IndividualPubkey(secretKey);
     throws(() => musig2.sortKeys('x' as any), TypeError);
@@ -168,10 +168,10 @@ describe('BIP327', () => {
       RangeError
     );
   });
-  should('sortKeys rejects empty key lists', () => {
+  it('sortKeys rejects empty key lists', () => {
     throws(() => musig2.sortKeys([]), RangeError);
   });
-  should('sortKeys returns a sorted copy without mutating caller input', () => {
+  it('sortKeys returns a sorted copy without mutating caller input', () => {
     const a = new Uint8Array(33);
     a.fill(2);
     const b = new Uint8Array(33);
@@ -183,13 +183,13 @@ describe('BIP327', () => {
     deepStrictEqual(out === input, false);
     deepStrictEqual(input, snapshot);
   });
-  should('keyAggregate rejects empty key lists', () => {
+  it('keyAggregate rejects empty key lists', () => {
     throws(() => musig2.keyAggregate([]), RangeError);
   });
-  should('nonceAggregate rejects empty nonce lists', () => {
+  it('nonceAggregate rejects empty nonce lists', () => {
     throws(() => musig2.nonceAggregate([]), RangeError);
   });
-  should('partialSigAgg rejects empty partial-signature lists', () => {
+  it('partialSigAgg rejects empty partial-signature lists', () => {
     const secretKey = schnorr.utils.randomSecretKey();
     const publicKey = musig2.IndividualPubkey(secretKey);
     const msg = new Uint8Array([1, 2, 3]);
@@ -198,14 +198,14 @@ describe('BIP327', () => {
     const session = new musig2.Session(musig2.nonceAggregate([nonce.public]), [publicKey], msg);
     throws(() => session.partialSigAgg([]), RangeError);
   });
-  should('keyAggregate rejects non-boolean isXonly entries', () => {
+  it('keyAggregate rejects non-boolean isXonly entries', () => {
     const secretKey = schnorr.utils.randomSecretKey();
     const publicKey = musig2.IndividualPubkey(secretKey);
     const tweak = new Uint8Array(32);
     tweak[31] = 1;
     throws(() => musig2.keyAggregate([publicKey], [tweak], [1 as any]), TypeError);
   });
-  should('deterministic sign accepts a zero plain tweak as a no-op', () => {
+  it('deterministic sign accepts a zero plain tweak as a no-op', () => {
     const secretKey = schnorr.utils.randomSecretKey();
     const publicKey = musig2.IndividualPubkey(secretKey);
     const aggOtherNonce = musig2.nonceGen(publicKey, secretKey).public;
@@ -222,7 +222,7 @@ describe('BIP327', () => {
       musig2.deterministicSign(secretKey, aggOtherNonce, [publicKey], msg)
     );
   });
-  should('partialSigVerify treats a zero partial signature as invalid instead of throwing', () => {
+  it('partialSigVerify treats a zero partial signature as invalid instead of throwing', () => {
     const secretKey = schnorr.utils.randomSecretKey();
     const publicKey = musig2.IndividualPubkey(secretKey);
     const msg = new Uint8Array([1, 2, 3]);
@@ -232,7 +232,7 @@ describe('BIP327', () => {
     const session = new musig2.Session(musig2.nonceAggregate([nonce.public]), [publicKey], msg);
     deepStrictEqual(session.partialSigVerify(new Uint8Array(32), [nonce.public], 0), false);
   });
-  should('partialSigVerify depends on the full signer nonce list, not just pubNonces[i]', () => {
+  it('partialSigVerify depends on the full signer nonce list, not just pubNonces[i]', () => {
     const empty = new Uint8Array(0);
     const msg = new Uint8Array([1, 2, 3]);
     const sk1 = new Uint8Array(32);
@@ -259,7 +259,7 @@ describe('BIP327', () => {
     deepStrictEqual(recomputed.partialSigVerify(psig1, mismatched, 0), false);
     deepStrictEqual(session.partialSigVerify(psig1, mismatched, 0), false);
   });
-  should('Session signing is not affected by later publicKeys mutation', () => {
+  it('Session signing is not affected by later publicKeys mutation', () => {
     const sk = new Uint8Array(32);
     sk[31] = 1;
     const pk = musig2.IndividualPubkey(sk);
@@ -281,7 +281,7 @@ describe('BIP327', () => {
       expected
     );
   });
-  should('Session signing is not affected by later Buffer-backed publicKey mutation', () => {
+  it('Session signing is not affected by later Buffer-backed publicKey mutation', () => {
     const sk = new Uint8Array(32);
     sk[31] = 1;
     const pk = musig2.IndividualPubkey(sk);
@@ -303,29 +303,26 @@ describe('BIP327', () => {
       expected
     );
   });
-  should(
-    'Session partialSigVerify is not affected by later Buffer-backed aggNonce mutation',
-    () => {
-      const sk = new Uint8Array(32);
-      sk[31] = 1;
-      const pk = musig2.IndividualPubkey(sk);
-      const rand = new Uint8Array(32);
-      rand[31] = 9;
-      const empty = new Uint8Array(0);
-      const msg = new Uint8Array([1, 2, 3]);
-      const nonce = musig2.nonceGen(pk, sk, empty, msg, empty, rand);
-      const aggNonce = musig2.nonceAggregate([nonce.public]);
-      const partialSig = new musig2.Session(aggNonce, [pk], msg).sign(
-        musig2.nonceGen(pk, sk, empty, msg, empty, rand).secret,
-        sk
-      );
-      const aggNonceBuf = Buffer.from(aggNonce);
-      const session = new musig2.Session(aggNonceBuf, [pk], msg);
-      aggNonceBuf[0] ^= 1;
-      deepStrictEqual(session.partialSigVerify(partialSig, [nonce.public], 0), true);
-    }
-  );
-  should('key aggregation', () => {
+  it('Session partialSigVerify is not affected by later Buffer-backed aggNonce mutation', () => {
+    const sk = new Uint8Array(32);
+    sk[31] = 1;
+    const pk = musig2.IndividualPubkey(sk);
+    const rand = new Uint8Array(32);
+    rand[31] = 9;
+    const empty = new Uint8Array(0);
+    const msg = new Uint8Array([1, 2, 3]);
+    const nonce = musig2.nonceGen(pk, sk, empty, msg, empty, rand);
+    const aggNonce = musig2.nonceAggregate([nonce.public]);
+    const partialSig = new musig2.Session(aggNonce, [pk], msg).sign(
+      musig2.nonceGen(pk, sk, empty, msg, empty, rand).secret,
+      sk
+    );
+    const aggNonceBuf = Buffer.from(aggNonce);
+    const session = new musig2.Session(aggNonceBuf, [pk], msg);
+    aggNonceBuf[0] ^= 1;
+    deepStrictEqual(session.partialSigVerify(partialSig, [nonce.public], 0), true);
+  });
+  it('key aggregation', () => {
     const pubkeys = keyAggVectors.pubkeys.map(hexToBytes);
     for (const t of keyAggVectors.valid_test_cases) {
       const pub = t.key_indices.map((i) => pubkeys[i]);
@@ -342,7 +339,7 @@ describe('BIP327', () => {
       });
     }
   });
-  should('nonce geneneration', () => {
+  it('nonce geneneration', () => {
     for (const t of nonceGenVectors.test_cases) {
       const rand = hexToBytes(t.rand_);
       const pk = hexToBytes(t.pk);
@@ -356,7 +353,7 @@ describe('BIP327', () => {
       });
     }
   });
-  should('nonce aggregate', () => {
+  it('nonce aggregate', () => {
     for (const t of nonceAggVectors.valid_test_cases) {
       const pubnonces = t.pnonce_indices.map((i) => hexToBytes(nonceAggVectors.pnonces[i]));
       deepStrictEqual(musig2.nonceAggregate(pubnonces), hexToBytes(t.expected));
@@ -366,7 +363,7 @@ describe('BIP327', () => {
       assertError(t.error, () => musig2.nonceAggregate(pubnonces));
     }
   });
-  should('sign & verify', () => {
+  it('sign & verify', () => {
     const sk = hexToBytes(signVerifyVectors.sk);
     const X = signVerifyVectors.pubkeys.map(hexToBytes);
     deepStrictEqual(X[0], musig2.IndividualPubkey(sk));
@@ -426,7 +423,7 @@ describe('BIP327', () => {
     }
   });
 
-  should('tweak', () => {
+  it('tweak', () => {
     const sk = hexToBytes(tweakVectors.sk);
     const X = tweakVectors.pubkeys.map(hexToBytes);
     deepStrictEqual(X[0], musig2.IndividualPubkey(sk));
@@ -472,7 +469,7 @@ describe('BIP327', () => {
     }
   });
 
-  should('deterministic sign', () => {
+  it('deterministic sign', () => {
     const sk = hexToBytes(detSignVectors.sk);
     const X = detSignVectors.pubkeys.map(hexToBytes);
     deepStrictEqual(X[0], musig2.IndividualPubkey(sk));
@@ -520,7 +517,7 @@ describe('BIP327', () => {
       });
     }
   });
-  should('signature aggregation', () => {
+  it('signature aggregation', () => {
     const msg = hexToBytes(sigAggVectors.msg);
     for (const t of sigAggVectors.valid_test_cases) {
       const pubnonces = t.nonce_indices.map((i) => hexToBytes(sigAggVectors.pnonces[i]));
@@ -561,7 +558,7 @@ describe('BIP327', () => {
       assertError(t.error, () => session.partialSigAgg(psigs));
     }
   });
-  should('sign & verify (random)', () => {
+  it('sign & verify (random)', () => {
     const rand = () => randomBytes(1)[0];
     const rand_1_of_4 = () => rand() % 4 === 0;
     const rand_1_of_2 = () => rand() % 2 === 0;
@@ -630,7 +627,7 @@ describe('BIP327', () => {
 const privA = hexToBytes('02'.repeat(32));
 const privB = hexToBytes('03'.repeat(32));
 
-should('MuSig2 end-to-end 2-of-2 with tweaks', () => {
+it('MuSig2 end-to-end 2-of-2 with tweaks', () => {
   // Independent check of the verification-path multiplyUnsafe refactor: run a full
   // signing round (random-nonce and deterministic) and verify the final signatures
   // with plain BIP340 schnorr.verify against the tweaked aggregate key.
@@ -679,4 +676,4 @@ should('MuSig2 end-to-end 2-of-2 with tweaks', () => {
   deepStrictEqual(schnorr.verify(finalSig2, msg, aggPk), true);
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

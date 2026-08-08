@@ -1,5 +1,5 @@
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../src/index.ts';
 
@@ -96,7 +96,7 @@ const p2tr_ns_vec = [
 
 for (let i = 0; i < p2tr_ns_vec.length; i++) {
   const t = p2tr_ns_vec[i];
-  should(`p2tr_ns(${i})`, () => {
+  it(`p2tr_ns(${i})`, () => {
     const pubkeys = t.pubkeys.map(hex.decode);
     const parsedScript = btc.OutScript.decode(hex.decode(t.out));
     deepStrictEqual(parsedScript.type, 'tr_ns');
@@ -105,7 +105,7 @@ for (let i = 0; i < p2tr_ns_vec.length; i++) {
   });
 }
 
-should('p2tr_ns test', () => {
+it('p2tr_ns test', () => {
   const p = [
     '0101010101010101010101010101010101010101010101010101010101010101',
     '0202020202020202020202020202020202020202020202020202020202020202',
@@ -128,7 +128,7 @@ should('p2tr_ns test', () => {
   );
 });
 
-should('p2ms', () => {
+it('p2ms', () => {
   // Found in some vectors
   const script = hex.decode(
     '208f891aaf2e2d7b146178c54a87e2aeddd9d1d686692257928e67cf08174ff375ac20395f8129dd63b4a5c2f12124eaa05b7a7ed30f70e51fb93305deecc542e7f9ebba20a8ab37bc1609d834c3913b3538dad1c84d7f9b6a835ffc175777915a37ae3572ba539c'
@@ -207,7 +207,7 @@ const SCRIPTS = [
 
 describe('taproot-multisig', () => {
   for (const s of SCRIPTS) {
-    should(`script=${s}`, () => {
+    it(`script=${s}`, () => {
       const d = hex.decode(s);
       const parsed = btc.OutScript.decode(d);
       // if (parsed.type === 'unknown') {
@@ -221,4 +221,4 @@ describe('taproot-multisig', () => {
   }
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);
