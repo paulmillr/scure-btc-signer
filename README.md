@@ -1474,12 +1474,6 @@ For this package, there are 4 dependencies; and a few dev dependencies:
 - jsbt is used for benchmarking / testing / build tooling and developed by the same author
 - prettier, fast-check and typescript are used for code quality / test generation / ts compilation. It's hard to audit their source code thoroughly and fully because of their size
 
-## Contributing & testing
-
-- `npm install && npm run build && npm test` will build the code and run tests.
-- `npm run lint` / `npm run format` will run linter / fix linter issues.
-- `npm run build:release` will build single file
-
 ## Learning & documentation
 
 There are several nice resources on the topic:

@@ -5,8 +5,6 @@
   "files": [
     "*.js",
     "*.d.ts",
-    "*.js.map",
-    "*.d.ts.map",
     "src",
     "!_type_test.*"
   ],
@@ -14,27 +12,24 @@
     "@noble/curves": "~2.2.0",
     "@noble/hashes": "~2.2.0",
     "@scure/base": "~2.2.0",
-    "micro-packed": "~0.9.0"
+    "micro-packed": "~0.10.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.6.0",
+    "@paulmillr/jsbt": "0.6.5",
     "@scure/bip32": "2.2.0",
     "micro-ftch": "^1.0.0",
     "prettier": "3.6.2",
     "typescript": "6.0.2"
   },
   "scripts": {
+    "benchmark:size": "npx bismar@0.1.3 -s",
     "build": "tsc",
-    "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}",
-    "bundle": "npx --no @paulmillr/jsbt bundle",
-    "check": "npx --no @paulmillr/jsbt check",
+    "build:clean": "rm -f *.{js,d.ts}",
+    "check": "jsbt-check",
     "benchmark": "node benchmark/index.ts",
     "benchmark:network": "node benchmark/network.ts",
     "format": "prettier --write src test/*.test.*",
-    "test": "node --no-warnings test/index.ts",
-    "test:bun": "bun test/index.ts",
-    "test:deno": "deno --allow-env --allow-read test/index.ts",
-    "test:tsc": "cd test; npx tsc; node compiled/test/index.js",
+    "test": "node test/index.ts",
     "test:slow": "node test/slow.test.ts",
     "test:extended": "node --experimental-loader ./test/bitcoinjs-test/esm-loader.js ./test/bitcoinjs-test/index.test.js"
   },

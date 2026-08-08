@@ -1,4 +1,4 @@
-import bench from '@paulmillr/jsbt/bench.js';
+import bench from '@paulmillr/jsbt/benchmark.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { pubECDSA, sha256, signECDSA, signSchnorr } from '../src/utils.ts';
