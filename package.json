@@ -9,15 +9,15 @@
     "!_type_test.*"
   ],
   "dependencies": {
-    "@noble/curves": "~2.2.0",
-    "@noble/hashes": "~2.2.0",
-    "@scure/base": "~2.2.0",
-    "micro-packed": "~0.10.0"
+    "@noble/curves": "~2.3.0",
+    "@noble/hashes": "~2.3.0",
+    "@scure/base": "~2.3.0",
+    "micro-packed": "~0.11.0"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.6.5",
     "@scure/bip32": "2.2.0",
-    "micro-ftch": "^1.0.0",
+    "micro-ftch": "^1.1.0",
     "prettier": "3.6.2",
     "typescript": "6.0.2"
   },
