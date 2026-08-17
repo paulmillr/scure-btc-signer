@@ -11,6 +11,12 @@ The implementation can be used to create own protocol,
 but you need to implement nonce/partial signatures exchange yourself.
 Someday BIP-373 will be more "implementable" and we can use this from PSBT.
 
+SECURITY: A secret nonce MUST be used for exactly one partial signature. Session.sign() zeroes
+only the Uint8Array instance passed to it; copies, serialized values, database records, and process
+snapshots are not erased. Reusing the same nonce scalars in distinct sessions can reveal the
+signer's secret key. Stateful integrations must keep one authoritative nonce record and atomically
+consume it before releasing a partial signature.
+
 Links:
 - https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki#user-content-Test_Vectors_and_Reference_Code
 - https://github.com/bitcoin/bips/blob/master/bip-0373.mediawiki (PSBT MUSIG2): very raw, no vectors, not implemented for now.
@@ -21,7 +27,10 @@ Links:
 export type Nonces = {
   /** Public nonce that gets shared with the other participants. */
   public: Uint8Array;
-  /** Secret nonce that stays local until partial signing finishes. */
+  /**
+   * Secret nonce that stays local until partial signing finishes. It MUST be consumed exactly once;
+   * never retain a copy that could be loaded for another signing session.
+   */
   secret: Uint8Array;
 };
 /**
@@ -362,6 +371,12 @@ const nonceHash = (
 
 /**
  * Generates a nonce pair (public and secret) for MuSig2 signing.
+ *
+ * SECURITY: The returned secret nonce MUST be used for exactly one partial signature. Keep one
+ * authoritative copy and atomically consume it when calling {@link Session.sign}. That method
+ * zeroes only the exact `Uint8Array` passed to it; clones, serialized values, database records, and
+ * snapshots remain live. Reusing a secret nonce in distinct sessions can reveal the secret key.
+ *
  * @param publicKey - individual public key of the signer
  * @param secretKey - optional secret key, mixed in to blind the randomness source
  * @param aggPublicKey - aggregate public key of all signers
@@ -595,7 +610,12 @@ export class Session {
   /**
    * Generates a partial signature for a given message, secret nonce,
    * secret key, and session context.
-   * @param secretNonce - secret nonce for this signing session; it is zeroed after use
+   *
+   * SECURITY: `secretNonce` MUST be used exactly once. This method zeroes the first 64 bytes of the
+   * supplied array, including when later validation fails, but cannot erase copies or persisted
+   * representations. Reusing those nonce scalars in a distinct session can reveal the secret key.
+   *
+   * @param secretNonce - sole authoritative secret-nonce buffer for this signing session
    * @param secret - secret key of the signer
    * @param fastSign - if `true`, skip the self-verification pass
    * @returns The partial signature (Uint8Array).
@@ -670,16 +690,19 @@ export class Session {
   }
   /**
    * Aggregates partial signatures from multiple signers into a single final signature.
-   * @param partialSigs - partial signatures from each signer
+   * @param partialSigs - exactly one positional partial signature per session participant
    * @returns The final aggregate signature (Uint8Array).
    * @throws If the input is invalid, such as wrong array sizes or malformed
    * signatures. {@link Error}
    */
   partialSigAgg(partialSigs: TArg<Uint8Array[]>): TRet<Uint8Array> {
     abytesArray(partialSigs, 32);
-    // BIP327 PartialSigAgg is defined for a non-empty psig_1..u list tied to this session_ctx;
-    // [] is not a valid aggregate-signature input even though the sum starts from zero.
-    if (partialSigs.length < 1) throw new RangeError('partialSigs.length must be >= 1');
+    // BIP327 PartialSigAgg consumes psig_1..u for the same u signers in session_ctx. Accepting
+    // fewer or more scalars would return a signature-shaped value for a different equation.
+    if (partialSigs.length !== this.publicKeys.length)
+      throw new RangeError(
+        `partialSigs.length=${partialSigs.length} must equal participant count=${this.publicKeys.length}`
+      );
     const { Q, tweakAcc, R, e } = this;
     let s = _0n;
     for (let i = 0; i < partialSigs.length; i++) {

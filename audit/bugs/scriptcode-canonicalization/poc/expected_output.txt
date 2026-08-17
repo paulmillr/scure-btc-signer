@@ -1,0 +1,12 @@
+A) P2SH(pk) with non-minimally-encoded redeemScript
+  on-chain redeemScript : 4c2103aadbf362f6d46f2c0ac1e40b3d1ea4e32a373f13c20208af7b65ad87a77d94f0ac
+  getInputType lastScript: 2103aadbf362f6d46f2c0ac1e40b3d1ea4e32a373f13c20208af7b65ad87a77d94f0ac <-- canonicalized
+  sig verifies vs CONSENSUS digest (original bytes)? false
+  sig verifies vs canonical digest? true
+B) P2WSH(pk) with non-minimally-encoded witnessScript
+  on-chain witnessScript: 4c2103aadbf362f6d46f2c0ac1e40b3d1ea4e32a373f13c20208af7b65ad87a77d94f0ac
+  getInputType lastScript: 2103aadbf362f6d46f2c0ac1e40b3d1ea4e32a373f13c20208af7b65ad87a77d94f0ac <-- canonicalized
+  digests differ? true
+  sig verifies vs CONSENSUS BIP143 digest (original bytes)? false
+  sig verifies vs canonical digest? true
+=> In both cases the emitted signature is invalid on the real network: funds stuck, no error raised.

@@ -1,0 +1,19 @@
+S1) sign ALL, then counterparty appends sighashType=NONE to the *signed* input
+  pre-append addOutput: blocked (expected protection)
+  updateInput(0,{sighashType:NONE}) on signed input: ACCEPTED
+  post-append addOutput: ALLOWED  <-- gate bypassed
+  victim signature valid against mutated tx? false
+  library finalizes+extracts the now consensus-INVALID tx, bytes: 223
+S2) same append primitive shifts lockTime after signing (requiredHeightLocktime)
+  lockTime before=0 after= 700000
+  victim signature valid against lockTime-mutated tx? false
+S3) hostile PSBT stores sighashType=0x40 next to a partialSig -> permanent gate freeze
+  stored sighashType after fromPSBT: 64
+  addInput: Wrong signature hash output type: 0
+  addOutput: Wrong signature hash output type: 0
+  updateInput: Wrong signature hash output type: 0
+  updateOutput: Wrong signature hash output type: 0
+  signIdx: Input with not allowed sigHash=64. Allowed: 1
+S4) sighashType append also works on signed taproot inputs; 0x80 freezes gate
+  append sighashType=ALL on taproot-signed input: ACCEPTED
+  0x80 addOutput: Wrong signature hash output type: 0

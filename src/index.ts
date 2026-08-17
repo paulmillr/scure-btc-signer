@@ -62,6 +62,7 @@ export {
   Address,
   combinations,
   getAddress,
+  MAX_COMBINATIONS,
   OutScript,
   sortedMultisig,
   taprootListToTree,

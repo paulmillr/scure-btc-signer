@@ -1,0 +1,47 @@
+# Signing-critical crypto deps use ~ semver ranges; consumers get silent patch drift with no lockfile protection (npm tarball ships no lockfile, JSR has none)
+
+- Project: scure-btc-signer
+- Commit/version: unknown (see Affected versions)
+- Category: dependency
+- Severity: Info — Every runtime dependency sits on the direct signing path: @noble/curves (ECDSA RFC6979 + BIP340 schnorr), @noble/hashes (sha256/hmac/ripemd160), @scure/base (be
+- Reproduction: static — source-harness audit finding, no Docker PoC attached
+- Confirmed: code-review
+- Attacker model: not recorded — see Summary
+- Default config affected: unknown
+- Reported upstream: no
+- Disclosure: no published contact found (see statistics/disclosure-contacts.md entry for `scure-btc-signer`; source https://github.com/paulmillr/scure-btc-signer/blob/master/SECURITY.md, checked 2026-08-12)
+
+## Summary
+
+Every runtime dependency sits on the direct signing path: @noble/curves (ECDSA RFC6979 + BIP340 schnorr), @noble/hashes (sha256/hmac/ripemd160), @scure/base (bech32/base58check address encoding), micro-packed (PSBT/transaction binary parsing). They are specified with tilde ranges (~2.2.0, ~0.9.0), so any consumer installing @scure/btc-signer resolves the newest matching patch/minor-within-0.x version at install time. The repository's package-lock.json (which has full sha512 integrity) is never shipped: npm excludes package-lock.json from published tarballs by default (verified absent in the @scure/btc-signer@2.2.0 tarball), and the JSR publication (jsr.json) carries the same ranges with no lockfile mechanism whatsoever. Net effect: the exact dependency bytes a downstream wallet signs with are chosen at each install, and a future malicious or buggy patch release within a ~ range would be picked up automatically. Compounding factor: all four runtime deps and the library itself share a single maintainer, so one account/registry compromise covers the whole chain. Mitigations observed and credited: (1) all four runtime deps at pinned versions carry npm SLSA provenance attestations (dist.attestations, verified via npm view); (2) no install scripts, no git/URL deps, no binary blobs in any runtime dep (verified by reading every installed package.json scripts field and full file listing); (3) installed node_modules verified byte-identical to registry tarballs whose sha512 matches the lockfile integrity fields; (4) release workflow is SHA-pinned and uses OIDC provenance (id-token: write). This finding is a hardening-gap note (info), not an observed vulnerability: current resolved versions pass npm audit and OSV queries with zero advisories.
+
+## Exploit chain
+
+Hypothetical supply-chain scenario, not an observed bug: (1) attacker compromises the single maintainer's npm account or a publish token; (2) publishes @noble/curves 2.2.1 with a backdoored RFC6979 nonce generator (e.g., k derived from a fixed seed); (3) every wallet that installs/reinstalls @scure/btc-signer afterwards resolves ~2.2.0 to the poisoned 2.2.1 because no consumer-side lockfile pins 2.2.0; (4) signatures produced by victims leak private keys through nonce reuse/bias; (5) attacker sweeps funds. The ~ range is the mechanism that turns a one-time registry compromise into silent mass adoption; exact pinning plus a published npm-shrinkwrap.json would force explicit opt-in for upgrades.
+
+## Suggested fix
+
+For applications (not libraries) the standard advice applies: pin exact versions in their own lockfile. For this library consider: (1) documenting in README that signing-critical deployments should pin @noble/curves, @noble/hashes, @scure/base, micro-packed to exact versions with integrity checking (e.g., npm ci with a lockfile, or vendoring); (2) optionally shipping npm-shrinkwrap.json guidance or exact pins for the crypto deps (trade-off: consumers then miss legitimate patch fixes); (3) keeping SLSA provenance on all future releases (already present).
+
+## Reproduction
+
+Not a code bug; no PoC applicable. Verifiable facts are documented in files[]: inspect package.json/jsr.json ranges; `npm pack @scure/btc-signer@2.2.0` and confirm no package-lock.json inside the tarball; `npm view @scure/btc-signer@2.2.0 dependencies` shows ranges that downstream installers re-resolve.
+
+Verification evidence (source harness): Posture/hardening note; all factual claims verified during audit: tarball contents listed via npm pack, ranges read from package.json:13-18 and jsr.json:16-21, provenance confirmed via npm view dist.attestations for all four runtime deps.
+
+## Affected files
+
+- `package.json` (13-18): All four runtime crypto deps specified as ~ ranges: @noble/curves ~2.2.0, @noble/hashes ~2.2.0, @scure/base ~2.2.0, micro-packed ~0.9.0
+- `package.json` (5-12): Published files list contains no lockfile; npm also excludes package-lock.json from tarballs by default (verified: absent from @scure/btc-signer@2.2.0 npm tarball)
+- `jsr.json` (16-21): JSR publication repeats the same ~ ranges; JSR has no lockfile concept at all
+- `package-lock.json` (28-110): Repo lockfile itself is healthy (lockfileVersion 3, registry.npmjs.org URLs, sha512 integrity on all 9 packages) but binds only repo contributors/CI, not downstream installs
+
+## Affected versions
+
+2.2.0 (all versions using range deps; applies to every consumer install, not to the repo's own CI)
+
+## Confidence
+
+High (as recorded by the source scan).
+
+_Backfilled from btc-sec-research artifact `paulmillr__scure-btc-signer` (finding DEP-001) during the 2026-08-05 gap-close; static entry — treat as a lead pending PoC verification._

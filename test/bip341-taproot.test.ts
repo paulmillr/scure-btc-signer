@@ -31,11 +31,18 @@ for (let i = 0; i < v341.keyPathSpending.length; i++) {
       const priv = hex.decode(s.given.internalPrivkey);
       const pub = schnorr.getPublicKey(priv);
       deepStrictEqual(hex.encode(pub), s.intermediary.internalPubkey);
-      tx.updateInput(idx, {
-        tapMerkleRoot: s.given.merkleRoot,
-        tapInternalKey: pub,
-        sighashType: s.given.hashType,
-      });
+      // The BIP vector interleaves metadata setup with signing/finalizing other inputs. Use the
+      // internal reconstruction path here: ordinary callers must attach all commitment metadata
+      // before accepting the first signature.
+      tx.updateInput(
+        idx,
+        {
+          tapMerkleRoot: s.given.merkleRoot,
+          tapInternalKey: pub,
+          sighashType: s.given.hashType,
+        },
+        true
+      );
       const sighash = s.given.hashType ? [s.given.hashType] : undefined;
       tx.signIdx(priv, idx, sighash, _auxRand);
       deepStrictEqual(hex.encode(tx.inputs[idx].tapKeySig), s.expected.witness[0]);
@@ -252,10 +259,18 @@ it('taproot SIGHASH_SINGLE without matching output', () => {
   });
   // Guard: signing must reject SINGLE with no output at the input's index.
   throws(() => tx.signIdx(privC, 0, [btc.SigHash.SINGLE]));
-  // KNOWN ISSUE (leniency, kept for sighash test-vector coverage): the low-level
-  // preimage hashes an empty 32-byte block where BIP341 mandates failure.
-  const preimage = tx.preimageWitnessV1(0, [spend.script], btc.SigHash.SINGLE, [10000n]);
-  deepStrictEqual(preimage.length, 32);
+  // BIP341 defines no digest for this state, so the public low-level helper must
+  // reject it too rather than returning a digest no consensus verifier can use.
+  const preimage = (hashType: btc.SigHash) =>
+    tx.preimageWitnessV1(0, [spend.script], hashType, [10000n]);
+  throws(() => preimage(btc.SigHash.SINGLE), /there is no output with corresponding index=0/);
+  throws(
+    () => preimage(btc.SigHash.SINGLE_ANYONECANPAY),
+    /there is no output with corresponding index=0/
+  );
+
+  tx.addOutput({ script: spend.script, amount: 9000n });
+  deepStrictEqual(preimage(btc.SigHash.SINGLE).length, 32);
 });
 
 it('p2tr allowUnknownOutputs works with non-matching customScripts', () => {

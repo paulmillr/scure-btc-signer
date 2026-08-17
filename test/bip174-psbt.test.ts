@@ -4,7 +4,13 @@ import { hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
-import { mergeKeyMap, PSBTInput, PSBTInputCoder, PSBTOutputCoder } from '../src/psbt.ts';
+import {
+  _RawPSBTV0,
+  mergeKeyMap,
+  PSBTInput,
+  PSBTInputCoder,
+  PSBTOutputCoder,
+} from '../src/psbt.ts';
 import { pubECDSA } from '../src/utils.ts';
 import { default as psbtV } from './vectors/psbt_vectors.js';
 
@@ -17,7 +23,9 @@ describe('bip174-psbt', () => {
         if (v.signer) return; // we don't test these, because we have no key for signer
         throws(() => btc.Transaction.fromPSBT(tx));
       } else {
-        const parsed = btc.Transaction.fromPSBT(tx);
+        // This suite checks byte-for-byte compatibility with imported vectors, including opaque
+        // extension rows. Preservation is opt-in; default stripping is tested separately below.
+        const parsed = btc.Transaction.fromPSBT(tx, { allowUnknown: true });
         const encoded = parsed.toPSBT();
         deepStrictEqual(btc._DebugPSBT.decode(encoded), btc._DebugPSBT.decode(tx));
         deepStrictEqual(hex.encode(encoded), v.hex);
@@ -292,9 +300,32 @@ it('bip174-psbt: PSBT unknown keys', () => {
   deepStrictEqual(psbtWithoutAllowUnknown.inputs[0].unknown, undefined);
 
   // verify the unknown key is preserved with serialization
-  const psbt2 = btc.Transaction.fromPSBT(psbtWithAllowUnknown.toPSBT());
+  const psbt2 = btc.Transaction.fromPSBT(psbtWithAllowUnknown.toPSBT(), { allowUnknown: true });
   deepStrictEqual(psbt2.outputs[0].unknown, unknown.concat(unknownNext));
   deepStrictEqual(psbt2.inputs[0].unknown, unknown.concat(unknownNext));
+
+  const encodedWithUnknown = _RawPSBTV0.decode(psbtWithAllowUnknown.toPSBT());
+  encodedWithUnknown.global.unknown = unknownNext;
+  const proprietary = [[Uint8Array.of(1), Uint8Array.of(2)]];
+  encodedWithUnknown.global.proprietary = proprietary;
+  encodedWithUnknown.inputs[0].proprietary = proprietary;
+  encodedWithUnknown.outputs[0].proprietary = proprietary;
+  const injected = _RawPSBTV0.encode(encodedWithUnknown);
+
+  const stripped = _RawPSBTV0.decode(btc.Transaction.fromPSBT(injected).toPSBT());
+  deepStrictEqual(stripped.global.unknown, undefined);
+  deepStrictEqual(stripped.inputs[0].unknown, undefined);
+  deepStrictEqual(stripped.outputs[0].unknown, undefined);
+  deepStrictEqual(stripped.global.proprietary, proprietary);
+  deepStrictEqual(stripped.inputs[0].proprietary, proprietary);
+  deepStrictEqual(stripped.outputs[0].proprietary, proprietary);
+
+  const preserved = _RawPSBTV0.decode(
+    btc.Transaction.fromPSBT(injected, { allowUnknown: true }).toPSBT()
+  );
+  deepStrictEqual(preserved.global.unknown, unknownNext);
+  deepStrictEqual(preserved.inputs[0].unknown, unknown.concat(unknownNext));
+  deepStrictEqual(preserved.outputs[0].unknown, unknown.concat(unknownNext));
 });
 
 // Regression / documentation tests. Tests marked KNOWN ISSUE assert current
@@ -303,7 +334,7 @@ it('bip174-psbt: PSBT unknown keys', () => {
 const TXID_01 = '00'.repeat(31) + '01';
 const privA = hex.decode('02'.repeat(32));
 
-it('mergeKeyMap signed-field guard and hex-string bypass', () => {
+it('mergeKeyMap signed-field guard also covers hex-string updates', () => {
   const spend = btc.p2wpkh(pubECDSA(privA));
   const tx = new btc.Transaction();
   tx.addInput({
@@ -317,10 +348,9 @@ it('mergeKeyMap signed-field guard and hex-string bypass', () => {
   // Guard works for normally-typed values on a signed input.
   throws(() => tx.updateInput(0, { sighashType: btc.SigHash.SINGLE }));
   deepStrictEqual(tx.getInput(0).sighashType, btc.SigHash.ALL);
-  // KNOWN ISSUE: the hex-string convenience branch decodes before the
-  // "Cannot change signed field" comparison runs, bypassing the guard.
-  tx.updateInput(0, { sighashType: '03000000' } as any);
-  deepStrictEqual(tx.getInput(0).sighashType, btc.SigHash.SINGLE);
+  // Hex-string convenience values must cross the same comparison after decoding.
+  throws(() => tx.updateInput(0, { sighashType: '03000000' } as any));
+  deepStrictEqual(tx.getInput(0).sighashType, btc.SigHash.ALL);
 });
 
 it('mergeKeyMap keyed-field conflicts still throw', () => {

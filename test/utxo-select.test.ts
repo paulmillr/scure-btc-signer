@@ -386,10 +386,10 @@ describe('UTXO Select', () => {
     const t = (inputs, outputs, diff = 0, trLeafSize) => {
       const name = `${names[inputs[0].name]}/${names[outputs[0].name]}`;
       const FEE = 3n;
-      // Taproot estimation is precise, but you have to pass sighash if you want to use non-default one,
-      // because it changes signature size. For complex taproot trees you need to filter tapLeafScript
-      // to include only leafs which you can sign we estimate size with smallest leaf (same as finalization),
-      // but in specific case keys for this leaf can be unavailable (complex multisig)
+      // Taproot estimation is precise when only the selected path is advertised. With multiple
+      // possible paths it conservatively estimates the largest one, because signer availability is
+      // not known during selection. Pass sighash when using a non-default value because it changes
+      // signature size.
       const _inputs = inputs.map((i) => {
         const res = { ...i };
         if (trLeafSize) {
@@ -471,34 +471,34 @@ describe('UTXO Select', () => {
     // TR
     t([INPUTS[34]], [OUTPUTS[0]]); // p2tr keysig
     t([INPUTS[35]], [OUTPUTS[0]]); // tr(undefined, tr)
-    t([INPUTS[36]], [OUTPUTS[0]]); // tr(keysig, tr)
-    t([INPUTS[37]], [OUTPUTS[0]]); // p2tr-p2tr_ns(2)
+    t([INPUTS[36]], [OUTPUTS[0]], 69); // tr(keysig, tr): script path is larger
+    t([INPUTS[37]], [OUTPUTS[0]], 32); // p2tr-p2tr_ns(2)
     t([INPUTS[38]], [OUTPUTS[0]]); // p2tr-p2tr_ms(2)
     t([INPUTS[39]], [OUTPUTS[0]]); // p2tr-p2tr_ns(3)
     t([INPUTS[40]], [OUTPUTS[0]]); // p2tr-p2tr_ms(3)
     // TR NS
-    t([INPUTS[41]], [OUTPUTS[0]]); // tr-ns(1-3)
-    t([INPUTS[42]], [OUTPUTS[0]]); // tr-ns(1-3)
-    t([INPUTS[43]], [OUTPUTS[0]]); // tr-ns(1-3)
+    t([INPUTS[41]], [OUTPUTS[0]], 32); // tr-ns(1-3)
+    t([INPUTS[42]], [OUTPUTS[0]], 32); // tr-ns(1-3)
+    t([INPUTS[43]], [OUTPUTS[0]], 32); // tr-ns(1-3)
     t([INPUTS[44]], [OUTPUTS[0]], 0, 97); // tr-ns(1-3)
-    t([INPUTS[45]], [OUTPUTS[0]]); // tr-ns(1-3)
+    t([INPUTS[45]], [OUTPUTS[0]], 32); // tr-ns(1-3)
     t([INPUTS[46]], [OUTPUTS[0]], 0, 97); // tr-ns(1-3)
     t([INPUTS[47]], [OUTPUTS[0]], 0, 97); // tr-ns(1-3)
-    t([INPUTS[48]], [OUTPUTS[0]]); // tr-ns(2-3)
-    t([INPUTS[49]], [OUTPUTS[0]]); // tr-ns(2-3)
+    t([INPUTS[48]], [OUTPUTS[0]], 32); // tr-ns(2-3)
+    t([INPUTS[49]], [OUTPUTS[0]], 32); // tr-ns(2-3)
     t([INPUTS[50]], [OUTPUTS[0]], 0, 97); // tr-ns(2-3)
     t([INPUTS[51]], [OUTPUTS[0]], 0, 97); // tr-ns(2-3)
-    t([INPUTS[52]], [OUTPUTS[0]]); // tr-ns(2-4)
+    t([INPUTS[52]], [OUTPUTS[0]], 32); // tr-ns(2-4)
     t([INPUTS[53]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
-    t([INPUTS[54]], [OUTPUTS[0]]); // tr-ns(2-4)
-    t([INPUTS[55]], [OUTPUTS[0]]); // tr-ns(2-4)
-    t([INPUTS[56]], [OUTPUTS[0]]); // tr-ns(2-4)
+    t([INPUTS[54]], [OUTPUTS[0]], 32); // tr-ns(2-4)
+    t([INPUTS[55]], [OUTPUTS[0]], 32); // tr-ns(2-4)
+    t([INPUTS[56]], [OUTPUTS[0]], 32); // tr-ns(2-4)
     t([INPUTS[57]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
     t([INPUTS[58]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
     t([INPUTS[59]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
     t([INPUTS[60]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
-    t([INPUTS[61]], [OUTPUTS[0]], 0); // tr-ns(2-4)
-    t([INPUTS[62]], [OUTPUTS[0]], 0); // tr-ns(2-4)
+    t([INPUTS[61]], [OUTPUTS[0]], 32); // tr-ns(2-4)
+    t([INPUTS[62]], [OUTPUTS[0]], 32); // tr-ns(2-4)
     // TR MS
     t([INPUTS[63]], [OUTPUTS[0]]); // tr-ms(1-3)
     t([INPUTS[64]], [OUTPUTS[0]]); // tr-ms(1-3)
@@ -537,6 +537,42 @@ describe('UTXO Select', () => {
     t([INPUTS[0]], [OUTPUTS[11]], 4);
     t([INPUTS[0]], [OUTPUTS[12]], 4);
     t([INPUTS[6]], [OUTPUTS[13]]);
+  });
+
+  it('Taproot estimates cover every advertised path without reordering leaves', () => {
+    const opts = {
+      changeAddress: OUTPUTS[0].address,
+      feePerByte: 3n,
+      network: regtest,
+    };
+    // The internal key is present, but this signer only owns the larger script-path key.
+    const keyAndLeaf = btc.selectUTXO([INPUTS[36]], [], 'all', opts);
+    keyAndLeaf.tx.sign(privKey8, undefined, new Uint8Array(32));
+    keyAndLeaf.tx.finalize();
+    deepStrictEqual(keyAndLeaf.weight, keyAndLeaf.tx.weight);
+
+    // The only signable leaf is not the shallowest one. Estimation must cover it without requiring
+    // callers to pre-filter the other advertised leaves.
+    const tapLeafScript = INPUTS[46].tapLeafScript
+      .slice()
+      .sort(
+        (a, b) =>
+          btc.TaprootControlBlock.encode(b[0]).length - btc.TaprootControlBlock.encode(a[0]).length
+      );
+    const input = { ...INPUTS[46], tapLeafScript };
+    const before = tapLeafScript.map(([cb]) => btc.TaprootControlBlock.encode(cb).length);
+    const scriptPath = btc.selectUTXO([input], [], 'all', opts);
+    deepStrictEqual(
+      scriptPath.inputs[0].tapLeafScript.map(([cb]) => btc.TaprootControlBlock.encode(cb).length),
+      before
+    );
+    deepStrictEqual(
+      input.tapLeafScript.map(([cb]) => btc.TaprootControlBlock.encode(cb).length),
+      before
+    );
+    scriptPath.tx.sign(privKey8, undefined, new Uint8Array(32));
+    scriptPath.tx.finalize();
+    deepStrictEqual(scriptPath.weight, scriptPath.tx.weight);
   });
 
   it('estimating size of custom scripts', () => {
@@ -602,25 +638,27 @@ describe('UTXO Select', () => {
     tx.addOutputAddress('bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2', 80n, regtest);
     tx.sign(privKey, undefined, new Uint8Array(32));
     tx.finalize();
-    // Actual utxo
-    const s = btc.selectUTXO(
-      [
-        {
-          txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
-          index: 0,
-          witnessUtxo: { script: payment.script, amount: 1000n },
-          ...payment,
-        },
-      ],
-      [],
-      'all',
-      {
-        changeAddress: 'bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2',
-        feePerByte: 1n,
-        network: regtest,
-        customScripts,
-      }
+    const input = {
+      txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 1000n },
+      ...payment,
+    };
+    const selectOpts = {
+      changeAddress: 'bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2',
+      feePerByte: 1n,
+      network: regtest,
+    };
+    // An advertised custom path has no safe upper bound without its matching finalizer.
+    throws(
+      () => btc.selectUTXO([input], [], 'all', { ...selectOpts, customScripts: [] }),
+      /Finalize: Unknown tapLeafScript/
     );
+    // Actual utxo
+    const s = btc.selectUTXO([input], [], 'all', {
+      ...selectOpts,
+      customScripts,
+    });
     s.tx.sign(privKey, undefined, new Uint8Array(32));
     s.tx.finalize();
     deepStrictEqual(s.tx.weight, s.weight);

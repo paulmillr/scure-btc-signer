@@ -1,0 +1,33 @@
+== S1: sign ALL, then attacker appends sighashType=NONE to signed input ==
+  after sign: addOutput blocked? YES
+  attacker updateInput(0,{sighashType:NONE}) succeeded: true
+  addOutput after sighashType append succeeded: true
+  victim sig still valid against mutated tx? false (false => tx is consensus-invalid DoS)
+  finalize+extract ok, extracted len: 223 (an invalid tx the victim may broadcast)
+== S1b: attacker changes locktime via absent requiredHeightLocktime append ==
+  append requiredHeightLocktime succeeded: true new lockTime: 700000
+  victim sig still valid against lockTime-mutated tx? false (false => invalid tx DoS)
+== S1c: sighashType append on signed TAPROOT input ==
+  append sighashType=ALL on taproot-signed input succeeded: true
+== S2: hostile PSBT with sighashType=0x40 + partialSig freezes mutation gate ==
+  stored sighashType after fromPSBT: 64
+  addInput: Wrong signature hash output type: 0
+  addOutput: Wrong signature hash output type: 0
+  updateInput: Wrong signature hash output type: 0
+  updateOutput: Wrong signature hash output type: 0
+  signIdx: Input with not allowed sigHash=64. Allowed: 1
+  finalize: ok
+== S3: SINGLE|ANYONECANPAY index stability under appends ==
+  after append input+output: sig on input1 still valid? true
+  updateOutput(1=SINGLE idx): blocked ; updateOutput(0): allowed
+  after updateOutput(0): sig still valid? true
+  updateInput(1,{sequence:0}): blocked
+== S4: NONE sign -> addOutput allowed, sig remains valid ==
+  addInput after NONE sign: blocked ; addOutput allowed (documented)
+  sig still valid after output append? true
+== S5: externally injected partialSig with NONE byte, no sighashType ==
+  addOutput with injected NONE sig, absent sighashType: BLOCKED
+  (gate vs actual-commitment mismatch is conservative here)
+== S6: hostile sighashType=0x80 on signed taproot input ==
+  signIdx with stored 0x80: Input with not allowed sigHash=128. Allowed: 0
+  addOutput with signed input + stored 0x80: Wrong signature hash output type: 0

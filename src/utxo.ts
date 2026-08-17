@@ -50,25 +50,27 @@ const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
 const _0n = /* @__PURE__ */ BigInt(0), _3n = /* @__PURE__ */ BigInt(3);
 // Serialized length of VarBytes(data) without allocating the encoded copy
 const varLen = (dataLen: number) => CompactSizeLen.encode(dataLen).length + dataLen;
+const witnessWeight = (witness: Bytes[]): number => {
+  let weight = CompactSizeLen.encode(witness.length).length;
+  for (const item of witness) weight += varLen(item.length);
+  return weight;
+};
+const largerWitness = (current: Bytes[] | undefined, candidate: Bytes[]): Bytes[] =>
+  !current || witnessWeight(candidate) > witnessWeight(current) ? candidate : current;
 
 function iterLeafs(
   tapLeafScript: TArg<TapLeafScript>,
   sigSize: number,
   customScripts?: TArg<CustomScript[]>
-) {
+): Bytes[] {
   const _tapLeafScript = tapLeafScript as TapLeafScript;
   const _customScripts = customScripts as CustomScript[] | undefined;
   if (!_tapLeafScript || !_tapLeafScript.length) throw new Error('no leafs');
   // Dummy non-empty Schnorr signature bytes for weight estimation.
   // Unsigned tr_ms slots use P.EMPTY below.
   const empty = () => new Uint8Array(sigSize);
-  // If user want to select specific leaf, which can signed,
-  // it is possible to remove all other leafs manually.
-  // Sort leafs by control block length.
-  const leafs = _tapLeafScript.sort(
-    (a, b) => encodeTapBlock(a[0]).length - encodeTapBlock(b[0]).length
-  );
-  for (const [cb, _script] of leafs) {
+  let largest: Bytes[] | undefined;
+  for (const [cb, _script] of _tapLeafScript) {
     // Last byte is version
     const script = _script.slice(0, -1);
     const ver = _script[_script.length - 1];
@@ -85,6 +87,7 @@ function iterLeafs(
     } else {
       if (!_customScripts) throw new Error('Finalize: Unknown tapLeafScript');
       const leafHash = tapLeafHash(script, ver);
+      let customWitness: Bytes[] | undefined;
       for (const c of _customScripts) {
         if (!c.finalizeTaproot) continue;
         const scriptDecoded = Script.decode(script);
@@ -105,16 +108,18 @@ function iterLeafs(
           pubKeys.map((pubKey) => [{ pubKey, leafHash }, empty()])
         );
         if (!finalized) continue;
-        return finalized.concat(encodeTapBlock(cb));
+        customWitness = finalized.concat(encodeTapBlock(cb));
+        break;
       }
-      // UTXO selection may run without the real signer/finalizer process. When no matching local
-      // finalizeTaproot hook exists, keep a minimal script-path witness lower bound here instead of
-      // failing selection; callers that need exact fee estimates must provide the matching hook.
+      if (!customWitness) throw new Error('Finalize: Unknown tapLeafScript');
+      largest = largerWitness(largest, customWitness);
+      continue;
     }
     // Witness is stack, so last element will be used first
-    return signatures.reverse().concat([script, encodeTapBlock(cb)]);
+    largest = largerWitness(largest, signatures.reverse().concat([script, encodeTapBlock(cb)]));
   }
-  throw new Error('there was no witness');
+  if (!largest) throw new Error('there was no witness');
+  return largest;
 }
 
 function estimateInput(
@@ -130,17 +135,19 @@ function estimateInput(
   // schnorr sig is always 64 bytes. except for cases when sighash is not default!
   if (inputType.txType === 'taproot') {
     const SCHNORR_SIG_SIZE = inputType.sighash !== SignatureHash.DEFAULT ? 65 : 64;
-    // BIP371 `PSBT_IN_TAP_INTERNAL_KEY` is signer metadata, but UTXO selection
-    // runs before signer availability is known. We intentionally treat a
-    // present internal key as a key-path hint here to avoid overestimating fees
-    // on the online side. Callers that know only script-path signing is
-    // possible should omit `tapInternalKey` or pre-filter `tapLeafScript`
-    // before estimation.
+    let largest: Bytes[] | undefined;
+    // UTXO selection does not know which keys the eventual signer owns. Consider every advertised
+    // path and use the largest known satisfaction so the requested feerate remains a lower bound.
     if (_input.tapInternalKey && !equalBytes(_input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
-      witness = [new Uint8Array(SCHNORR_SIG_SIZE)];
-    } else if (_input.tapLeafScript) {
-      witness = iterLeafs(_input.tapLeafScript, SCHNORR_SIG_SIZE, _opts.customScripts);
-    } else throw new Error('estimateInput/taproot: unknown input');
+      largest = [new Uint8Array(SCHNORR_SIG_SIZE)];
+    }
+    if (_input.tapLeafScript)
+      largest = largerWitness(
+        largest,
+        iterLeafs(_input.tapLeafScript, SCHNORR_SIG_SIZE, _opts.customScripts)
+      );
+    if (!largest) throw new Error('estimateInput/taproot: unknown input');
+    witness = largest;
   } else {
     // It is possible to grind signatures until they have minimal size, but
     // that changes the fee by +N satoshi. It would make estimation exact, but

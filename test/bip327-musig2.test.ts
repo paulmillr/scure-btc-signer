@@ -198,6 +198,48 @@ describe('BIP327', () => {
     const session = new musig2.Session(musig2.nonceAggregate([nonce.public]), [publicKey], msg);
     throws(() => session.partialSigAgg([]), RangeError);
   });
+  it('partialSigAgg requires one partial signature per participant', () => {
+    const secretKeys = [new Uint8Array(32), new Uint8Array(32)];
+    secretKeys[0][31] = 1;
+    secretKeys[1][31] = 2;
+    const publicKeys = secretKeys.map(musig2.IndividualPubkey);
+    const msg = new Uint8Array([1, 2, 3]);
+    const aggPublicKey = musig2.keyAggExport(musig2.keyAggregate(publicKeys));
+    const nonces = publicKeys.map((publicKey, i) =>
+      musig2.nonceGen(publicKey, secretKeys[i], aggPublicKey, msg)
+    );
+    const session = new musig2.Session(
+      musig2.nonceAggregate(nonces.map((nonce) => nonce.public)),
+      publicKeys,
+      msg
+    );
+    const scalar = new Uint8Array(32);
+    scalar[31] = 1;
+    throws(
+      () => session.partialSigAgg([scalar]),
+      /partialSigs.length=1 must equal participant count=2/
+    );
+    throws(
+      () => session.partialSigAgg([scalar, scalar, scalar]),
+      /partialSigs.length=3 must equal participant count=2/
+    );
+  });
+  it('Session.sign consumes the supplied secret-nonce buffer', () => {
+    const secretKey = new Uint8Array(32);
+    secretKey[31] = 1;
+    const publicKey = musig2.IndividualPubkey(secretKey);
+    const msg = new Uint8Array([1, 2, 3]);
+    const rand = new Uint8Array(32);
+    rand[31] = 2;
+    const aggPublicKey = musig2.keyAggExport(musig2.keyAggregate([publicKey]));
+    const nonce = musig2.nonceGen(publicKey, secretKey, aggPublicKey, msg, undefined, rand);
+    const session = new musig2.Session(musig2.nonceAggregate([nonce.public]), [publicKey], msg);
+
+    session.sign(nonce.secret, secretKey);
+    deepStrictEqual(nonce.secret.subarray(0, 64), new Uint8Array(64));
+    deepStrictEqual(nonce.secret.subarray(64), publicKey);
+    throws(() => session.sign(nonce.secret, secretKey), RangeError);
+  });
   it('keyAggregate rejects non-boolean isXonly entries', () => {
     const secretKey = schnorr.utils.randomSecretKey();
     const publicKey = musig2.IndividualPubkey(secretKey);
