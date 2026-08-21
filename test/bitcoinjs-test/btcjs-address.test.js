@@ -1,5 +1,5 @@
+import { it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../../index.js';
 import { default as p2tr } from './vectors/bitcoinjs-taproot/p2tr.json' with { type: 'json' };
@@ -84,4 +84,4 @@ for (const type in payments) {
   }
 }
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

@@ -1,6 +1,6 @@
+import { it } from '@paulmillr/jsbt/test.js';
 import { base64, hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../../index.js';
 import * as utils from './utils.js';
@@ -633,4 +633,4 @@ for (let i = 0; i < psbt.signInputHD.checks.length; i++) {
   });
 }
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

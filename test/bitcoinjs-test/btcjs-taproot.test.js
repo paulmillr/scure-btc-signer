@@ -1,6 +1,6 @@
+import { it } from '@paulmillr/jsbt/test.js';
 import { base64, hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as btc from '../../index.js';
 import { default as tapPsbt } from './vectors/bitcoinjs-taproot/psbt.json' with { type: 'json' };
@@ -64,4 +64,4 @@ for (let i = 0; i < tapPsbt.signInput.checks.length; i++) {
   });
 }
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);
