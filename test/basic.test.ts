@@ -6,11 +6,23 @@ import { HDKey } from '@scure/bip32/index.js';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
-import { checkScript, tapLeafHash, type TaprootScriptTree } from '../src/payment.ts';
-import { _RawPSBTV0, PSBTInputCoder, PSBTOutputCoder, RawPSBTV0, RawPSBTV2 } from '../src/psbt.ts';
-import { OpToNum, RawOldTx } from '../src/script.ts';
+import {
+  checkScript,
+  tapLeafHash,
+  type CustomScript,
+  type TaprootScriptTree,
+} from '../src/payment.ts';
+import {
+  _RawPSBTV0,
+  PSBTInputCoder,
+  PSBTInputFinalKeys,
+  PSBTOutputCoder,
+  RawPSBTV0,
+  RawPSBTV2,
+} from '../src/psbt.ts';
+import { CompactSizeLen, OpToNum, RawOldTx } from '../src/script.ts';
 import { cloneDeep, DEFAULT_SEQUENCE, getPrevOut, inputBeforeSign } from '../src/transaction.ts';
-import { pubECDSA, pubSchnorr, sha256x2 } from '../src/utils.ts';
+import { concatBytes, pubECDSA, pubSchnorr, sha256x2, signECDSA } from '../src/utils.ts';
 import psbtV from './vectors/psbt_vectors.js';
 
 const testClone = (tx) => deepStrictEqual(tx.clone(), tx);
@@ -26,6 +38,30 @@ const XPub = P.struct({
   publicKey: P.bytes(33),
 });
 const xpubPSBT = () => _RawPSBTV0.decode(hex.decode(PSBT_GLOBAL_XPUB_HEX));
+const v2WithoutTxModifiable = () => {
+  const raw = RawPSBTV2.decode(new btc.Transaction({ PSBTVersion: 2 }).toPSBT(2));
+  delete raw.global.txModifiable;
+  return RawPSBTV2.encode(raw);
+};
+
+it('Transaction.combine rejects conflicting BIP322 signed messages', () => {
+  const raw = RawPSBTV2.decode(new btc.Transaction({ PSBTVersion: 2 }).toPSBT(2));
+  const withMessage = (message: number) =>
+    btc.Transaction.fromPSBT(
+      RawPSBTV2.encode({
+        ...raw,
+        global: { ...raw.global, genericSignedMessage: Uint8Array.of(message) },
+      })
+    );
+  const first = withMessage(1);
+  const before = first.toPSBT(2);
+
+  // BIP322 makes this global field the message whose hash determines the synthetic transaction.
+  // Ordinary known scalar fields must conflict instead of silently choosing either participant.
+  // https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#psbt-creator
+  throws(() => first.combine(withMessage(2)), /conflicting field=genericSignedMessage/);
+  deepStrictEqual(first.toPSBT(2), before);
+});
 
 it('BTC: parseAddress', () => {
   const CASES = [
@@ -302,9 +338,16 @@ it('PSBTv2 PREVIOUS_TXID uses standard byte order on the wire and display-order 
   });
   tx.addOutput({ script: spend.script, amount: 1n });
   const psbt = tx.toPSBT(2);
+  // Locally created PSBTv2 uses Core's explicit fallback-zero encoding before the input maps.
   deepStrictEqual(
     hex.encode(psbt),
-    '70736274ff01020402000000010401010105010101fb04020000000001011f020000000000000016001479b000887626b294a914501a4cd226b58b235983010e2058e87a21b56daf0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd75010f0400000000011004ffffffff000103080100000000000000010416001479b000887626b294a914501a4cd226b58b23598300'
+    [
+      '70736274ff010204020000000103040000000001040101010501010106010301fb04020000000001011f020000',
+      '000000000016001479b000887626b294a914501a4cd226b58b235983010e2058e87a21b56daf',
+      '0c23be8e7070456c336f7cbaa5c8757924f545887bb2abdd75010f0400000000011004ffffff',
+      'ff000103080100000000000000010416001479b000887626b294a914501a4cd226b58b235983',
+      '00',
+    ].join('')
   );
   deepStrictEqual(hex.encode(RawPSBTV2.decode(psbt).inputs[0].txid), display);
   const imported = btc.Transaction.fromPSBT(psbt);
@@ -347,6 +390,72 @@ it('legacy hash-of-one uses Bitcoin Core consensus byte order', () => {
   deepStrictEqual((tx as any).preimageLegacy(0, script, btc.SigHash.SINGLE), hashOne);
   // Bitcoin Core's consensus helper returns the same sentinel for an invalid input index.
   deepStrictEqual((tx as any).preimageLegacy(1, script, btc.SigHash.ALL), hashOne);
+});
+
+it('imported SIGHASH_SINGLE cannot gain its previously missing paired output', () => {
+  const priv = new Uint8Array(32).fill(17);
+  const pub = pubECDSA(priv);
+  const spend = btc.p2wpkh(pub);
+  const scriptCode = btc.p2pkh(pub).script;
+  const output = { script: spend.script, amount: 1n };
+  const signed = (idx: number, outputCount: number) => {
+    const source = new btc.Transaction();
+    for (let i = 0; i <= idx; i++)
+      source.addInput({
+        txid: new Uint8Array(32).fill(i),
+        index: 0,
+        witnessUtxo: { script: spend.script, amount: 2n },
+      });
+    for (let i = 0; i < outputCount; i++) source.addOutput(output);
+    const digest = (source as any).preimageWitnessV0(idx, scriptCode, btc.SigHash.SINGLE, 2n);
+    const signature = concatBytes(signECDSA(digest, priv), Uint8Array.of(btc.SigHash.SINGLE));
+    source.updateInput(idx, { partialSig: [[pub, signature]] });
+    return { digest, tx: btc.Transaction.fromPSBT(source.toPSBT(0)) };
+  };
+  const digest = (tx: btc.Transaction, idx: number) =>
+    (tx as any).preimageWitnessV0(idx, scriptCode, btc.SigHash.SINGLE, 2n);
+
+  // SIGHASH_SINGLE protects the same-index output. BIP143 hashes zero while that output is absent,
+  // so an append is valid only when it does not create the missing pair.
+  // https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification
+  const first = signed(0, 0);
+  throws(() => first.tx.addOutput(output), /signed outputs/);
+  deepStrictEqual(first.tx.outputsLength, 0);
+
+  const second = signed(1, 0);
+  second.tx.addOutput(output);
+  deepStrictEqual(digest(second.tx, 1), second.digest);
+  throws(() => second.tx.addOutput(output), /signed outputs/);
+  deepStrictEqual(second.tx.outputsLength, 1);
+
+  const paired = signed(0, 1);
+  paired.tx.addOutput(output);
+  deepStrictEqual(digest(paired.tx, 0), paired.digest);
+});
+
+it('script-hash helpers reject non-canonical child scripts unless explicitly allowed', () => {
+  const pub = pubECDSA(new Uint8Array(32).fill(9));
+  const script = new Uint8Array([btc.OP.PUSHDATA1, pub.length, ...pub, btc.OP.CHECKSIG]);
+  const child = { type: 'pk', script } as any;
+
+  // Default relay policy rejects non-minimal pushes even though consensus permits them. Returning
+  // an address without an explicit opt-in would make ordinary broadcast of its spend impossible.
+  throws(() => btc.p2sh(child), /non-canonical redeemScript/);
+  throws(() => btc.p2wsh(child), /non-canonical witnessScript/);
+  deepStrictEqual(btc.p2sh(child, btc.NETWORK, true), {
+    type: 'sh',
+    redeemScript: script,
+    script: hex.decode('a914d7fc1fb3e77dc7aaa09e6ca9e6d3e44a8bac7f1887'),
+    address: '3MP3EfADLgNzJja8pbuyK1JGkTzKVTDVjJ',
+    hash: hex.decode('d7fc1fb3e77dc7aaa09e6ca9e6d3e44a8bac7f18'),
+  });
+  deepStrictEqual(btc.p2wsh(child, btc.NETWORK, true), {
+    type: 'wsh',
+    witnessScript: script,
+    script: hex.decode('0020add9d802b506916946bd890a1f14e1e6f695befff2c7183f522f9ff3d4bc3c11'),
+    address: 'bc1q4hvasq44q6gkj34a3y9p798pummft0hl7tr3s06j970l849u8sgswzj83f',
+    hash: hex.decode('add9d802b506916946bd890a1f14e1e6f695befff2c7183f522f9ff3d4bc3c11'),
+  });
 });
 
 it('signing and finalization preserve exact non-minimal scriptCode bytes', () => {
@@ -398,7 +507,7 @@ it('signing and finalization preserve exact non-minimal scriptCode bytes', () =>
   bare.addOutput({ amount: 1_000n, script: recipient.script });
   verifyScriptCode(bare, nonminimalPkh, canonicalPkh.script, false);
 
-  const sh = btc.p2sh({ type: 'pk', script: nonminimalPk } as any);
+  const sh = btc.p2sh({ type: 'pk', script: nonminimalPk } as any, btc.NETWORK, true);
   const shTx = new btc.Transaction({ allowLegacyWitnessUtxo: true });
   shTx.addInput({
     txid: new Uint8Array(32).fill(2),
@@ -411,7 +520,7 @@ it('signing and finalization preserve exact non-minimal scriptCode bytes', () =>
   const shFinalOps = btc.Script.decode(shFinal.finalScriptSig!);
   deepStrictEqual(shFinalOps[shFinalOps.length - 1], nonminimalPk);
 
-  const wsh = btc.p2wsh({ type: 'pk', script: nonminimalPk } as any);
+  const wsh = btc.p2wsh({ type: 'pk', script: nonminimalPk } as any, btc.NETWORK, true);
   for (const nested of [false, true]) {
     const payment = nested ? btc.p2sh(wsh) : wsh;
     const tx = new btc.Transaction();
@@ -611,15 +720,16 @@ it('PSBTInputCoder rejects duplicate keyed entries in one map', () => {
 });
 
 it('PSBTOutputCoder rejects duplicate keyed entries in one map', () => {
+  const key = Uint8Array.of(1, 0x61, 0);
   throws(() =>
     PSBTOutputCoder.encode({
       proprietary: [
-        [Uint8Array.of(1), Uint8Array.of(2)],
-        [Uint8Array.of(1), Uint8Array.of(3)],
+        [key, Uint8Array.of(2)],
+        [key, Uint8Array.of(3)],
       ],
     })
   );
-  throws(() => PSBTOutputCoder.decode(hex.decode('02fc01010202fc01010300')));
+  throws(() => PSBTOutputCoder.decode(hex.decode('04fc016100010204fc016100010300')));
 });
 
 const tapLeaf = (depth, opcode) => ({ depth, version: 0xc0, script: Uint8Array.of(opcode) });
@@ -896,6 +1006,100 @@ it('P2A output type', () => {
     type: 'unknown',
     script: future_v1_long,
   });
+});
+
+it('input classification rejects non-canonical witness-program framing', () => {
+  const hash20 = new Uint8Array(20).fill(2);
+  const hash32 = new Uint8Array(32).fill(3);
+  const pubkey = pubSchnorr(new Uint8Array(32).fill(4));
+  const cases = [
+    [
+      hex.decode('51024e73'),
+      hex.decode('514c024e73'),
+      { type: 'p2a', script: hex.decode('51024e73') },
+    ],
+    [
+      new Uint8Array([btc.OP.OP_0, hash20.length, ...hash20]),
+      new Uint8Array([btc.OP.OP_0, btc.OP.PUSHDATA1, hash20.length, ...hash20]),
+      { type: 'wpkh', hash: hash20 },
+    ],
+    [
+      new Uint8Array([btc.OP.OP_0, hash32.length, ...hash32]),
+      new Uint8Array([btc.OP.OP_0, btc.OP.PUSHDATA1, hash32.length, ...hash32]),
+      { type: 'wsh', hash: hash32 },
+    ],
+    [
+      new Uint8Array([btc.OP.OP_1, pubkey.length, ...pubkey]),
+      new Uint8Array([btc.OP.OP_1, btc.OP.PUSHDATA1, pubkey.length, ...pubkey]),
+      { type: 'tr', pubkey },
+    ],
+  ] as const;
+
+  // BIP141 recognizes a witness program only when its version opcode is followed by one direct
+  // 2..40-byte push. OutScript remains a semantic child-script decoder; the raw input boundary
+  // must separately reject indirect framing instead of globally changing child-script semantics.
+  // https://github.com/bitcoin/bips/blob/master/bip-0141.mediawiki#witness-program
+  for (const [canonical, indirect, decoded] of cases) {
+    deepStrictEqual(btc.OutScript.decode(canonical), decoded);
+    deepStrictEqual(btc.OutScript.decode(indirect), decoded);
+    throws(
+      () =>
+        btc.getInputType(
+          {
+            txid: new Uint8Array(32),
+            index: 0,
+            witnessUtxo: { amount: 1n, script: indirect },
+          },
+          true
+        ),
+      /non-canonical witness program/
+    );
+  }
+
+  // Child scripts are ordinary Script: a non-minimal push can be unreachable under the selected
+  // satisfaction, so exact witness-program framing must not become whole-script canonicalization.
+  const pub = pubECDSA(new Uint8Array(32).fill(5));
+  const child = new Uint8Array([btc.OP.PUSHDATA1, pub.length, ...pub, btc.OP.CHECKSIG]);
+  deepStrictEqual(btc.OutScript.decode(child), { type: 'pk', pubkey: pub });
+});
+
+it('witness-program framing validation does not reject a custom Taproot leaf', () => {
+  const data = new Uint8Array(32).fill(7);
+  const script = new Uint8Array([btc.OP.OP_0, btc.OP.PUSHDATA1, data.length, ...data]);
+  const version = 0xc0;
+  const internalKey = btc.TAPROOT_UNSPENDABLE_KEY;
+  const [pubkey, parity] = btc.utils.taprootTweakPubkey(internalKey, tapLeafHash(script, version));
+  const controlBlock = { version: version | parity, internalKey, merklePath: [] };
+  const custom: CustomScript = {
+    encode(from) {
+      if (from.length !== 2 || from[0] !== 0) return;
+      if (!(from[1] instanceof Uint8Array) || hex.encode(from[1]) !== hex.encode(data)) return;
+      return { type: 'tr_indirect_push' };
+    },
+    decode(to) {
+      if (to.type !== 'tr_indirect_push') return;
+      return [0, data];
+    },
+    finalizeTaproot: (leaf) => [leaf],
+  };
+  const tx = new btc.Transaction({ customScripts: [custom] });
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { amount: 2n, script: btc.OutScript.encode({ type: 'tr', pubkey }) },
+    tapLeafScript: [[controlBlock, btc.utils.concatBytes(script, Uint8Array.of(version))]],
+    tapScriptSig: [],
+  });
+  tx.addOutput({ amount: 1n, script: btc.OutScript.encode({ type: 'tr', pubkey }) });
+
+  // BIP342 gives these bytes tapscript semantics because they are the committed leaf, not an
+  // outer BIP141 witness program. The explicit custom finalizer therefore remains authoritative.
+  // https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki
+  tx.finalizeIdx(0);
+  deepStrictEqual(tx.getInput(0).finalScriptWitness, [
+    script,
+    btc.TaprootControlBlock.encode(controlBlock),
+  ]);
 });
 
 it('payTo API', () => {
@@ -1282,6 +1486,42 @@ it('PSBT import authenticates wrapper and Taproot commitments against the prevou
   throws(
     () => btc.Transaction.fromPSBT(_RawPSBTV0.encode(badRoot)),
     /tapMerkleRoot does not match Taproot control block/
+  );
+});
+
+it('empty tapLeafScript is absent for Taproot commitment validation', () => {
+  const spend = btc.p2wpkh(pubECDSA(new Uint8Array(32).fill(1)));
+  const input = {
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  };
+  const omitted = new btc.Transaction();
+  omitted.addInput(input);
+  const added = new btc.Transaction();
+  added.addInput({
+    ...input,
+    // BIP174 input maps contain zero or more keypairs; an empty repeated BIP371 field emits none.
+    // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#specification
+    // https://github.com/bitcoin/bips/blob/master/bip-0371.mediawiki#specification
+    tapLeafScript: [],
+  });
+  const updated = new btc.Transaction();
+  updated.addInput(input);
+  updated.updateInput(0, { tapLeafScript: [] });
+  deepStrictEqual(
+    [added.getInput(0), updated.getInput(0)],
+    [omitted.getInput(0), omitted.getInput(0)]
+  );
+  deepStrictEqual([added.toPSBT(), updated.toPSBT()], [omitted.toPSBT(), omitted.toPSBT()]);
+
+  // Only an actual empty repeated field is absence; malformed falsy values must still be rejected.
+  throws(() => new btc.Transaction().addInput({ ...input, tapLeafScript: null as any }));
+
+  const leaf = btc.p2tr(undefined, btc.p2tr_pk(pubSchnorr(new Uint8Array(32).fill(2))));
+  throws(
+    () => new btc.Transaction().addInput({ ...input, tapLeafScript: leaf.tapLeafScript }),
+    /Taproot metadata without P2TR previous output/
   );
 });
 
@@ -2402,7 +2642,312 @@ it('PSBTv2 locktime requirements use a domain supported by every input', () => {
   deepStrictEqual(incompatible.lockTime, 100);
 });
 
-it('PSBTv2 enforces and updates transaction modifiable flags', () => {
+it('PSBTv2 finalization retains the requirements used to resolve locktime', () => {
+  // This exported allowlist is the public equivalent of the internal finalization cleanup.
+  deepStrictEqual(PSBTInputFinalKeys, [
+    'txid',
+    'sequence',
+    'index',
+    'witnessUtxo',
+    'nonWitnessUtxo',
+    'requiredTimeLocktime',
+    'requiredHeightLocktime',
+    'finalScriptSig',
+    'finalScriptWitness',
+    'unknown',
+  ]);
+  const priv = new Uint8Array(32).fill(9);
+  const spend = btc.p2wpkh(pubECDSA(priv));
+  const tx = new btc.Transaction({ PSBTVersion: 2 });
+  for (const [fill, requiredHeightLocktime] of [
+    [1, 123],
+    [2, 100],
+  ] as const) {
+    tx.addInput({
+      txid: new Uint8Array(32).fill(fill),
+      index: 0,
+      sequence: 0xfffffffe,
+      witnessUtxo: { script: spend.script, amount: 2n },
+      requiredHeightLocktime,
+    });
+  }
+  tx.addOutput({ script: spend.script, amount: 3n });
+  tx.sign(priv);
+
+  // BIP370 derives the transaction's nLockTime from these per-input fields. Finalization cleanup
+  // must not change the transaction preimage already committed by both signatures.
+  // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time
+  const combined = tx.clone();
+  tx.finalizeIdx(0);
+  combined.combine(tx);
+  deepStrictEqual([tx.lockTime, combined.lockTime], [123, 123]);
+  tx.finalizeIdx(1);
+  const parsed = btc.Transaction.fromPSBT(tx.toPSBT(2));
+  const clone = tx.clone();
+  tx.combine(clone);
+  const finalizedBytes = tx.toPSBT(2);
+  const repeated = btc.Transaction.fromPSBT(
+    btc.PSBTCombine([finalizedBytes, finalizedBytes, finalizedBytes])
+  );
+  deepStrictEqual(
+    {
+      lockTime: tx.lockTime,
+      parsedLockTime: parsed.lockTime,
+      cloneLockTime: clone.lockTime,
+      repeatedLockTime: repeated.lockTime,
+      requiredLocktimes: [
+        tx.getInput(0).requiredHeightLocktime,
+        tx.getInput(1).requiredHeightLocktime,
+      ],
+      parsedRequiredLocktimes: [
+        parsed.getInput(0).requiredHeightLocktime,
+        parsed.getInput(1).requiredHeightLocktime,
+      ],
+      fallbackLocktime: RawPSBTV2.decode(finalizedBytes).global.fallbackLocktime,
+    },
+    {
+      lockTime: 123,
+      parsedLockTime: 123,
+      cloneLockTime: 123,
+      repeatedLockTime: 123,
+      requiredLocktimes: [123, 100],
+      parsedRequiredLocktimes: [123, 100],
+      fallbackLocktime: 0,
+    }
+  );
+  // BIP174 combiners operate on the same unsigned transaction, so participant order must not
+  // change whether these three PSBTv2 states combine.
+  // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#combiner
+  tx.updateInput(0, { finalScriptWitness: undefined });
+  const clearedBytes = tx.toPSBT(2);
+  const combinedBytes = combined.toPSBT(2);
+  const orderLockTimes = [
+    btc.PSBTCombine([combinedBytes, clearedBytes, finalizedBytes]),
+    btc.PSBTCombine([clearedBytes, combinedBytes, finalizedBytes]),
+  ].map((psbt) => btc.Transaction.fromPSBT(psbt).lockTime);
+  deepStrictEqual(orderLockTimes, [123, 123]);
+});
+
+it('new and promoted PSBTv2 emit fallback zero while imported omission remains omitted', () => {
+  const priv = new Uint8Array(32).fill(11);
+  const spend = btc.p2wpkh(pubECDSA(priv));
+  const tx = new btc.Transaction({ PSBTVersion: 2 });
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  const createdRaw = RawPSBTV2.decode(tx.toPSBT(2));
+  const promoted = btc.Transaction.fromPSBT(tx.toPSBT(0)).toPSBT(2);
+  // PSBTv0 always carries nLockTime in its unsigned transaction, so promotion has no omission to
+  // preserve. Its v2 fallback must match a directly created PSBTv2, including explicit zero.
+  deepStrictEqual(promoted, tx.toPSBT(2));
+  const omittedRaw = structuredClone(createdRaw);
+  delete omittedRaw.global.fallbackLocktime;
+  const omitted = btc.Transaction.fromPSBT(RawPSBTV2.encode(omittedRaw));
+  tx.signIdx(priv, 0);
+  tx.finalizeIdx(0);
+  omitted.signIdx(priv, 0);
+  omitted.finalizeIdx(0);
+  const finalizedBytes = tx.toPSBT(2);
+  // Bitcoin Core creators emit fallback even when it is zero. Matching that common encoding also
+  // avoids giving locally created PSBTv2s a library-specific fingerprint. Imported omission is
+  // retained because BIP370 defines it as semantically equivalent to zero.
+  // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#global-fallback-locktime
+  // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#combiner
+  deepStrictEqual(
+    [
+      createdRaw.global.fallbackLocktime,
+      RawPSBTV2.decode(finalizedBytes).global.fallbackLocktime,
+      RawPSBTV2.decode(omitted.toPSBT(2)).global.fallbackLocktime,
+      RawPSBTV2.decode(btc.PSBTCombine([finalizedBytes, finalizedBytes])).global.fallbackLocktime,
+    ],
+    [0, 0, undefined, 0]
+  );
+});
+
+it('Transaction.combine preserves unsigned tx after merging PSBTv2 locktime requirements', () => {
+  type Locktime = {
+    requiredHeightLocktime?: number;
+    requiredTimeLocktime?: number;
+  };
+  const priv = new Uint8Array(32).fill(13);
+  const spend = btc.p2wpkh(pubECDSA(priv));
+  const make = (lockTime: number, requirements: Locktime[]) => {
+    const tx = new btc.Transaction({ PSBTVersion: 2, lockTime });
+    for (let i = 0; i < requirements.length; i++) {
+      tx.addInput({
+        txid: new Uint8Array(32).fill(i + 1),
+        index: 0,
+        sequence: 0xfffffffe,
+        witnessUtxo: { script: spend.script, amount: 2n },
+        ...requirements[i],
+      });
+    }
+    tx.addOutput({ script: spend.script, amount: 3n });
+    tx.sign(priv);
+    return tx;
+  };
+  const left = make(50, [
+    { requiredHeightLocktime: 100, requiredTimeLocktime: 600_000_000 },
+    { requiredTimeLocktime: 600_000_000 },
+  ]);
+  const right = make(60, [
+    { requiredTimeLocktime: 600_000_000 },
+    { requiredHeightLocktime: 123, requiredTimeLocktime: 600_000_000 },
+  ]);
+  deepStrictEqual(left.unsignedTx, right.unsignedTx);
+  const leftBytes = left.toPSBT(2);
+  const rightBytes = right.toPSBT(2);
+
+  // Combining a state with round-tripped copies is idempotent under repetition.
+  const stable = btc.Transaction.fromPSBT(leftBytes);
+  stable.combine(btc.Transaction.fromPSBT(leftBytes));
+  stable.combine(left.clone());
+  deepStrictEqual(stable.toPSBT(2), leftBytes);
+
+  // BIP174 forbids combining different unsigned transactions. Merged BIP370 locktime metadata
+  // must therefore be validated before the receiver is mutated.
+  // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#combiner
+  // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time
+  for (const [receiverBytes, otherBytes] of [
+    [leftBytes, rightBytes],
+    [rightBytes, leftBytes],
+  ]) {
+    const receiver = btc.Transaction.fromPSBT(receiverBytes);
+    const before = receiver.toPSBT(2);
+    throws(() => receiver.combine(btc.Transaction.fromPSBT(otherBytes)), /combined unsigned tx/);
+    deepStrictEqual(receiver.toPSBT(2), before);
+    throws(() => btc.PSBTCombine([receiverBytes, otherBytes]), /combined unsigned tx/);
+  }
+});
+
+it('Transaction.combine compares effective locktime across PSBT versions', () => {
+  const spend = btc.p2wpkh(pubECDSA(new Uint8Array(32).fill(14)));
+  const make = (PSBTVersion: 0 | 2) => {
+    const tx = new btc.Transaction({ PSBTVersion, lockTime: PSBTVersion === 0 ? 123 : 0 });
+    tx.addInput({
+      txid: new Uint8Array(32).fill(1),
+      index: 0,
+      sequence: 0xfffffffe,
+      witnessUtxo: { script: spend.script, amount: 2n },
+      requiredHeightLocktime: PSBTVersion === 2 ? 123 : undefined,
+    });
+    tx.addOutput({ script: spend.script, amount: 1n });
+    return tx.toPSBT(PSBTVersion);
+  };
+  const v0 = make(0);
+  const v2 = make(2);
+  // BIP370 derives v2 nLockTime from input requirements before falling back to the global field.
+  // BIP174 combination therefore compares the resulting unsigned transaction, not whether the
+  // same value originated in the v0 transaction blob or a particular v2 field.
+  // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#determining-lock-time
+  // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#combiner
+  deepStrictEqual(
+    [btc.Transaction.fromPSBT(v0).lockTime, btc.Transaction.fromPSBT(v2).lockTime],
+    [123, 123]
+  );
+  const direct = (first: Uint8Array, second: Uint8Array) => {
+    const tx = btc.Transaction.fromPSBT(first);
+    tx.combine(btc.Transaction.fromPSBT(second));
+    return tx.toPSBT(2);
+  };
+  deepStrictEqual(
+    [
+      direct(v0, v2),
+      direct(v2, v0),
+      btc.PSBTCombine([v0, v2]),
+      btc.PSBTCombine([v2, v0]),
+      btc.PSBTCombine([v0, v2, v0]),
+    ],
+    [v2, v2, v2, v2, v2]
+  );
+});
+
+const anyoneLocktimeTx = (extraInput = false) => {
+  const priv = new Uint8Array(32).fill(10);
+  const spend = btc.p2wpkh(pubECDSA(priv));
+  const tx = new btc.Transaction({ PSBTVersion: 2 });
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+    sighashType: btc.SigHash.ALL_ANYONECANPAY,
+  });
+  if (extraInput)
+    tx.addInput({
+      txid: new Uint8Array(32).fill(1),
+      index: 0,
+      witnessUtxo: { script: spend.script, amount: 2n },
+    });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  tx.signIdx(priv, 0, [btc.SigHash.ALL_ANYONECANPAY]);
+  return { spend, tx };
+};
+
+it('ANYONECANPAY addInput cannot change the signed locktime', () => {
+  const { spend, tx } = anyoneLocktimeTx();
+  // BIP143 always includes nLockTime in the signature preimage; ANYONECANPAY omits other
+  // prevouts, amounts, scripts, and sequences, but does not make the global locktime mutable.
+  // https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification
+  const input = {
+    txid: new Uint8Array(32).fill(2),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+    requiredHeightLocktime: 123,
+  };
+  throws(() => tx.addInput(input), /signed inputs, cannot change lockTime/);
+  deepStrictEqual(
+    { inputsLength: tx.inputsLength, lockTime: tx.lockTime },
+    { inputsLength: 1, lockTime: 0 }
+  );
+  tx.updateInput(0, { partialSig: undefined });
+  tx.addInput(input);
+  deepStrictEqual(
+    { inputsLength: tx.inputsLength, lockTime: tx.lockTime },
+    { inputsLength: 2, lockTime: 123 }
+  );
+});
+
+it('ANYONECANPAY updateInput cannot change the signed locktime', () => {
+  const { spend, tx } = anyoneLocktimeTx(true);
+  // Updating a different input is subject to the same BIP143 nLockTime commitment as adding one.
+  // https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification
+  throws(
+    () => tx.updateInput(1, { requiredHeightLocktime: 123 }),
+    /signed inputs, cannot change lockTime/
+  );
+  deepStrictEqual(
+    { input: tx.getInput(1), lockTime: tx.lockTime },
+    {
+      input: {
+        txid: new Uint8Array(32).fill(1),
+        index: 0,
+        sequence: btc.DEFAULT_SEQUENCE,
+        witnessUtxo: { script: spend.script, amount: 2n },
+      },
+      lockTime: 0,
+    }
+  );
+  tx.updateInput(0, { partialSig: undefined });
+  tx.updateInput(1, { requiredHeightLocktime: 123 });
+  deepStrictEqual(
+    { input: tx.getInput(1), lockTime: tx.lockTime },
+    {
+      input: {
+        txid: new Uint8Array(32).fill(1),
+        index: 0,
+        sequence: btc.DEFAULT_SEQUENCE,
+        witnessUtxo: { script: spend.script, amount: 2n },
+        requiredHeightLocktime: 123,
+      },
+      lockTime: 123,
+    }
+  );
+});
+
+it('PSBTv2 keeps stored transaction policy while signatures govern mutations', () => {
   const priv = new Uint8Array(32).fill(7);
   const spend = btc.p2wpkh(pubECDSA(priv));
   const newV2 = (sighashType = btc.SigHash.ALL) => {
@@ -2418,24 +2963,79 @@ it('PSBTv2 enforces and updates transaction modifiable flags', () => {
   };
   const flags = (tx: btc.Transaction) => RawPSBTV2.decode(tx.toPSBT(2)).global.txModifiable;
 
-  for (const [sighash, expected] of [
-    [btc.SigHash.ALL, 0],
-    [btc.SigHash.ALL_ANYONECANPAY, 1],
-    [btc.SigHash.NONE, 2],
-    [btc.SigHash.NONE_ANYONECANPAY, 3],
-    [btc.SigHash.SINGLE, 4],
-    [btc.SigHash.SINGLE_ANYONECANPAY, 5],
-  ] as const) {
+  const sighashes = [
+    btc.SigHash.ALL,
+    btc.SigHash.ALL_ANYONECANPAY,
+    btc.SigHash.NONE,
+    btc.SigHash.NONE_ANYONECANPAY,
+    btc.SigHash.SINGLE,
+    btc.SigHash.SINGLE_ANYONECANPAY,
+  ] as const;
+  for (const sighash of sighashes) {
     const tx = newV2(sighash);
     deepStrictEqual(flags(tx), 3);
     tx.signIdx(priv, 0, [sighash]);
-    deepStrictEqual(flags(tx), expected);
+    deepStrictEqual(flags(tx), 3);
+  }
+
+  const external = [];
+  for (const sighash of sighashes) {
+    const tx = newV2(sighash);
+    const signer = tx.clone();
+    signer.signIdx(priv, 0, [sighash]);
+    // Exercise the signature's own trailing sighash byte rather than PSBT_IN_SIGHASH_TYPE.
+    tx.updateInput(0, { sighashType: undefined });
+    tx.updateInput(0, { partialSig: signer.getInput(0).partialSig });
+    deepStrictEqual(flags(tx), 3);
+    const raw = RawPSBTV2.decode(signer.toPSBT(2));
+    raw.global.txModifiable = 3;
+    const parsed = btc.Transaction.fromPSBT(RawPSBTV2.encode(raw));
+    deepStrictEqual(flags(parsed), 3);
+    external.push(tx);
+  }
+  // Like Core, no-op serialization preserves producer policy exactly. Signature restrictions are
+  // computed when checking mutations rather than cached into the optional wire field.
+  const pinned = btc.Transaction.fromPSBT(external[0].toPSBT(2));
+  external[0].updateInput(0, { partialSig: undefined });
+  pinned.updateInput(0, { partialSig: undefined });
+  deepStrictEqual([flags(external[0]), flags(pinned)], [3, 3]);
+
+  // The signature itself is authoritative when PSBT_IN_SIGHASH_TYPE has been omitted. NONE with
+  // ANYONECANPAY commits to neither other inputs nor outputs, so both additions remain valid.
+  const permissive = newV2(btc.SigHash.NONE_ANYONECANPAY);
+  const permissiveSigner = permissive.clone();
+  permissiveSigner.signIdx(priv, 0, [btc.SigHash.NONE_ANYONECANPAY]);
+  permissive.updateInput(0, { sighashType: undefined });
+  permissive.updateInput(0, { partialSig: permissiveSigner.getInput(0).partialSig });
+  permissive.addInput({ txid: new Uint8Array(32).fill(2), index: 0 });
+  permissive.addOutput({ script: spend.script, amount: 1n });
+  deepStrictEqual(flags(permissive), 3);
+
+  const tapKey = pubSchnorr(priv);
+  for (const payment of [btc.p2tr(tapKey), btc.p2tr(undefined, btc.p2tr_pk(tapKey))]) {
+    const tx = new btc.Transaction({ PSBTVersion: 2 });
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 2n },
+      tapInternalKey: payment.tapInternalKey,
+      tapMerkleRoot: payment.tapMerkleRoot,
+      tapLeafScript: payment.tapLeafScript,
+    });
+    tx.addOutput({ script: spend.script, amount: 1n });
+    const signer = tx.clone();
+    signer.signIdx(priv, 0);
+    const signed = signer.getInput(0);
+    tx.updateInput(0, { tapKeySig: signed.tapKeySig, tapScriptSig: signed.tapScriptSig });
+    deepStrictEqual(flags(tx), 3);
   }
 
   const imported = (txModifiable: number) => {
     const raw = RawPSBTV2.decode(newV2().toPSBT(2));
     raw.global.txModifiable = txModifiable;
-    return btc.Transaction.fromPSBT(RawPSBTV2.encode(raw));
+    // This test exercises transaction-modifiable state, so retain the metadata-only updates it
+    // uses instead of relying on the default extension policy.
+    return btc.Transaction.fromPSBT(RawPSBTV2.encode(raw), { proprietary: 'ignore' });
   };
   const immutable = imported(0);
   throws(
@@ -2451,8 +3051,9 @@ it('PSBTv2 enforces and updates transaction modifiable flags', () => {
   // Idempotent transaction fields and metadata-only updates remain permitted.
   immutable.updateInput(0, { sequence: btc.DEFAULT_SEQUENCE });
   immutable.updateOutput(0, { amount: 1n });
-  immutable.updateInput(0, { proprietary: [[Uint8Array.of(1), Uint8Array.of(2)]] });
-  immutable.updateOutput(0, { proprietary: [[Uint8Array.of(1), Uint8Array.of(2)]] });
+  const proprietary = [[Uint8Array.of(1, 0x61, 0), Uint8Array.of(2)]];
+  immutable.updateInput(0, { proprietary });
+  immutable.updateOutput(0, { proprietary });
 
   const inputsOnly = imported(1);
   inputsOnly.addInput({ txid: new Uint8Array(32).fill(1), index: 0 });
@@ -2463,9 +3064,40 @@ it('PSBTv2 enforces and updates transaction modifiable flags', () => {
 
   const omittedRaw = RawPSBTV2.decode(newV2().toPSBT(2));
   delete omittedRaw.global.txModifiable;
-  const omitted = btc.Transaction.fromPSBT(RawPSBTV2.encode(omittedRaw));
+  const omittedBytes = RawPSBTV2.encode(omittedRaw);
+  const omitted = btc.Transaction.fromPSBT(omittedBytes);
+  deepStrictEqual(flags(omitted), undefined);
   throws(() => omitted.addInput({ txid: new Uint8Array(32).fill(1), index: 0 }));
   throws(() => omitted.addOutput({ script: spend.script, amount: 1n }));
+  // Combining the same strict field-less participant repeatedly is idempotent. Absence and zero
+  // have the same policy meaning, but Core and BIP174 preserve absence when neither source has it.
+  deepStrictEqual(
+    [btc.PSBTCombine([omittedBytes]), btc.PSBTCombine([omittedBytes, omittedBytes])],
+    [omittedBytes, omittedBytes]
+  );
+
+  // Released versions of scure emitted PSBTv2 without this field. The compatibility option treats
+  // that legacy absence as an open construction policy, while explicit zero remains immutable.
+  const compat = btc.Transaction.fromPSBT(omittedBytes, {
+    allowMissingTxModifiable: true,
+  });
+  compat.addInput({ txid: new Uint8Array(32).fill(3), index: 0 });
+  compat.addOutput({ script: spend.script, amount: 1n });
+  deepStrictEqual(flags(compat), 3);
+
+  // PSBTv0 cannot carry the field, so absence there always means that signatures alone determine
+  // mutation safety. Promotion materializes that derived policy in the PSBTv2 encoding.
+  const v0Source = new btc.Transaction();
+  v0Source.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  v0Source.addOutput({ script: spend.script, amount: 1n });
+  const v0 = btc.Transaction.fromPSBT(v0Source.toPSBT(0));
+  v0.addInput({ txid: new Uint8Array(32).fill(4), index: 0 });
+  v0.addOutput({ script: spend.script, amount: 1n });
+  deepStrictEqual(flags(v0), 3);
 
   const failed = newV2();
   throws(() => failed.signIdx(new Uint8Array(32).fill(8), 0));
@@ -2474,13 +3106,181 @@ it('PSBTv2 enforces and updates transaction modifiable flags', () => {
   const unsignedSingle = newV2(btc.SigHash.SINGLE);
   const signedSingle = unsignedSingle.clone();
   signedSingle.signIdx(priv, 0, [btc.SigHash.SINGLE]);
+  const signedSingleBytes = signedSingle.toPSBT(2);
   unsignedSingle.combine(signedSingle);
-  deepStrictEqual(flags(unsignedSingle), 4);
+  // Core combines the stored optional bytes and does not derive bit 2 from signature records.
+  // Combining identical producer state must therefore remain byte-idempotent.
+  deepStrictEqual(
+    [flags(unsignedSingle), btc.PSBTCombine([signedSingleBytes, signedSingleBytes])],
+    [3, signedSingleBytes]
+  );
+});
+
+it('PSBTv2 no-op serialization preserves transaction-modifiable presence and value', () => {
+  const privateKey = new Uint8Array(32).fill(7);
+  const spend = btc.p2wpkh(pubECDSA(privateKey));
+  const signed = (sighashType: btc.SigHash) => {
+    const tx = new btc.Transaction({ PSBTVersion: 2 });
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { script: spend.script, amount: 2n },
+      sighashType,
+    });
+    tx.addOutput({ script: spend.script, amount: 1n });
+    tx.signIdx(privateKey, 0, [sighashType]);
+    return RawPSBTV2.decode(tx.toPSBT(2));
+  };
+  const encoded = [];
+  for (const sighash of [btc.SigHash.ALL, btc.SigHash.SINGLE]) {
+    const source = signed(sighash);
+    for (const txModifiable of [undefined, 0, 3, 255]) {
+      const raw = structuredClone(source);
+      if (txModifiable === undefined) delete raw.global.txModifiable;
+      else raw.global.txModifiable = txModifiable;
+      encoded.push(RawPSBTV2.encode(raw));
+    }
+  }
+
+  // Bitcoin Core stores the field as an optional byte: absence remains absent and an explicit zero
+  // remains present. A no-op serializer must not derive a replacement value from signatures.
+  // BIP370: https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki
+  deepStrictEqual(
+    encoded.map((psbt) => btc.Transaction.fromPSBT(psbt, { unknown: 'ignore' }).toPSBT(2)),
+    encoded
+  );
+});
+
+it('PSBTv2 signing and finalization preserve stored transaction-modifiable policy', () => {
+  const privateKey = new Uint8Array(32).fill(8);
+  const spend = btc.p2wpkh(pubECDSA(privateKey));
+  const source = new btc.Transaction({ PSBTVersion: 2 });
+  source.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  source.addOutput({ script: spend.script, amount: 1n });
+  const raw = RawPSBTV2.decode(source.toPSBT(2));
+  const policies = [undefined, 0, 3, 255];
+  const observed = [];
+
+  for (const policy of policies) {
+    const state = structuredClone(raw);
+    if (policy === undefined) delete state.global.txModifiable;
+    else state.global.txModifiable = policy;
+    const tx = btc.Transaction.fromPSBT(RawPSBTV2.encode(state), { unknown: 'ignore' });
+    tx.signIdx(privateKey, 0);
+    const signed = RawPSBTV2.decode(tx.toPSBT(2)).global.txModifiable;
+    // Exact sighashes protect the transaction while partial signatures remain available.
+    throws(() => tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 }));
+    throws(() => tx.addOutput({ script: spend.script, amount: 1n }));
+    tx.finalizeIdx(0);
+    const finalized = RawPSBTV2.decode(tx.toPSBT(2)).global.txModifiable;
+    // BIP174 cleanup makes the satisfaction opaque, so scure conservatively locks both halves
+    // until the caller explicitly reopens it. The stored producer policy need not be rewritten.
+    // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#input-finalizer
+    // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#signer
+    throws(() => tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 }));
+    throws(() => tx.addOutput({ script: spend.script, amount: 1n }));
+    observed.push([signed, finalized]);
+  }
+  deepStrictEqual(
+    observed,
+    policies.map((policy) => [policy, policy])
+  );
+});
+
+it('PSBTv0 conversion omits every PSBTv2 transaction-modifiable value', () => {
+  const spend = btc.p2wpkh(pubECDSA(new Uint8Array(32).fill(7)));
+  const make = (PSBTVersion: 0 | 2) => {
+    const tx = new btc.Transaction({ PSBTVersion });
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { script: spend.script, amount: 2n },
+    });
+    tx.addOutput({ script: spend.script, amount: 1n });
+    return tx;
+  };
+  const expected = make(0).toPSBT(0);
+  const source = RawPSBTV2.decode(make(2).toPSBT(2));
+  const converted = [];
+  for (const txModifiable of [undefined, 0, 1, 2, 3, 4, 255]) {
+    const raw = structuredClone(source);
+    if (txModifiable === undefined) delete raw.global.txModifiable;
+    else raw.global.txModifiable = txModifiable;
+    converted.push(btc.Transaction.fromPSBT(RawPSBTV2.encode(raw)).toPSBT(0));
+  }
+
+  // PSBT_GLOBAL_TX_MODIFIABLE is v2-only. Explicit target-v0 conversion translates the transaction
+  // into unsignedTx and omits the field regardless of its v2 value.
+  // BIP370: https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki
+  deepStrictEqual(
+    converted,
+    converted.map(() => expected)
+  );
+});
+
+it('signed PSBTv2 remains representable as PSBTv0 after a v2 round-trip', () => {
+  const privateKey = new Uint8Array(32).fill(1);
+  const spend = btc.p2wpkh(pubECDSA(privateKey));
+  const tx = new btc.Transaction({ PSBTVersion: 2 });
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  tx.addOutput({ script: spend.script, amount: 1n });
+  tx.signIdx(privateKey, 0);
+  const expected = tx.toPSBT(0);
+
+  // BIP370's transaction-modifiable field summarizes restrictions already carried by signatures;
+  // BIP174 PSBTv0 carries those signatures without that v2-only cache. Materializing the cache on
+  // v2 serialization must not make the equivalent signed state impossible to encode as PSBTv0.
+  // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#signer
+  // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#specification
+  deepStrictEqual(btc.Transaction.fromPSBT(tx.toPSBT(2)).toPSBT(0), expected);
+});
+
+it('Transaction.combine uses the receiver options', () => {
+  const bytes = v2WithoutTxModifiable();
+  const combine = (firstCompat: boolean, otherCompat: boolean) => {
+    const first = btc.Transaction.fromPSBT(bytes, {
+      allowMissingTxModifiable: firstCompat,
+    });
+    const other = btc.Transaction.fromPSBT(bytes, {
+      allowMissingTxModifiable: otherCompat,
+    });
+    first.combine(other);
+    return RawPSBTV2.decode(first.toPSBT(2)).global.txModifiable;
+  };
+
+  // Options are caller policy rather than PSBT state. Direct combination follows main and uses
+  // the receiver's stored policy regardless of options attached to the other participant.
+  deepStrictEqual([combine(true, false), combine(false, true)], [3, undefined]);
+});
+
+it('field-less PSBTv2 converts to PSBTv0 under either omission policy', () => {
+  const bytes = v2WithoutTxModifiable();
+  const strict = btc.Transaction.fromPSBT(bytes);
+  const v0 = strict.toPSBT(0);
+  const converted = btc.PSBTCombine([bytes], { PSBTVersion: 0 });
+  const compat = btc.PSBTCombine([bytes], {
+    PSBTVersion: 0,
+    allowMissingTxModifiable: true,
+  });
+  // The option governs v2 mutation policy, but v0 has no transaction-modifiable field. Explicit
+  // conversion therefore has the same wire result under either interpretation of v2 omission.
+  deepStrictEqual([converted, compat], [v0, v0]);
+  const promoted = btc.Transaction.fromPSBT(v0).toPSBT(2);
+  deepStrictEqual(RawPSBTV2.decode(promoted).global.txModifiable, 3);
 });
 
 it('big multisig (real)', () => {
   // https://gist.github.com/AdamISZ/9b2395ddcb43890d9611df99287cfe6b
-  // -> https://www.blockchain.com/explorer/transactions/btc/7393096d97bfee8660f4100ffd61874d62f9a65de9fb6acf740c4c386990ef73
+  // -> https://www.blockchain.com/explorer/transactions/btc/
+  //    7393096d97bfee8660f4100ffd61874d62f9a65de9fb6acf740c4c386990ef73
 
   // ScriptNum in last part
   deepStrictEqual(hex.encode(btc.Script.encode([998, 'GREATERTHANOREQUAL'])), '02e603a2');
@@ -2503,7 +3303,8 @@ it('big multisig (real)', () => {
     'c11dae61a4a8f841952be3a511502d4f56e889ffa0685aa0098773ea2d4309f624'
   );
   const sig = hex.decode(
-    '809edb01f5931cc992763731cda9e983d7e2030a0863352530907490ef2a289721358c386d0b23d82fe78aab1e2f7f3bcf9ae7409bb771c98e7222dc136209f9'
+    '809edb01f5931cc992763731cda9e983d7e2030a0863352530907490ef2a2897' +
+      '21358c386d0b23d82fe78aab1e2f7f3bcf9ae7409bb771c98e7222dc136209f9'
   );
 
   const leafScript = btc.Script.encode(script);
@@ -2524,6 +3325,183 @@ it('big multisig (real)', () => {
   });
   tx.finalize();
   deepStrictEqual(tx.id, '7393096d97bfee8660f4100ffd61874d62f9a65de9fb6acf740c4c386990ef73');
+});
+
+const signedInputPair = (kind: 'legacy' | 'segwit' | 'taproot', sighashType: number) => {
+  const priv = [new Uint8Array(32).fill(1), new Uint8Array(32).fill(2)];
+  const pub = priv.map((key) => (kind === 'taproot' ? pubSchnorr(key) : pubECDSA(key))) as [
+    Uint8Array,
+    Uint8Array,
+  ];
+  const spend = pub.map((key) =>
+    kind === 'legacy' ? btc.p2pkh(key) : kind === 'segwit' ? btc.p2wpkh(key) : btc.p2tr(key)
+  );
+  const tx = new btc.Transaction({ allowLegacyWitnessUtxo: kind === 'legacy' });
+  const input = spend.map((payment, idx) => ({
+    txid: new Uint8Array(32).fill(idx + 1),
+    index: 0,
+    witnessUtxo: { amount: 1000n, script: payment.script },
+    ...(kind === 'taproot' ? { tapInternalKey: pub[idx] } : {}),
+  }));
+  tx.addInput({ ...input[0], sighashType });
+  tx.addInput(input[1]);
+  for (const payment of spend) tx.addOutput({ amount: 500n, script: payment.script });
+  tx.signIdx(priv[0], 0, [sighashType], new Uint8Array(32));
+  return { input, priv, pub, spend, tx };
+};
+
+it('signed inputs retain mutable PSBT metadata', () => {
+  const { input, pub, tx } = signedInputPair('segwit', btc.SigHash.ALL);
+  const derivation = (key: Uint8Array) => [[key, { fingerprint: 1, path: [] }]] as const;
+  const ownBefore = tx.getInput(0);
+  tx.updateInput(0, { bip32Derivation: derivation(pub[0]) });
+  deepStrictEqual(tx.getInput(0), { ...ownBefore, bip32Derivation: derivation(pub[0]) });
+
+  // BIP174 key origins are PSBT metadata, not part of any transaction signature preimage.
+  // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#specification
+  tx.updateInput(1, { bip32Derivation: derivation(pub[1]) });
+  deepStrictEqual(tx.getInput(1), {
+    ...input[1],
+    sequence: btc.DEFAULT_SEQUENCE,
+    bip32Derivation: derivation(pub[1]),
+  });
+});
+
+it('legacy and SegWit v0 signatures protect only committed fields on other inputs', () => {
+  for (const kind of ['legacy', 'segwit'] as const) {
+    const all = signedInputPair(kind, btc.SigHash.ALL);
+    const allBefore = all.tx.getInput(1);
+    all.tx.updateInput(1, {
+      witnessUtxo: { ...allBefore.witnessUtxo!, amount: allBefore.witnessUtxo!.amount + 1n },
+    });
+    const allExpected = all.tx.getInput(1);
+    for (const update of [{ txid: new Uint8Array(32).fill(9) }, { index: 1 }, { sequence: 1 }])
+      throws(() => all.tx.updateInput(1, update), /Cannot change signed field/);
+    deepStrictEqual(all.tx.getInput(1), allExpected);
+
+    const none = signedInputPair(kind, btc.SigHash.NONE);
+    const noneBefore = none.tx.getInput(1);
+    none.tx.updateInput(1, {
+      sequence: 1,
+      witnessUtxo: { ...noneBefore.witnessUtxo!, amount: noneBefore.witnessUtxo!.amount + 1n },
+    });
+    const noneExpected = none.tx.getInput(1);
+    for (const update of [{ txid: new Uint8Array(32).fill(9) }, { index: 1 }])
+      throws(() => none.tx.updateInput(1, update), /Cannot change signed field/);
+    deepStrictEqual(none.tx.getInput(1), noneExpected);
+
+    const any = signedInputPair(kind, btc.SigHash.NONE_ANYONECANPAY);
+    const anyBefore = any.tx.getInput(1);
+    any.tx.updateInput(1, {
+      txid: new Uint8Array(32).fill(9),
+      index: 1,
+      sequence: 1,
+      witnessUtxo: { ...anyBefore.witnessUtxo!, amount: anyBefore.witnessUtxo!.amount + 1n },
+    });
+    deepStrictEqual(any.tx.getInput(1), {
+      ...anyBefore,
+      txid: new Uint8Array(32).fill(9),
+      index: 1,
+      sequence: 1,
+      witnessUtxo: { ...anyBefore.witnessUtxo!, amount: anyBefore.witnessUtxo!.amount + 1n },
+    });
+  }
+  // BIP143 hashes other outpoints for every non-ANYONECANPAY signature, but hashes their
+  // sequences only for ALL and never hashes their spent amounts or scripts.
+  // https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification
+});
+
+it('Taproot signatures protect every committed prevout field on other inputs', () => {
+  const none = signedInputPair('taproot', btc.SigHash.NONE);
+  const before = none.tx.getInput(1);
+  for (const update of [
+    { txid: new Uint8Array(32).fill(9) },
+    { index: 1 },
+    { sequence: 1 },
+    { witnessUtxo: { ...before.witnessUtxo!, amount: before.witnessUtxo!.amount + 1n } },
+  ])
+    throws(() => none.tx.updateInput(1, update), /Cannot change signed field/);
+  deepStrictEqual(none.tx.getInput(1), before);
+
+  const any = signedInputPair('taproot', btc.SigHash.NONE_ANYONECANPAY);
+  const anyBefore = any.tx.getInput(1);
+  any.tx.updateInput(1, {
+    txid: new Uint8Array(32).fill(9),
+    index: 1,
+    sequence: 1,
+    witnessUtxo: { ...anyBefore.witnessUtxo!, amount: anyBefore.witnessUtxo!.amount + 1n },
+  });
+  deepStrictEqual(any.tx.getInput(1), {
+    ...anyBefore,
+    txid: new Uint8Array(32).fill(9),
+    index: 1,
+    sequence: 1,
+    witnessUtxo: { ...anyBefore.witnessUtxo!, amount: anyBefore.witnessUtxo!.amount + 1n },
+  });
+  // BIP341 non-ANYONECANPAY signatures commit every input's outpoint, amount, scriptPubKey,
+  // and sequence independently of the output sighash mode.
+  // https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#signature-validation-rules
+});
+
+it('same-input signatures protect only their script-path preimage sources', () => {
+  const priv = new Uint8Array(32).fill(3);
+  const pub = pubECDSA(priv);
+  const wsh = btc.p2wsh(btc.p2pk(pub));
+  const segwit = new btc.Transaction();
+  segwit.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { amount: 1000n, script: wsh.script },
+    witnessScript: wsh.witnessScript,
+  });
+  segwit.addOutput({ amount: 500n, script: wsh.script });
+  segwit.signIdx(priv, 0);
+  const segwitBefore = segwit.getInput(0);
+  throws(() => segwit.updateInput(0, { witnessScript: undefined }), /signed field=witnessScript/);
+  deepStrictEqual(segwit.getInput(0), segwitBefore);
+
+  const internalPriv = new Uint8Array(32).fill(4);
+  const leafPriv = new Uint8Array(32).fill(5);
+  const internalKey = pubSchnorr(internalPriv);
+  const leafKey = pubSchnorr(leafPriv);
+  const tree = btc.p2tr(internalKey, btc.p2tr_pk(leafKey));
+  const keyPath = new btc.Transaction();
+  keyPath.addInput({
+    txid: new Uint8Array(32).fill(1),
+    index: 0,
+    witnessUtxo: { amount: 1000n, script: tree.script },
+    tapInternalKey: tree.tapInternalKey,
+    tapMerkleRoot: tree.tapMerkleRoot,
+    tapLeafScript: tree.tapLeafScript,
+  });
+  keyPath.addOutput({ amount: 500n, script: tree.script });
+  keyPath.signIdx(internalPriv, 0, undefined, new Uint8Array(32));
+  const { tapLeafScript: _leaf, ...keyPathExpected } = keyPath.getInput(0);
+  keyPath.updateInput(0, { tapLeafScript: undefined });
+  deepStrictEqual(keyPath.getInput(0), keyPathExpected);
+
+  const scriptOnly = btc.p2tr(undefined, btc.p2tr_pk(leafKey));
+  const scriptPath = new btc.Transaction();
+  scriptPath.addInput({
+    txid: new Uint8Array(32).fill(2),
+    index: 0,
+    witnessUtxo: { amount: 1000n, script: scriptOnly.script },
+    tapInternalKey: scriptOnly.tapInternalKey,
+    tapMerkleRoot: scriptOnly.tapMerkleRoot,
+    tapLeafScript: scriptOnly.tapLeafScript,
+  });
+  scriptPath.addOutput({ amount: 500n, script: scriptOnly.script });
+  scriptPath.signIdx(leafPriv, 0, undefined, new Uint8Array(32));
+  const scriptPathBefore = scriptPath.getInput(0);
+  throws(
+    () => scriptPath.updateInput(0, { tapLeafScript: undefined }),
+    /signed field=tapLeafScript/
+  );
+  deepStrictEqual(scriptPath.getInput(0), scriptPathBefore);
+  // BIP143 uses witnessScript as the current input's scriptCode. BIP341 key-path signatures do
+  // not commit a leaf, while tapscript signatures commit their executed tapleaf hash.
+  // https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification
+  // https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki#common-signature-message
 });
 
 it('Signed fields', () => {
@@ -2561,14 +3539,8 @@ it('Signed fields', () => {
     () => tx.updateInput(0, { sighashType: btc.SigHash.NONE }),
     /Cannot add signed field=sighashType/
   );
-  throws(
-    () => tx.updateInput(0, { requiredTimeLocktime: 500000000 }),
-    /Cannot add signed field=requiredTimeLocktime/
-  );
-  throws(
-    () => tx.updateInput(0, { requiredHeightLocktime: 700000 }),
-    /Cannot add signed field=requiredHeightLocktime/
-  );
+  throws(() => tx.updateInput(0, { requiredTimeLocktime: 500000000 }), /cannot change lockTime/);
+  throws(() => tx.updateInput(0, { requiredHeightLocktime: 700000 }), /cannot change lockTime/);
   deepStrictEqual(tx.lockTime, signedLockTime);
 
   // Same input -> no issues
@@ -2599,28 +3571,22 @@ it('Signed fields', () => {
     ],
   });
 
-  throws(() =>
-    tx.updateInput(0, {
-      bip32Derivation: [
-        ['03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc', undefined],
-      ],
-    })
-  );
+  tx.updateInput(0, {
+    bip32Derivation: [
+      ['03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02dc', undefined],
+    ],
+  });
 
-  // A keyed metadata field is frozen too: repeating its existing row is fine, adding a new key is
-  // not. Signature rows remain appendable so independent cosigners can still aggregate results.
-  throws(
-    () =>
-      tx.updateInput(0, {
-        bip32Derivation: [
-          [
-            '03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02db',
-            { fingerprint: fingerprint, path: [0, 1, 2] },
-          ],
-        ],
-      }),
-    /Cannot add signed field=bip32Derivation/
-  );
+  // Key origins do not participate in the signature preimage, while signature rows remain
+  // appendable so independent cosigners can still aggregate results.
+  tx.updateInput(0, {
+    bip32Derivation: [
+      [
+        '03089dc10c7ac6db54f91329af617333db388cead0c231f723379d1b99030b02db',
+        { fingerprint: fingerprint, path: [0, 1, 2] },
+      ],
+    ],
+  });
   const existingSig = tx.getInput(0).partialSig![0][1];
   tx.updateInput(0, {
     partialSig: [[pubECDSA(new Uint8Array(32).fill(2)), existingSig]],
@@ -2889,6 +3855,7 @@ it('clone transaction with identical opts', () => {
     allowLegacyWitnessUtxo: true,
     strictPrevoutValidation: true,
     lowR: true,
+    proprietary: 'ignore' as const,
   };
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   // setup taproot tx
@@ -2907,7 +3874,7 @@ it('clone transaction with identical opts', () => {
     });
   }
   const clone = tx.clone();
-  deepStrictEqual(clone.opts, opts);
+  deepStrictEqual(clone.opts, { ...opts, unknown: 'strip', proprietary: 'ignore' });
   // different options
   const opts2 = {
     version: 1,
@@ -2920,6 +3887,7 @@ it('clone transaction with identical opts', () => {
     allowLegacyWitnessUtxo: false,
     strictPrevoutValidation: false,
     lowR: false,
+    proprietary: 'strip' as const,
   };
   const tx2 = new btc.Transaction({ ...opts2 });
   for (const inp of TX_TEST_INPUTS) {
@@ -2933,7 +3901,7 @@ it('clone transaction with identical opts', () => {
     });
   }
   const clone2 = tx2.clone();
-  deepStrictEqual(clone2.opts, opts2);
+  deepStrictEqual(clone2.opts, { ...opts2, unknown: 'strip', proprietary: 'strip' });
 });
 
 it('Transaction constructor does not mutate caller opts when normalizing deprecated aliases', () => {
@@ -3203,6 +4171,482 @@ it('Transaction.combine preserves finalized state while aggregating cosigner sig
   deepStrictEqual(alice.toPSBT(), before);
 });
 
+const EXT_UNKNOWN = [[{ type: 0x70, key: Uint8Array.of(1) }, Uint8Array.of(2)]] as const;
+const EXT_UNKNOWN_NEXT = [[{ type: 0x71, key: Uint8Array.of(3) }, Uint8Array.of(4)]] as const;
+const EXT_PROPRIETARY = [[Uint8Array.of(1, 0x61, 0), Uint8Array.of(5)]] as const;
+const EXT_PROPRIETARY_NEXT = [[Uint8Array.of(1, 0x62, 0), Uint8Array.of(6)]] as const;
+const EXT_PRIV = new Uint8Array(32).fill(1);
+const EXT_SPEND = btc.p2wpkh(pubECDSA(EXT_PRIV));
+// BIP174 §Proprietary Use Type: one-byte identifier "a", subtype 0, and no subkey data.
+// https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#proprietary-use-type
+const EXT_FINAL_PROPRIETARY = [[Uint8Array.of(1, 0x61, 0), Uint8Array.of(2)]];
+const extensionTx = (opts: btc.TxOpts = {}) => {
+  const tx = new btc.Transaction(opts);
+  tx.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: EXT_SPEND.script, amount: 2n },
+  });
+  tx.addOutput({ script: EXT_SPEND.script, amount: 1n });
+  return tx;
+};
+const extensionPSBT = (records = true, txModifiable = 0b1011) => {
+  const tx = extensionTx({ PSBTVersion: 2 });
+  const raw = RawPSBTV2.decode(tx.toPSBT(2));
+  raw.global.txModifiable = txModifiable;
+  if (records) {
+    raw.global.unknown = EXT_UNKNOWN as any;
+    raw.global.proprietary = EXT_PROPRIETARY as any;
+    raw.inputs[0].unknown = EXT_UNKNOWN as any;
+    raw.inputs[0].proprietary = EXT_PROPRIETARY as any;
+    raw.outputs[0].unknown = EXT_UNKNOWN as any;
+    raw.outputs[0].proprietary = EXT_PROPRIETARY as any;
+  }
+  return RawPSBTV2.encode(raw);
+};
+const extensionPair = (opts: btc.TxOpts = {}) => {
+  const bytes = extensionTx(opts).toPSBT();
+  const finalized = btc.Transaction.fromPSBT(bytes, opts);
+  finalized.signIdx(EXT_PRIV, 0);
+  finalized.finalizeIdx(0);
+  const metadata = btc.Transaction.fromPSBT(bytes, { ...opts, proprietary: 'ignore' });
+  metadata.updateInput(0, { proprietary: EXT_FINAL_PROPRIETARY });
+  return { finalized, metadata };
+};
+const extensionState = (bytes: Uint8Array) => {
+  const raw = RawPSBTV2.decode(bytes);
+  const fields = (map: any) => ({ unknown: map.unknown, proprietary: map.proprietary });
+  return {
+    txModifiable: raw.global.txModifiable,
+    global: fields(raw.global),
+    inputs: raw.inputs.map(fields),
+    outputs: raw.outputs.map(fields),
+  };
+};
+const extensionExpected = (
+  unknown: typeof EXT_UNKNOWN | undefined,
+  proprietary: typeof EXT_PROPRIETARY | undefined,
+  txModifiable: number
+) => ({
+  txModifiable,
+  global: { unknown, proprietary },
+  inputs: [{ unknown, proprietary }],
+  outputs: [{ unknown, proprietary }],
+});
+
+it('PSBT proprietary keys enforce the BIP174 identifier and subtype encoding', () => {
+  // BIP174 §Proprietary Use Type requires the key suffix after 0xfc to contain a CompactSize-
+  // framed identifier followed by a CompactSize subtype and optional subkey data.
+  // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#proprietary-use-type
+  const map = (key: Uint8Array) =>
+    concatBytes(
+      CompactSizeLen.encode(key.length + 1),
+      Uint8Array.of(0xfc),
+      key,
+      Uint8Array.of(1, 5, 0)
+    );
+  const psbt = (key: Uint8Array) =>
+    concatBytes(hex.decode('70736274ff01020402000000010401000105010001fb0402000000'), map(key));
+  const valid = [
+    Uint8Array.of(0, 0),
+    Uint8Array.of(1, 0xaa, 0),
+    Uint8Array.of(0, 0xfd, 0xfd, 0, 0x42),
+  ];
+  for (const key of valid) {
+    const expected = [[key, Uint8Array.of(5)]];
+    deepStrictEqual(PSBTInputCoder.decode(map(key)).proprietary, expected);
+    deepStrictEqual(PSBTOutputCoder.decode(map(key)).proprietary, expected);
+    deepStrictEqual(RawPSBTV2.decode(psbt(key)).global.proprietary, expected);
+  }
+
+  const malformed = [
+    new Uint8Array(),
+    Uint8Array.of(0),
+    Uint8Array.of(1, 0xaa),
+    Uint8Array.of(0xfc, 1, 0xaa, 0),
+    Uint8Array.of(0xfd, 1, 0, 0xaa, 0),
+    Uint8Array.of(0, 0xfd, 1, 0),
+  ];
+  for (const key of malformed) {
+    throws(() => PSBTInputCoder.decode(map(key)), /Proprietary key:/);
+    throws(() => PSBTOutputCoder.decode(map(key)), /Proprietary key:/);
+    throws(() => RawPSBTV2.decode(psbt(key)), /Proprietary key:/);
+    for (const scope of ['global', 'inputs', 'outputs'] as const) {
+      const raw = RawPSBTV2.decode(extensionPSBT(false));
+      const target = scope === 'global' ? raw.global : raw[scope][0];
+      target.proprietary = [[key, Uint8Array.of(5)]];
+      throws(() => RawPSBTV2.encode(raw), /Proprietary key:/);
+    }
+  }
+});
+
+it('unknown and proprietary modes govern parsing and serialization consistently', () => {
+  const bytes = extensionPSBT();
+  const stripped = extensionExpected(undefined, undefined, 3);
+  const ignored = extensionExpected(EXT_UNKNOWN, EXT_PROPRIETARY, 0b1011);
+  const unknownOnly = extensionExpected(EXT_UNKNOWN, undefined, 0b1011);
+  const proprietaryOnly = extensionExpected(undefined, EXT_PROPRIETARY, 3);
+  const relay = (opts: btc.TxOpts = {}) =>
+    extensionState(btc.Transaction.fromPSBT(bytes, opts).toPSBT(2));
+
+  deepStrictEqual(
+    [
+      relay(),
+      relay({ unknown: 'strip', proprietary: 'strip' }),
+      relay({ unknown: 'ignore', proprietary: 'ignore' }),
+      relay({ unknown: 'ignore', proprietary: 'strip' }),
+      relay({ allowUnknown: true }),
+      relay({ proprietary: 'ignore' }),
+      relay({ allowUnknown: false, proprietary: 'strip' }),
+    ],
+    [stripped, stripped, ignored, unknownOnly, ignored, proprietaryOnly, stripped]
+  );
+  throws(() => btc.Transaction.fromPSBT(bytes, { unknown: 'strict' }), /unknown PSBT field/);
+  throws(
+    () => btc.Transaction.fromPSBT(extensionPSBT(false), { unknown: 'strict' }),
+    /unknown txModifiable bits/
+  );
+  throws(
+    () => btc.Transaction.fromPSBT(bytes, { proprietary: 'strict' }),
+    /proprietary PSBT field/
+  );
+  throws(() => new btc.Transaction({ unknown: 'invalid' as any }), /unknown=invalid/);
+  throws(() => new btc.Transaction({ proprietary: 'invalid' as any }), /proprietary=invalid/);
+  throws(
+    () => new btc.Transaction({ unknown: 'ignore', allowUnknown: false }),
+    /conflicting unknown options/
+  );
+  const opts = new btc.Transaction().opts;
+  const inherited = new btc.Transaction({ unknown: 'ignore' }).opts;
+  const inheritedAlias = new btc.Transaction({ allowUnknown: true }).opts;
+  deepStrictEqual(
+    [opts, inherited, inheritedAlias].map(({ unknown, proprietary }) => ({
+      unknown,
+      proprietary,
+    })),
+    [
+      { unknown: 'strip', proprietary: 'strip' },
+      { unknown: 'ignore', proprietary: 'ignore' },
+      { unknown: 'ignore', proprietary: 'ignore' },
+    ]
+  );
+});
+
+it('unknown and proprietary modes govern add and update operations', () => {
+  const run = (opts: btc.TxOpts) => {
+    const tx = new btc.Transaction({ ...opts, allowUnknownOutputs: true });
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      unknown: EXT_UNKNOWN as any,
+      proprietary: EXT_PROPRIETARY as any,
+    });
+    tx.addOutput({
+      script: Uint8Array.of(0x51),
+      amount: 1n,
+      unknown: EXT_UNKNOWN as any,
+      proprietary: EXT_PROPRIETARY as any,
+    });
+    tx.updateInput(0, {
+      unknown: EXT_UNKNOWN_NEXT as any,
+      proprietary: EXT_PROPRIETARY_NEXT as any,
+    });
+    tx.updateOutput(0, {
+      unknown: EXT_UNKNOWN_NEXT as any,
+      proprietary: EXT_PROPRIETARY_NEXT as any,
+    });
+    return [tx.getInput(0), tx.getOutput(0)].map((map: any) => ({
+      unknown: map.unknown,
+      proprietary: map.proprietary,
+    }));
+  };
+  const ignored = {
+    unknown: [...EXT_UNKNOWN, ...EXT_UNKNOWN_NEXT],
+    proprietary: [...EXT_PROPRIETARY, ...EXT_PROPRIETARY_NEXT],
+  };
+  deepStrictEqual(
+    [run({ unknown: 'ignore' }), run({ allowUnknown: true })],
+    [
+      [ignored, ignored],
+      [ignored, ignored],
+    ]
+  );
+
+  const strippedInput = {
+    txid: new Uint8Array(32),
+    index: 0,
+  };
+  const strippedOutput = { script: Uint8Array.of(0x51), amount: 1n };
+  for (const [name, records] of [
+    ['unknown', EXT_UNKNOWN],
+    ['proprietary', EXT_PROPRIETARY],
+  ] as const) {
+    const field = { [name]: records } as any;
+    const addInput = new btc.Transaction({ allowUnknownOutputs: true });
+    throws(
+      () => addInput.addInput({ ...strippedInput, ...field }),
+      new RegExp(`${name} PSBT field cannot be supplied when policy is strip`)
+    );
+    deepStrictEqual(addInput.inputsLength, 0);
+    const addOutput = new btc.Transaction({ allowUnknownOutputs: true });
+    throws(
+      () => addOutput.addOutput({ ...strippedOutput, ...field }),
+      new RegExp(`${name} PSBT field cannot be supplied when policy is strip`)
+    );
+    deepStrictEqual(addOutput.outputsLength, 0);
+    const tx = new btc.Transaction({ allowUnknownOutputs: true });
+    tx.addInput(strippedInput);
+    tx.addOutput(strippedOutput);
+    const before = [tx.getInput(0), tx.getOutput(0)];
+    throws(
+      () => tx.updateInput(0, field),
+      new RegExp(`${name} PSBT field cannot be supplied when policy is strip`)
+    );
+    throws(
+      () => tx.updateOutput(0, field),
+      new RegExp(`${name} PSBT field cannot be supplied when policy is strip`)
+    );
+    deepStrictEqual([tx.getInput(0), tx.getOutput(0)], before);
+  }
+
+  const strictUnknown = new btc.Transaction({ unknown: 'strict', proprietary: 'ignore' });
+  throws(
+    () =>
+      strictUnknown.addInput({
+        txid: new Uint8Array(32),
+        index: 0,
+        unknown: EXT_UNKNOWN as any,
+      }),
+    /unknown PSBT field/
+  );
+  const strictProprietary = new btc.Transaction({
+    unknown: 'ignore',
+    proprietary: 'strict',
+    allowUnknownOutputs: true,
+  });
+  throws(
+    () =>
+      strictProprietary.addOutput({
+        script: Uint8Array.of(0x51),
+        amount: 1n,
+        proprietary: EXT_PROPRIETARY as any,
+      }),
+    /proprietary PSBT field/
+  );
+});
+
+it('rejects malformed extension containers before mutation', () => {
+  const input = { txid: new Uint8Array(32), index: 0 };
+  const output = { script: Uint8Array.of(0x51), amount: 1n };
+  for (const [name, mode] of [
+    ['unknown', 'strip'],
+    ['unknown', 'strict'],
+    ['proprietary', 'strip'],
+    ['proprietary', 'strict'],
+  ] as const) {
+    const opts = { [name]: mode, allowUnknownOutputs: true };
+    const field = { [name]: {} } as any;
+    const error = new RegExp(`${name} PSBT field.*expected array`);
+    const addInput = new btc.Transaction(opts);
+    throws(() => addInput.addInput({ ...input, ...field }), error);
+    deepStrictEqual(addInput.inputsLength, 0);
+    const addOutput = new btc.Transaction(opts);
+    throws(() => addOutput.addOutput({ ...output, ...field }), error);
+    deepStrictEqual(addOutput.outputsLength, 0);
+
+    const tx = new btc.Transaction(opts);
+    tx.addInput(input);
+    tx.addOutput(output);
+    const before = [tx.getInput(0), tx.getOutput(0)];
+    throws(() => tx.updateInput(0, field), error);
+    throws(() => tx.updateOutput(0, field), error);
+    deepStrictEqual([tx.getInput(0), tx.getOutput(0)], before);
+  }
+});
+
+it('unknown and proprietary modes govern combine operations', () => {
+  const plain = extensionPSBT(false);
+  const metadata = extensionPSBT();
+  const combine = (opts: btc.TxOpts) => {
+    const first = btc.Transaction.fromPSBT(plain, opts);
+    first.combine(btc.Transaction.fromPSBT(metadata, { unknown: 'ignore', proprietary: 'ignore' }));
+    return extensionState(first.toPSBT(2));
+  };
+  deepStrictEqual(
+    [
+      combine({ unknown: 'ignore', proprietary: 'ignore' }),
+      combine({ unknown: 'strip', proprietary: 'strip' }),
+    ],
+    [
+      extensionExpected(EXT_UNKNOWN, EXT_PROPRIETARY, 0b1011),
+      extensionExpected(undefined, undefined, 3),
+    ]
+  );
+  const strict = btc.Transaction.fromPSBT(extensionPSBT(false, 3), {
+    unknown: 'strict',
+    proprietary: 'strict',
+  });
+  const strictMetadata = extensionPSBT(true, 3);
+  throws(
+    () =>
+      strict.combine(
+        btc.Transaction.fromPSBT(strictMetadata, {
+          unknown: 'ignore',
+          proprietary: 'ignore',
+        })
+      ),
+    /unknown PSBT field/
+  );
+  throws(
+    () =>
+      btc.PSBTCombine([extensionPSBT(false, 3), strictMetadata], {
+        unknown: 'strict',
+        proprietary: 'strict',
+      }),
+    /unknown PSBT field/
+  );
+});
+
+it('serialization and finalization reapply unknown and proprietary modes', () => {
+  const inject = (tx: btc.Transaction, all = true) => {
+    tx.global.unknown = EXT_UNKNOWN as any;
+    tx.global.proprietary = EXT_PROPRIETARY as any;
+    tx.global.txModifiable = 0b1011;
+    tx.inputs[0].unknown = EXT_UNKNOWN as any;
+    tx.inputs[0].proprietary = EXT_PROPRIETARY as any;
+    if (all) {
+      tx.outputs[0].unknown = EXT_UNKNOWN as any;
+      tx.outputs[0].proprietary = EXT_PROPRIETARY as any;
+    }
+  };
+  const serialize = (opts: btc.TxOpts) => {
+    const tx = btc.Transaction.fromPSBT(extensionPSBT(false, 3), opts);
+    inject(tx);
+    return extensionState(tx.toPSBT(2));
+  };
+  deepStrictEqual(
+    [
+      serialize({ unknown: 'ignore', proprietary: 'ignore' }),
+      serialize({ unknown: 'strip', proprietary: 'strip' }),
+    ],
+    [
+      extensionExpected(EXT_UNKNOWN, EXT_PROPRIETARY, 0b1011),
+      extensionExpected(undefined, undefined, 3),
+    ]
+  );
+  throws(() => serialize({ unknown: 'strict', proprietary: 'strict' }), /unknown PSBT field/);
+
+  const finalize = (opts: btc.TxOpts) => {
+    const tx = btc.Transaction.fromPSBT(extensionPSBT(false, 3), opts);
+    tx.signIdx(EXT_PRIV, 0);
+    inject(tx, false);
+    tx.finalizeIdx(0);
+    return {
+      unknown: tx.getInput(0).unknown,
+      proprietary: tx.getInput(0).proprietary,
+      txModifiable: tx.global.txModifiable,
+    };
+  };
+  deepStrictEqual(
+    [
+      finalize({ unknown: 'ignore', proprietary: 'ignore' }),
+      finalize({ unknown: 'strip', proprietary: 'strip' }),
+    ],
+    [
+      { unknown: EXT_UNKNOWN, proprietary: EXT_PROPRIETARY, txModifiable: 0b1011 },
+      { unknown: undefined, proprietary: undefined, txModifiable: 3 },
+    ]
+  );
+  const strict = btc.Transaction.fromPSBT(extensionPSBT(false, 3), {
+    unknown: 'strict',
+    proprietary: 'strict',
+  });
+  strict.signIdx(EXT_PRIV, 0);
+  inject(strict, false);
+  const before = strict.getInput(0);
+  throws(() => strict.finalizeIdx(0), /unknown PSBT field/);
+  deepStrictEqual(strict.getInput(0), before);
+});
+
+it('proprietary ignore mode preserves input records during finalization', () => {
+  const finalize = (opts: btc.TxOpts = {}, records = EXT_FINAL_PROPRIETARY) => {
+    const tx = extensionTx(opts);
+    // Existing records may arrive through parsing or another participant. Inject here so this
+    // remains a finalizer-policy test rather than a direct-add policy test.
+    tx.inputs[0].proprietary = records;
+    tx.signIdx(EXT_PRIV, 0);
+    tx.finalizeIdx(0);
+    return tx.getInput(0).proprietary;
+  };
+
+  deepStrictEqual(
+    [finalize(), finalize({ proprietary: 'ignore' }), finalize({ proprietary: 'ignore' }, [])],
+    [undefined, EXT_FINAL_PROPRIETARY, undefined]
+  );
+});
+
+it('proprietary ignore mode preserves input records during finalized combination', () => {
+  const combine = (opts: btc.TxOpts = {}) => {
+    const { finalized, metadata } = extensionPair(opts);
+    // BIP174 §Combiner requires merging all key-value pairs; the explicit opt-in retains opaque
+    // protocol records while finalized signing metadata is cleaned.
+    // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#combiner
+    finalized.combine(metadata);
+    return finalized.getInput(0).proprietary;
+  };
+
+  deepStrictEqual(
+    [combine(), combine({ proprietary: 'ignore' })],
+    [undefined, EXT_FINAL_PROPRIETARY]
+  );
+});
+
+it('PSBTCombine forwards proprietary mode to finalized combination', () => {
+  const combine = (opts: btc.TxOpts = {}) => {
+    const { finalized, metadata } = extensionPair(opts);
+    const combined = btc.PSBTCombine([finalized.toPSBT(), metadata.toPSBT()], opts);
+    return btc.Transaction.fromPSBT(combined, opts).getInput(0).proprietary;
+  };
+
+  // The convenience helper must expose the same cleanup policy as direct Transaction.combine().
+  deepStrictEqual(
+    [combine(), combine({ proprietary: 'ignore' })],
+    [undefined, EXT_FINAL_PROPRIETARY]
+  );
+});
+
+it('Transaction.combine treats an unsigned scriptSig placeholder as absent', () => {
+  const priv = new Uint8Array(32).fill(1);
+  const spend = btc.p2pkh(pubECDSA(priv));
+  const opts = { allowLegacyWitnessUtxo: true };
+  const base = new btc.Transaction(opts);
+  base.addInput({
+    txid: new Uint8Array(32),
+    index: 0,
+    witnessUtxo: { script: spend.script, amount: 2n },
+  });
+  base.addOutput({ script: spend.script, amount: 1n });
+  const bytes = base.toPSBT();
+  const finalized = btc.Transaction.fromPSBT(bytes, opts);
+  finalized.signIdx(priv, 0);
+  finalized.finalizeIdx(0);
+  const expected = finalized.getInput(0);
+
+  for (const finalizedFirst of [false, true]) {
+    const unsigned = btc.Transaction.fromPSBT(bytes, opts);
+    const pair = finalizedFirst ? [finalized.clone(), unsigned] : [unsigned, finalized.clone()];
+    pair[0].combine(pair[1]);
+    deepStrictEqual(pair[0].getInput(0), expected);
+  }
+
+  const conflicting = finalized.clone();
+  conflicting.inputs[0].finalScriptSig![0] ^= 1;
+  throws(
+    () => finalized.clone().combine(conflicting),
+    /Cannot combine conflicting field=finalScriptSig/
+  );
+});
+
 it('PSBTCombine upgrades same-transaction inputs to the highest PSBT version', () => {
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
   const spend = btc.p2wpkh(pub);
@@ -3215,13 +4659,81 @@ it('PSBTCombine upgrades same-transaction inputs to the highest PSBT version', (
   tx.addOutput({ script: spend.script, amount: 1n });
   const v0 = tx.toPSBT(0);
   const v2 = tx.toPSBT(2);
+  const explicitV0 = RawPSBTV0.decode(v0);
+  explicitV0.global.version = 0;
+  const explicitV0Bytes = RawPSBTV0.encode(explicitV0);
   const exp = btc.Transaction.fromPSBT(v2).toPSBT(2);
   for (const pair of [
     [v0, v2],
     [v2, v0],
+    [explicitV0Bytes, v2],
+    [v2, explicitV0Bytes],
   ]) {
     const comb = btc.PSBTCombine(pair);
-    deepStrictEqual(btc.Transaction.fromPSBT(comb).toPSBT(2), exp);
+    deepStrictEqual(comb, exp);
+  }
+  // An explicit output version applies even when every imported participant uses an older version.
+  deepStrictEqual(
+    btc.Transaction.fromPSBT(btc.PSBTCombine([v0], { PSBTVersion: 2 })).opts.PSBTVersion,
+    2
+  );
+  const single = tx.clone();
+  single.updateInput(0, { sighashType: btc.SigHash.SINGLE });
+  single.signIdx(new Uint8Array(32).fill(1), 0, [btc.SigHash.SINGLE]);
+  // BIP370 requires v2 signers to advertise the presence of SIGHASH_SINGLE in bit 2.
+  // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#signer
+  deepStrictEqual(
+    RawPSBTV2.decode(btc.PSBTCombine([single.toPSBT(0)], { PSBTVersion: 2 })).global.txModifiable,
+    4
+  );
+});
+
+it('Transaction.combine derives PSBTv2 mutability from PSBTv0 signatures', () => {
+  const priv = new Uint8Array(32).fill(1);
+  const spend = btc.p2wpkh(pubECDSA(priv));
+  const make = (PSBTVersion: 0 | 2) => {
+    const tx = new btc.Transaction({ PSBTVersion });
+    tx.addInput({
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { script: spend.script, amount: 2n },
+    });
+    tx.addOutput({ script: spend.script, amount: 1n });
+    return tx;
+  };
+  for (const [sighash, expected] of [
+    [btc.SigHash.ALL, 0],
+    [btc.SigHash.ALL_ANYONECANPAY, 1],
+    [btc.SigHash.NONE, 2],
+    [btc.SigHash.NONE_ANYONECANPAY, 3],
+    [btc.SigHash.SINGLE, 4],
+    [btc.SigHash.SINGLE_ANYONECANPAY, 5],
+  ] as const) {
+    const signedV0 = make(0);
+    // The signIdx argument is a safety allowlist; PSBT_IN_SIGHASH_TYPE selects the actual sighash.
+    signedV0.updateInput(0, { sighashType: sighash });
+    signedV0.signIdx(priv, 0, [sighash]);
+    const encodings = [signedV0.toPSBT(0), make(2).toPSBT(2)];
+    for (const pair of [encodings, encodings.slice().reverse()]) {
+      const combined = btc.Transaction.fromPSBT(pair[0]);
+      combined.combine(btc.Transaction.fromPSBT(pair[1]));
+      // Cross-version combination is a library extension, but its promoted v2 result must apply
+      // BIP370 §Signer mutability rules to signatures imported from the v0 input map.
+      // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#signer
+      deepStrictEqual(RawPSBTV2.decode(combined.toPSBT(2)).global.txModifiable, expected);
+    }
+  }
+
+  const finalizedV0 = make(0);
+  finalizedV0.signIdx(priv, 0);
+  finalizedV0.finalizeIdx(0);
+  const finalizedEncodings = [finalizedV0.toPSBT(0), make(2).toPSBT(2)];
+  for (const pair of [finalizedEncodings, finalizedEncodings.slice().reverse()]) {
+    const combined = btc.Transaction.fromPSBT(pair[0]);
+    combined.combine(btc.Transaction.fromPSBT(pair[1]));
+    // BIP174 finalization removes the partial-signature records, so promotion cannot recover the
+    // final satisfaction's sighashes and must advertise conservative v2 mutation permissions.
+    deepStrictEqual(RawPSBTV2.decode(combined.toPSBT(2)).global.txModifiable, 0);
   }
 });
 
@@ -3259,21 +4771,6 @@ it('representable PSBTv2 state downgrades back to PSBTv0', () => {
   deepStrictEqual(mixed.toPSBT(0), v0);
 });
 
-it('PSBTv2-only globals still reject PSBTv0 export', () => {
-  const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
-  const spend = btc.p2wpkh(pub);
-  const tx = new btc.Transaction();
-  tx.addInput({
-    txid: new Uint8Array(32),
-    index: 0,
-    witnessUtxo: { script: spend.script, amount: 2n },
-  });
-  tx.addOutput({ script: spend.script, amount: 1n });
-  const psbt = btc.Transaction.fromPSBT(tx.toPSBT(2));
-  psbt.global.txModifiable = 1;
-  throws(() => psbt.toPSBT(0), /txModifiable/);
-});
-
 it('PSBT downgrade preserves proprietary globals', () => {
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
   const spend = btc.p2wpkh(pub);
@@ -3284,10 +4781,11 @@ it('PSBT downgrade preserves proprietary globals', () => {
     witnessUtxo: { script: spend.script, amount: 2n },
   });
   tx.addOutput({ script: spend.script, amount: 1n });
-  const psbt = btc.Transaction.fromPSBT(tx.toPSBT(2));
+  const opts = { proprietary: 'ignore' as const };
+  const psbt = btc.Transaction.fromPSBT(tx.toPSBT(2), opts);
   psbt.global.proprietary = [[new Uint8Array([1, 2, 3]), new Uint8Array([4, 5])]];
   deepStrictEqual(
-    btc.Transaction.fromPSBT(psbt.toPSBT(0)).global.proprietary,
+    btc.Transaction.fromPSBT(psbt.toPSBT(0), opts).global.proprietary,
     psbt.global.proprietary
   );
 });
@@ -3337,6 +4835,61 @@ it('GH-100: end-of-buffer psbt', () => {
   deepStrictEqual(new btc.Transaction().toPSBT(0), coreEmpty);
   // NOTE: bitcoinjs does very strange things (including silently fallback into PSBTv2) and generates non-valid PSBT which
   // cannot be parsed by bitcoin-cli
+});
+
+it('PSBTv0 default serialization matches Bitcoin Core map counts', () => {
+  // Generated by current Core's in-process PSBT implementation. Main emits the same three
+  // bytestrings.
+  const core = [
+    'cHNidP8BAAoCAAAAAAAAAAAAAA==',
+    'cHNidP8BADMCAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAAAAAA==',
+    'cHNidP8BACkCAAAAAAEBAAAAAAAAABYAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+  ].map(base64.decode);
+  const empty = new btc.Transaction();
+  const input = new btc.Transaction();
+  input.addInput({ txid: new Uint8Array(32), index: 0 });
+  const output = new btc.Transaction();
+  output.addOutput({
+    amount: BigInt(1),
+    script: hex.decode('00140000000000000000000000000000000000000000'),
+  });
+  const generated = [empty, input, output].map((tx) => tx.toPSBT(0));
+  deepStrictEqual(generated, core);
+  deepStrictEqual(
+    core.map((psbt) => btc.Transaction.fromPSBT(psbt).toPSBT(0)),
+    core
+  );
+});
+
+it('PSBTv0 decoder accepts bip174js empty and main-compatible input-only padding', () => {
+  // bip174 v3 emits both a phantom input and output map for empty PSBTs. Main's compatibility
+  // serializer successfully emits the same trailing output-map byte for input-only PSBTs.
+  const produced = [
+    'cHNidP8BAAoCAAAAAAAAAAAAAAAA',
+    'cHNidP8BADMCAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAAAAAAA=',
+  ].map(base64.decode);
+  const canonical = [
+    'cHNidP8BAAoCAAAAAAAAAAAAAA==',
+    'cHNidP8BADMCAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD/////AAAAAAAAAA==',
+  ].map(base64.decode);
+  deepStrictEqual(
+    produced.map((psbt) => btc.Transaction.fromPSBT(psbt).toPSBT(0)),
+    canonical
+  );
+});
+
+it('PSBTv0 decoder preserves bip174js output metadata after its phantom input map', () => {
+  // With zero inputs bip174 v3 serializes one empty input map before the declared output maps.
+  // Decoding by output count alone must not shift or discard the real output's metadata.
+  const canonical = base64.decode(
+    'cHNidP8BACoCAAAAAAEBAAAAAAAAABepFFD3SElzQjevr14BR3IhHX/O4C9UhwAAAAAAAQAZdqkU' +
+      'o8ax7kpJ2fKvOzgCl0dE+6kkFkqIrAA='
+  );
+  const produced = base64.decode(
+    'cHNidP8BACoCAAAAAAEBAAAAAAAAABepFFD3SElzQjevr14BR3IhHX/O4C9UhwAAAAAAAAEAGXap' +
+      'FKPGse5KSdnyrzs4ApdHRPupJBZKiKwA'
+  );
+  deepStrictEqual(btc.Transaction.fromPSBT(produced).toPSBT(0), canonical);
 });
 
 it('bip174jsCompat serializes zero-count PSBT maps without phantom inputs', () => {

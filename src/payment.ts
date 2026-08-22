@@ -428,6 +428,28 @@ export const OutScript: TRet<
 >;
 /** Type of the output-script coder. */
 export type OutScriptType = typeof OutScript;
+// Internal raw-aware boundary for actual scriptPubKeys and P2SH-nested witness programs. Generic
+// OutScript remains semantic because witnessScript and tapscript children may use the same opcodes
+// without claiming BIP141 witness-program framing.
+export const _WitnessOutScript: OutScriptType = /* @__PURE__ */ (() =>
+  Object.freeze(
+    P.wrap<P.UnwrapCoder<typeof _OutScript>>({
+      encodeStream: (w, value) => OutScript.encodeStream(w, value),
+      decodeStream: (r) => {
+        const raw = r.bytes(r.leftBytes);
+        const out = OutScript.decode(raw);
+        // Script.decode normalizes push opcodes, but BIP141 recognition requires the exact direct
+        // push. Reject only when this explicit outer-program boundary is selected by the caller.
+        if (
+          out &&
+          (out.type === 'p2a' || out.type === 'wpkh' || out.type === 'wsh' || out.type === 'tr') &&
+          !u.equalBytes(raw, OutScript.encode(out))
+        )
+          throw new Error('OutScript: non-canonical witness program');
+        return out;
+      },
+    })
+  ))() as OutScriptType;
 // TRet-wrapping OutScript changes decode() to the normalized descriptor surface, but the local
 // checkScript/Address caches still need an explicit alias that can carry the decode-side `undefined`.
 type AddressValue = NonNullable<ReturnType<OutScriptType['decode']>>;
@@ -472,7 +494,7 @@ export function checkScript(
   let hasWsh = false;
   let r: OutScriptValue = undefined;
   if (script) {
-    const s = OutScript.decode(script);
+    const s = _WitnessOutScript.decode(script);
     // BIP174 Data Signers Check For bullets: provided redeemScript must match
     // the scriptPubKey, and provided witnessScript must match the scriptPubKey
     // or redeemScript instead of being silently ignored as stray metadata.
@@ -483,7 +505,7 @@ export function checkScript(
       if (s.type !== 'sh') throw new Error('checkScript: redeemScript without P2SH');
       if (!u.equalBytes(s.hash, u.hash160(redeemScript)))
         throw new Error('checkScript: sh wrong redeemScript hash');
-      r = OutScript.decode(redeemScript) as OutScriptValue;
+      r = _WitnessOutScript.decode(redeemScript) as OutScriptValue;
       if (r?.type === 'tr' || r?.type === 'tr_ns' || r?.type === 'tr_ms')
         throw new Error(`checkScript: P2${r.type} cannot be wrapped in P2SH`);
       // Not sure if this unspendable, but we cannot represent this via PSBT
@@ -495,7 +517,7 @@ export function checkScript(
     }
   }
   if (redeemScript) {
-    if (r === undefined) r = OutScript.decode(redeemScript) as OutScriptValue;
+    if (r === undefined) r = _WitnessOutScript.decode(redeemScript) as OutScriptValue;
     if (r?.type === 'wsh') {
       hasWsh = true;
       if (witnessScript) checkWSH(r as TArg<OutWSHType>, witnessScript);
@@ -620,10 +642,30 @@ export type P2SHWithoutWitness = Omit<P2SHBase, 'witnessScript'>;
 export type P2SHReturn<T extends P2Ret> = T extends { witnessScript: Bytes }
   ? P2SHWithWitness
   : P2SHWithoutWitness;
+
+const checkCanonicalScript = (
+  script: TArg<Bytes>,
+  name: 'redeemScript' | 'witnessScript',
+  allowNonCanonicalScript: boolean
+): void => {
+  if (allowNonCanonicalScript) return;
+  const decoded = Script.decode(script);
+  const nonMinimalNumber = decoded.some(
+    (op) => u.isBytes(op) && op.length === 1 && ((1 <= op[0] && op[0] <= 16) || op[0] === 0x81)
+  );
+  // Core's default MINIMALDATA policy rejects these spends from its mempool, so address-producing
+  // helpers require an explicit opt-in even though the original bytes remain consensus-valid.
+  if (nonMinimalNumber || !u.equalBytes(script, Script.encode(decoded))) {
+    const wrapper = name === 'redeemScript' ? 'P2SH' : 'P2WSH';
+    throw new Error(`${wrapper}: non-canonical ${name}`);
+  }
+};
+
 /**
  * Wraps a child script inside P2SH.
  * @param child - child payment descriptor to wrap
  * @param network - address network parameters
+ * @param allowNonCanonicalScript - whether to create an address for a non-minimal child script
  * @returns P2SH descriptor preserving witness metadata when present.
  * @throws If the wrapped script combination is invalid or unsupported. {@link Error}
  * @example
@@ -636,7 +678,8 @@ export type P2SHReturn<T extends P2Ret> = T extends { witnessScript: Bytes }
  */
 export const p2sh = <T extends P2Ret>(
   child: TArg<T>,
-  network: BTC_NETWORK = NETWORK
+  network: BTC_NETWORK = NETWORK,
+  allowNonCanonicalScript = false
 ): TRet<Extends<P2SHReturn<T>, P2Ret>> => {
   u.validateObject(child as Record<string, any>, {}, {}, 'child');
   // It is already tested inside noble-hashes and checkScript
@@ -649,6 +692,7 @@ export const p2sh = <T extends P2Ret>(
     throw new Error(
       `P2SH: redeemScript exceeds ${MAX_SCRIPT_BYTE_LENGTH}-byte push limit: len=${cs.length}`
     );
+  checkCanonicalScript(cs, 'redeemScript', allowNonCanonicalScript);
   const hash = u.hash160(cs);
   const out = { type: 'sh', hash } as const;
   const script = OutScript.encode(out);
@@ -691,6 +735,7 @@ export type P2WSH = {
  * Wraps a child script inside native SegWit P2WSH.
  * @param child - child payment descriptor to wrap
  * @param network - address network parameters
+ * @param allowNonCanonicalScript - whether to create an address for a non-minimal child script
  * @returns P2WSH descriptor.
  * @throws If the wrapped script combination is invalid or unsupported. {@link Error}
  * @example
@@ -703,7 +748,8 @@ export type P2WSH = {
  */
 export const p2wsh = (
   child: TArg<P2Ret>,
-  network: BTC_NETWORK = NETWORK
+  network: BTC_NETWORK = NETWORK,
+  allowNonCanonicalScript = false
 ): TRet<Extends<P2WSH, P2Ret>> => {
   u.validateObject(child as Record<string, any>, {}, {}, 'child');
   const cs = child.script;
@@ -711,6 +757,7 @@ export const p2wsh = (
   // BIP141 P2WSH says the witness "must consist of ... a serialized script (witnessScript)"
   // and that witnessScript is limited to 10,000 bytes, so larger wrapped scripts must reject.
   if (cs.length > 10000) throw new Error('P2WSH: witnessScript exceeds 10,000 bytes');
+  checkCanonicalScript(cs, 'witnessScript', allowNonCanonicalScript);
   const hash = u.sha256(cs);
   const script = OutScript.encode({ type: 'wsh', hash });
   checkScript(script, undefined, cs);
@@ -1098,6 +1145,7 @@ export type P2TRRet<T> = T extends TaprootScriptTree ? P2TR_TREE : P2TR;
  * @param customScripts - optional custom script codecs for taproot leaves
  * @returns Taproot descriptor with optional script-path metadata.
  * @throws If the internal key or taproot script tree is invalid. {@link Error}
+ * @throws If a numeric script value is outside its supported range. {@link RangeError}
  * @example
  * Combine script leaves into a final taproot output descriptor and address.
  * ```ts
@@ -1207,6 +1255,7 @@ const combinationCount = (n: number, m: number): number => {
  * @param maxCombinations - maximum result rows to materialize
  * @returns Array of combinations.
  * @throws If the combination size or input list is invalid. {@link Error}
+ * @throws If the requested result exceeds the materialization limit. {@link RangeError}
  * @example
  * Enumerate all size-two subsets of a short list.
  * ```ts
@@ -1272,6 +1321,7 @@ export type P2TR_NS = {
  * @param allowSamePubkeys - whether duplicate keys are allowed
  * @returns Array of taproot leaf descriptors.
  * @throws If the taproot multisig parameters are invalid. {@link Error}
+ * @throws If the requested leaf set exceeds the materialization limit. {@link RangeError}
  * @example
  * Build the leaf set for an M-of-N taproot `CHECKSIGVERIFY` policy.
  * ```ts
@@ -1314,6 +1364,7 @@ export type P2TR_PK = P2TR_NS;
  * @param pubkey - Schnorr public key
  * @returns Taproot single-key leaf descriptor.
  * @throws If the taproot single-key leaf cannot be encoded. {@link Error}
+ * @throws If the delegated leaf policy exceeds its supported range. {@link RangeError}
  * @example
  * Build a single-key tapscript leaf.
  * ```ts
@@ -1367,6 +1418,7 @@ export function p2tr_ms(
  * @param network - address network parameters
  * @returns Encoded Bitcoin address.
  * @throws If the requested address type is unknown. {@link Error}
+ * @throws If a key-derived script value is outside its supported range. {@link RangeError}
  * @example
  * Pick the output type first, then derive the matching address from the private key.
  * ```ts

@@ -1,7 +1,14 @@
 import { hex } from '@scure/base';
 import { anumber } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
-import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.ts';
+import {
+  Address,
+  type CustomScript,
+  OutScript,
+  _WitnessOutScript,
+  checkScript,
+  tapLeafHash,
+} from './payment.ts';
 import * as psbt from './psbt.ts';
 import {
   CompactSizeLen,
@@ -10,6 +17,7 @@ import {
   RawInput,
   RawOutput,
   RawTx,
+  RawWitness,
   Script,
   scriptPushLen,
   VarBytes,
@@ -36,9 +44,6 @@ const EMPTY_OUTPUT: P.UnwrapCoder<typeof RawOutput> = {
   amount: U64_MAX,
   script: P.EMPTY,
 };
-const PSBT_TX_MODIFIABLE_INPUTS = 1 << 0;
-const PSBT_TX_MODIFIABLE_OUTPUTS = 1 << 1;
-const PSBT_TX_HAS_SIGHASH_SINGLE = 1 << 2;
 /**
  * Converts transaction weight units into virtual bytes.
  * @param weight - transaction weight
@@ -167,6 +172,8 @@ export function cloneDeep<T>(obj: T): T {
 
 // Mostly security features, hardened defaults;
 // but you still can parse other people tx with unspendable outputs and stuff if you want
+/** PSBT unknown/proprietary-field handling policy. */
+export type Unknowns = psbt.Unknowns;
 /** Transaction construction and parsing options. */
 export interface TxOpts {
   /** Transaction version to place into new transactions and imported PSBTs. */
@@ -216,8 +223,20 @@ export interface TxOpts {
   lowR?: boolean;
   /** UNSAFE: additional custom payment-script codecs and finalizers. */
   customScripts?: CustomScript[];
-  // Allow to add additional unknown keys/values to the "unknown" array member
-  /** Preserve unknown PSBT key/value pairs instead of stripping them. */
+  /** Unknown PSBT field policy. Defaults to `strip`. */
+  unknown?: Unknowns;
+  /** Proprietary PSBT field policy. Defaults to the resolved {@link unknown} policy. */
+  proprietary?: Unknowns;
+  /**
+   * Treat an absent PSBTv2 transaction-modifiable field as allowing input/output changes. Older
+   * scure versions emitted PSBTv2 without this field, so this opts out of strict BIP370 behavior
+   * when upgrading and editing their PSBTs.
+   */
+  allowMissingTxModifiable?: boolean;
+  /**
+   * Deprecated alias for {@link unknown}: true selects `ignore`, false selects `strip`.
+   * @deprecated Use `unknown`.
+   */
   allowUnknown?: boolean;
 }
 
@@ -330,13 +349,65 @@ export function inputBeforeSign(i: TArg<psbt.TransactionInput>): TRet<Transactio
   RawInput.encode(res);
   return res as TRet<TransactionInputRequired>;
 }
-function cleanFinalInput(i: TArg<PSBTInputs>) {
+type ExtensionMap = { unknown?: unknown[]; proprietary?: unknown[] };
+const cleanExtensions = <T extends ExtensionMap>(
+  map: T,
+  unknownMode: Unknowns,
+  proprietaryMode: Unknowns,
+  rejectStrip = false
+): T => {
+  const out = { ...map } as T & Record<string, unknown>;
+  for (const [name, mode] of [
+    ['unknown', unknownMode],
+    ['proprietary', proprietaryMode],
+  ] as const) {
+    const value = out[name];
+    // Policy cleanup must not reinterpret malformed caller metadata as an empty keyed map.
+    if (value !== undefined) u.aarray(value, `${name} PSBT field`);
+    const rows = value as unknown[] | undefined;
+    if (!rows?.length) {
+      delete out[name];
+      continue;
+    }
+    if (mode === 'strict')
+      throw new Error(`PSBT: ${name} PSBT field is not allowed in strict mode`);
+    if (mode === 'strip') {
+      // Silent stripping is appropriate at relay/cleanup boundaries. On direct mutation it would
+      // hide a caller bug by accepting metadata that can never become transaction state.
+      if (rejectStrip)
+        throw new Error(`PSBT: ${name} PSBT field cannot be supplied when policy is strip`);
+      delete out[name];
+    }
+  }
+  return out;
+};
+
+const cleanTxModifiable = (value: number | undefined, mode: Unknowns): number | undefined => {
+  if (value === undefined || !(value & ~0b111)) return value;
+  if (mode === 'strict') throw new Error('PSBT: unknown txModifiable bits in strict mode');
+  return mode === 'strip' ? value & 0b111 : value;
+};
+
+function cleanFinalInput(
+  i: TArg<PSBTInputs>,
+  unknownMode: Unknowns = 'strip',
+  proprietaryMode: Unknowns = 'strip'
+) {
   const _i = i as PSBTInputs;
+  const extensions = cleanExtensions(_i as ExtensionMap, unknownMode, proprietaryMode);
+  if (extensions.unknown) _i.unknown = extensions.unknown as PSBTInputs['unknown'];
+  else delete _i.unknown;
+  if (extensions.proprietary) _i.proprietary = extensions.proprietary as PSBTInputs['proprietary'];
+  else delete _i.proprietary;
   // BIP174 finalizers clear non-final input metadata after constructing final scripts/witnesses.
   // That intentionally drops sighashType here, so post-finalize mutation becomes conservative
-  // until callers explicitly reopen the input by removing finalScriptSig/finalScriptWitness.
+  // until callers explicitly clear satisfaction by removing finalScriptSig/finalScriptWitness.
   for (const _k in _i) {
     const k = _k as keyof PSBTInputs;
+    // Proprietary records are cleanup metadata too, but callers may need their opaque protocol
+    // state after finalization for PSBT coordination outside transaction extraction. An empty
+    // keyed list encodes no records, so canonicalize it to absence like its serialized clone.
+    if (proprietaryMode === 'ignore' && k === 'proprietary' && _i.proprietary?.length) continue;
     if (!psbt.PSBTInputFinalKeys.includes(k)) delete _i[k];
   }
 }
@@ -358,6 +429,25 @@ function unpackSighash(hashType: number) {
     isSingle: masked === SignatureHash.SINGLE,
   };
 }
+
+const sighashScope = (sighash: number) => ({
+  sigInputs: sighash & SignatureHash.ANYONECANPAY,
+  sigOutputs: sighash === SignatureHash.DEFAULT ? SignatureHash.ALL : sighash & 0b11,
+});
+
+const normalizeUnknowns = (
+  name: 'unknown' | 'proprietary',
+  mode: Unknowns | undefined,
+  legacy: boolean | undefined,
+  fallback: Unknowns = 'strip'
+): Unknowns => {
+  const alias = legacy === undefined ? undefined : legacy ? 'ignore' : 'strip';
+  if (mode !== undefined && mode !== 'ignore' && mode !== 'strip' && mode !== 'strict')
+    throw new Error(`Transaction options wrong value: ${name}=${mode}`);
+  if (mode !== undefined && alias !== undefined && mode !== alias)
+    throw new Error(`Transaction options: conflicting ${name} options`);
+  return mode || alias || fallback;
+};
 
 function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
   if (opts !== undefined) validateObject(opts as Record<string, any>, {}, {}, 'opts');
@@ -391,12 +481,16 @@ function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
     'allowLegacyWitnessUtxo',
     'strictPrevoutValidation',
     'lowR',
+    'allowUnknown',
+    'allowMissingTxModifiable',
   ] as const) {
     const v = _opts[k];
     if (v === undefined) continue; // optional
     if (typeof v !== 'boolean')
       throw new Error(`Transation options wrong type: ${k}=${v} (${typeof v})`);
   }
+  _opts.unknown = normalizeUnknowns('unknown', _opts.unknown, _opts.allowUnknown);
+  _opts.proprietary = normalizeUnknowns('proprietary', _opts.proprietary, undefined, _opts.unknown);
   // 0 and -1 happens in tests
   // With allowUnknownVersion any numeric version is fine; the ternary was inverted
   // before 2026-07 (audit), which made the option throw for every numeric version.
@@ -424,19 +518,24 @@ function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
   return Object.freeze(_opts) as TRet<Readonly<TxOpts>>;
 }
 
-function checkTaprootInputCommitments(input: PSBTInputs, prevScript: Bytes): void {
-  const output = OutScript.decode(prevScript);
+function checkTaprootInputCommitments(input: TArg<PSBTInputs>, prevScript: TArg<Bytes>): void {
+  const output = _WitnessOutScript.decode(prevScript);
   const hasTaprootCommitments =
     input.tapInternalKey !== undefined ||
     input.tapMerkleRoot !== undefined ||
-    input.tapLeafScript !== undefined;
+    // Repeated keyed fields only exist on the PSBT wire when at least one entry is encoded.
+    !!input.tapLeafScript?.length;
   if (output.type !== 'tr') {
     if (hasTaprootCommitments)
       throw new Error('validateInput: Taproot metadata without P2TR previous output');
     return;
   }
 
-  const checkOutputKey = (internalKey: Bytes, merkleRoot: Bytes, parity?: number): void => {
+  const checkOutputKey = (
+    internalKey: TArg<Bytes>,
+    merkleRoot: TArg<Bytes>,
+    parity?: number
+  ): void => {
     const [outputKey, outputParity] = u.taprootTweakPubkey(internalKey, merkleRoot);
     if (!equalBytes(outputKey, output.pubkey))
       throw new Error('validateInput: Taproot commitment does not match previous output');
@@ -471,7 +570,7 @@ function checkTaprootInputCommitments(input: PSBTInputs, prevScript: Bytes): voi
 }
 
 const LOCKTIME_THRESHOLD = 500_000_000;
-function validateRequiredLocktimes(input: PSBTInputs): void {
+function validateRequiredLocktimes(input: TArg<PSBTInputs>): void {
   const height = input.requiredHeightLocktime;
   if (height !== undefined) {
     anumber(height, 'requiredHeightLocktime');
@@ -490,7 +589,10 @@ function validateRequiredLocktimes(input: PSBTInputs): void {
   }
 }
 
-function resolvePSBTLocktime(inputs: readonly PSBTInputs[], fallback = DEFAULT_LOCKTIME): number {
+function resolvePSBTLocktime(
+  inputs: TArg<readonly PSBTInputs[]>,
+  fallback = DEFAULT_LOCKTIME
+): number {
   let height = DEFAULT_LOCKTIME;
   let time = DEFAULT_LOCKTIME;
   let hasRequirements = false;
@@ -574,6 +676,35 @@ export type PSBTInputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTInput>;
 /** Canonical PSBT output shape used by the coder layer. */
 export type PSBTOutputs = psbt.PSBTKeyMapKeys<typeof psbt.PSBTOutput>;
 
+type InputSignature = { sighash: number; taproot: boolean; scriptPath: boolean };
+
+const inputSignatures = (input: TArg<PSBTInputs>): InputSignature[] => {
+  const _input = input as PSBTInputs;
+  const res: InputSignature[] = [];
+  const add = (signature: TArg<Bytes>, taproot: boolean, scriptPath = false) => {
+    const sig = signature as Bytes;
+    if (!sig.length) return;
+    // Taproot's 64-byte encoding omits the SIGHASH_DEFAULT byte; every other PSBT signature
+    // carries its sighash in the final byte, including signatures imported from another signer.
+    const sighash = taproot && sig.length === 64 ? SignatureHash.DEFAULT : sig[sig.length - 1];
+    res.push({ sighash, taproot, scriptPath });
+  };
+  for (const [, signature] of _input.partialSig || []) add(signature, false);
+  if (_input.tapKeySig) add(_input.tapKeySig, true);
+  for (const [, signature] of _input.tapScriptSig || []) add(signature, true, true);
+  return res;
+};
+
+const inputSignedKeys = {
+  // sighashType is signer policy rather than a digest byte, but changing it after one signature
+  // exists would make later signers interpret the same input under a different policy.
+  self: ['txid', 'index', 'sequence', 'nonWitnessUtxo', 'witnessUtxo', 'sighashType'],
+  ecdsa: ['redeemScript', 'witnessScript'],
+  tapscript: ['tapLeafScript'],
+  cross: ['txid', 'index'],
+  prevout: ['nonWitnessUtxo', 'witnessUtxo'],
+} as const satisfies Record<string, readonly (keyof PSBTInputs)[]>;
+
 // Normalizes input
 /**
  * Extracts the previous output referenced by an input.
@@ -620,8 +751,11 @@ export function getPrevOut(input: TArg<psbt.TransactionInput>): P.UnwrapCoder<ty
  * @param cur - existing input value to merge with
  * @param allowedFields - fields that may still change on signed inputs
  * @param disableScriptCheck - whether to skip wrapper and Taproot commitment sanity checks
- * @param allowUnknown - whether to keep unknown PSBT fields
+ * @param unknown - handling policy for unknown PSBT fields
+ * @param proprietary - handling policy for proprietary PSBT fields
  * @returns Normalized PSBT input.
+ * @throws If the update conflicts with the existing input or its signatures. {@link Error}
+ * @throws If a numeric input field is outside its wire or protocol range. {@link RangeError}
  * @example
  * Accept hex txids from callers in the same display-order form used by `Transaction.id`, then
  * normalize them into the repo's internal `TransactionInput` shape.
@@ -640,7 +774,8 @@ export function normalizeInput(
   cur?: TArg<PSBTInputs>,
   allowedFields?: TArg<readonly (keyof PSBTInputs)[]>,
   disableScriptCheck = false,
-  allowUnknown = false
+  unknown: Unknowns | boolean = 'strip',
+  proprietary: Unknowns | boolean = 'strip'
 ): TRet<PSBTInputs> {
   validateObject(i as Record<string, any>, {}, {}, 'i');
   if (cur !== undefined) validateObject(cur as Record<string, any>, {}, {}, 'cur');
@@ -664,7 +799,17 @@ export function normalizeInput(
   if (!('nonWitnessUtxo' in _i) && res.nonWitnessUtxo === undefined) delete res.nonWitnessUtxo;
   if (res.sequence === undefined) res.sequence = DEFAULT_SEQUENCE;
   if (res.tapMerkleRoot === null) delete res.tapMerkleRoot;
-  res = psbt.mergeKeyMap(psbt.PSBTInput, res, _cur, _allowedFields, allowUnknown) as PSBTInputs;
+  res = psbt.mergeKeyMap(
+    psbt.PSBTInput,
+    res,
+    _cur,
+    _allowedFields,
+    unknown,
+    proprietary
+  ) as PSBTInputs;
+  // An actual empty repeated field emits no PSBT keypairs. Canonicalize only arrays so malformed
+  // falsy values still reach the PSBT coder's validation instead of becoming valid absence.
+  if (Array.isArray(res.tapLeafScript) && !res.tapLeafScript.length) delete res.tapLeafScript;
   validateRequiredLocktimes(res);
   // Public PSBT coder surface is wrapped with TArg/TRet for TS compatibility; normalizeInput keeps
   // the repo's historical raw internal shape and casts only at the validation boundary here.
@@ -705,7 +850,7 @@ export function getInputType(input: TArg<psbt.TransactionInput>, allowLegacyWitn
   let txType = 'legacy';
   let defaultSighash: number = SignatureHash.ALL;
   const prevOut = getPrevOut(_input as TArg<psbt.TransactionInput>);
-  const first = OutScript.decode(prevOut.script);
+  const first = _WitnessOutScript.decode(prevOut.script);
   let type = first.type;
   let cur = first;
   const stack = [first];
@@ -728,7 +873,7 @@ export function getInputType(input: TArg<psbt.TransactionInput>, allowLegacyWitn
     if (first.type === 'wpkh' || first.type === 'wsh') txType = 'segwit';
     if (first.type === 'sh') {
       if (!_input.redeemScript) throw new Error('inputType: sh without redeemScript');
-      let child = OutScript.decode(_input.redeemScript);
+      let child = _WitnessOutScript.decode(_input.redeemScript);
       if (child.type === 'wpkh' || child.type === 'wsh') txType = 'segwit';
       stack.push(child);
       cur = child;
@@ -794,12 +939,13 @@ export class Transaction {
   constructor(opts: TxOpts = {}) {
     const _opts = (this.opts = validateOpts(opts));
     // Merge with global structure of PSBTv2
-    if (_opts.lockTime !== DEFAULT_LOCKTIME) this.global.fallbackLocktime = _opts.lockTime;
+    // Bitcoin Core sets fallback even when it is zero. Matching its common encoding reduces the
+    // fingerprint of locally created PSBTv2s; imported PSBTs replace this map and retain omission.
+    this.global.fallbackLocktime = _opts.lockTime;
     this.global.txVersion = _opts.version;
     // A locally-created PSBTv2 is still under construction. Imported PSBTs replace this global
     // map below, so an omitted field there retains BIP370's immutable meaning.
-    if (_opts.PSBTVersion === 2)
-      this.global.txModifiable = PSBT_TX_MODIFIABLE_INPUTS | PSBT_TX_MODIFIABLE_OUTPUTS;
+    if (_opts.PSBTVersion === 2) this.global.txModifiable = 0b011;
   }
 
   private isPSBTv2(): boolean {
@@ -808,20 +954,47 @@ export class Transaction {
 
   private requireTxModifiable(bit: number, kind: 'inputs' | 'outputs'): void {
     if (!this.isPSBTv2()) return;
-    if (!((this.global.txModifiable ?? 0) & bit))
-      throw new Error(`PSBTv2: ${kind} are not modifiable`);
+    if (!(this.txModifiablePolicy() & bit)) throw new Error(`PSBTv2: ${kind} are not modifiable`);
   }
 
-  private updateTxModifiableAfterSignature(sighash: number): void {
-    if (!this.isPSBTv2()) return;
-    const hadField = this.global.txModifiable !== undefined;
-    let flags = this.global.txModifiable ?? 0;
-    const { isAny, isNone, isSingle } = unpackSighash(sighash);
-    if (!isAny) flags &= ~PSBT_TX_MODIFIABLE_INPUTS;
-    if (!isNone) flags &= ~PSBT_TX_MODIFIABLE_OUTPUTS;
-    if (isSingle) flags |= PSBT_TX_HAS_SIGHASH_SINGLE;
-    // Absence is the canonical encoding of an immutable field, except SINGLE must advertise bit 2.
-    if (hadField || flags !== 0) this.global.txModifiable = flags;
+  private txModifiablePolicy(
+    allowMissing = this.opts.allowMissingTxModifiable,
+    unknownMode = this.opts.unknown!
+  ): number {
+    if (!this.isPSBTv2()) return 0b011;
+    if (this.global.txModifiable !== undefined)
+      return cleanTxModifiable(this.global.txModifiable, unknownMode)!;
+    return allowMissing ? 0b011 : 0;
+  }
+
+  private modifiable(
+    allowMissing = this.opts.allowMissingTxModifiable,
+    unknownMode = this.opts.unknown!
+  ): number {
+    let flags = this.txModifiablePolicy(allowMissing, unknownMode);
+    let hasOpaqueFinal = false;
+    let hasSingle = false;
+    for (let idx = 0; idx < this.inputs.length; idx++) {
+      const signatures = inputSignatures(this.inputs[idx]);
+      if (!signatures.length && this.inputStatus(idx) === 'finalized') hasOpaqueFinal = true;
+      for (const { sighash } of signatures) {
+        const { isAny, isNone, isSingle } = unpackSighash(sighash);
+        if (!isAny) flags &= ~0b001;
+        if (!isNone) flags &= ~0b010;
+        if (isSingle) hasSingle = true;
+      }
+    }
+    // Bit 2 summarizes signatures rather than granting policy. Preserve an imported summary for
+    // opaque or externally managed state, and union in every signature visible to this object.
+    if (hasSingle) flags |= 0b100;
+    // PSBTv0 and legacy field-less PSBTv2 cannot describe an opaque finalized sighash. Promotion
+    // must therefore deny both mutations instead of manufacturing permissions from absence.
+    if (hasOpaqueFinal && this.global.txModifiable === undefined) flags &= ~0b011;
+    return flags;
+  }
+
+  private get txModifiable(): number {
+    return this.modifiable();
   }
 
   // Import
@@ -859,35 +1032,54 @@ export class Transaction {
     const tx = new Transaction({ ...opts, version, lockTime, PSBTVersion });
     // We need slice here, because otherwise
     const inputCount = PSBTVersion === 0 ? unsigned?.inputs.length : parsed.global.inputCount;
-    tx.inputs = parsed.inputs.slice(0, inputCount).map(
-      (i, j) =>
-        validateInput(
-          {
-            finalScriptSig: P.EMPTY,
-            ...parsed.global.unsignedTx?.inputs[j],
-            ...i,
-          },
-          tx.opts.disableScriptCheck
-        ) as PSBTInputs
-    );
+    tx.inputs = parsed.inputs.slice(0, inputCount).map((i, j) => {
+      const input = {
+        ...parsed.global.unsignedTx?.inputs[j],
+        ...i,
+      };
+      // The unsigned transaction's empty scriptSig is framing, not a PSBT_IN_FINAL_SCRIPTSIG
+      // record. Keeping it makes combination conflict with an otherwise identical finalized PSBT.
+      if (!i.finalScriptSig?.length) delete input.finalScriptSig;
+      return validateInput(input, tx.opts.disableScriptCheck) as PSBTInputs;
+    });
     const outputCount = PSBTVersion === 0 ? unsigned?.outputs.length : parsed.global.outputCount;
-    tx.outputs = parsed.outputs.slice(0, outputCount).map((i, j) => ({
+    // bip174js writes a phantom empty input map when a PSBTv0 transaction has zero inputs. Raw v0
+    // framing necessarily reads it as the first output map, so skip it before pairing real maps
+    // with the unsigned transaction's declared outputs.
+    const hasBip174InputMap =
+      PSBTVersion === 0 &&
+      inputCount === 0 &&
+      Object.keys(parsed.outputs[0] || {}).length === 0 &&
+      ((outputCount! > 0 && parsed.outputs.length === outputCount! + 1) ||
+        (outputCount === 0 &&
+          parsed.outputs.length === 2 &&
+          Object.keys(parsed.outputs[1]).length === 0));
+    const outputStart = hasBip174InputMap ? 1 : 0;
+    tx.outputs = parsed.outputs.slice(outputStart, outputStart + outputCount!).map((i, j) => ({
       ...i,
       ...parsed.global.unsignedTx?.outputs[j],
     }));
-    tx.global = { ...parsed.global, txVersion: version }; // just in case proprietary/unknown fields
+    const unknownMode = tx.opts.unknown!;
+    const proprietaryMode = tx.opts.proprietary!;
     // Unknown PSBT rows can carry opaque metadata between participants. The documented default is
     // to strip them; callers that need forward compatibility must opt in explicitly. Proprietary
-    // (0xfc) rows are recognized fields and remain intact under either policy.
-    if (!tx.opts.allowUnknown) {
-      delete tx.global.unknown;
-      for (const input of tx.inputs) delete input.unknown;
-      for (const output of tx.outputs) delete output.unknown;
-    }
+    // (0xfc) rows follow the same explicit policy, which defaults to the resolved unknown mode.
+    tx.global = cleanExtensions(
+      { ...parsed.global, txVersion: version },
+      unknownMode,
+      proprietaryMode
+    );
+    tx.inputs = tx.inputs.map((input) => cleanExtensions(input, unknownMode, proprietaryMode));
+    tx.outputs = tx.outputs.map((output) => cleanExtensions(output, unknownMode, proprietaryMode));
+    if (tx.global.txModifiable !== undefined)
+      tx.global.txModifiable = cleanTxModifiable(tx.global.txModifiable, unknownMode);
     // A high-level Transaction must have a determinable nLockTime. Raw PSBT coders can still be
     // used by callers that need to inspect or relay a structurally valid but incompatible PSBT.
     resolvePSBTLocktime(tx.inputs, tx.global.fallbackLocktime ?? DEFAULT_LOCKTIME);
-    if (lockTime !== DEFAULT_LOCKTIME) tx.global.fallbackLocktime = lockTime;
+    // PSBTv0 always provides nLockTime in its unsigned transaction. Retain zero internally too so
+    // promotion to v2 matches fresh construction and Bitcoin Core rather than gaining a
+    // fingerprint.
+    if (PSBTVersion === 0) tx.global.fallbackLocktime = def(lockTime, DEFAULT_LOCKTIME);
     return tx;
   }
   // Prefer `global.version` when present so cross-version combiners can serialize at the highest
@@ -904,12 +1096,16 @@ export class Transaction {
     //   );
     // }
     const inputs = this.inputs.map((i) =>
-      // For PSBTv0 the prevout txid/index live in global.unsignedTx rather than the input map, so
-      // validate the full transaction input before version filtering drops those fields.
-      psbt.cleanPSBTFields(
-        PSBTVersion,
-        psbt.PSBTInput,
-        validateInput(i, this.opts.disableScriptCheck) as TArg<PSBTInputs>
+      cleanExtensions(
+        // For PSBTv0 the prevout txid/index live in global.unsignedTx rather than the input map, so
+        // validate the full transaction input before version filtering drops those fields.
+        psbt.cleanPSBTFields(
+          PSBTVersion,
+          psbt.PSBTInput,
+          validateInput(i, this.opts.disableScriptCheck) as TArg<PSBTInputs>
+        ),
+        this.opts.unknown!,
+        this.opts.proprietary!
       )
     );
     for (const inp of inputs) {
@@ -918,8 +1114,16 @@ export class Transaction {
       if (inp.finalScriptSig && !inp.finalScriptSig.length) delete inp.finalScriptSig;
       if (inp.finalScriptWitness && !inp.finalScriptWitness.length) delete inp.finalScriptWitness;
     }
-    const outputs = this.outputs.map((i) => psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTOutput, i));
-    const global = { ...this.global };
+    const outputs = this.outputs.map((i) =>
+      cleanExtensions(
+        psbt.cleanPSBTFields(PSBTVersion, psbt.PSBTOutput, i),
+        this.opts.unknown!,
+        this.opts.proprietary!
+      )
+    );
+    const global = cleanExtensions({ ...this.global }, this.opts.unknown!, this.opts.proprietary!);
+    if (global.txModifiable !== undefined)
+      global.txModifiable = cleanTxModifiable(global.txModifiable, this.opts.unknown!);
     if (PSBTVersion === 0) {
       /*
       - Bitcoin raw transaction expects to have at least 1 input because it uses case with zero inputs as marker for SegWit
@@ -944,10 +1148,12 @@ export class Transaction {
       delete global.txVersion;
       // PSBTv0 carries the unsigned transaction as one blob, so the PSBTv2 framing fields must be
       // removed here. Keeping `global.version` would make validation treat this rebuilt v0 map as
-      // PSBTv2 and reject the required `unsignedTx` field.
+      // PSBTv2 and reject the required `unsignedTx` field. Transaction-modifiable is also v2-only;
+      // its restrictions remain represented by the signatures when explicitly converting to v0.
       delete global.inputCount;
       delete global.outputCount;
       delete global.version;
+      delete global.txModifiable;
     } else {
       // Cross-version merges and v0->v2 re-exports can still carry the PSBTv0 unsignedTx blob in
       // `this.global`, but PSBTv2 serializes the transaction through split global/input/output
@@ -957,8 +1163,13 @@ export class Transaction {
       global.txVersion = this.version;
       global.inputCount = this.inputs.length;
       global.outputCount = this.outputs.length;
-      if (global.fallbackLocktime && global.fallbackLocktime === DEFAULT_LOCKTIME)
-        delete global.fallbackLocktime;
+      // Core serializes this optional field exactly as stored. Preserve no-op v2 round-trips;
+      // only v0 promotion and the explicit legacy-omission compatibility mode materialize policy.
+      if (
+        !this.isPSBTv2() ||
+        (global.txModifiable === undefined && this.opts.allowMissingTxModifiable)
+      )
+        global.txModifiable = this.txModifiable;
     }
     // bip174js historically emits one empty output map for a PSBTv0 transaction with no outputs.
     // Input maps are count-framed by the unsigned transaction, so a phantom input map cannot be
@@ -995,6 +1206,13 @@ export class Transaction {
     if (input.partialSig && input.partialSig.length) return 'signed';
     return 'unsigned';
   }
+  private cleanFinalInput(input: PSBTInputs): void {
+    // Core preserves producer policy during finalization. Once cleanup makes signatures opaque,
+    // signStatus conservatively locks transaction mutation until the input is explicitly reopened.
+    cleanFinalInput(input as TArg<PSBTInputs>, this.opts.unknown!, this.opts.proprietary!);
+    if (this.global.txModifiable !== undefined)
+      this.global.txModifiable = cleanTxModifiable(this.global.txModifiable, this.opts.unknown!);
+  }
   // Cannot replace unpackSighash, tests rely on very generic implemenetation with signing inputs outside of range
   // We will lose some vectors -> smaller test coverage of preimages (very important!)
   private inputSighash(idx: number) {
@@ -1007,30 +1225,70 @@ export class Transaction {
     // ALL + ANYONE   -- specific input + all outputs
     // NONE + ANYONE  -- specific input + no outputs
     // SINGLE         -- specific inputs + output with same index
-    const sigOutputs = sighash === SignatureHash.DEFAULT ? SignatureHash.ALL : sighash & 0b11;
-    const sigInputs = sighash & SignatureHash.ANYONECANPAY;
-    return { sigInputs, sigOutputs };
+    return sighashScope(sighash);
   }
   // Very nice for debug purposes, but slow. If there is too much inputs/outputs to add, will be quadratic.
   // Some cache will be nice, but there chance to have bugs with cache invalidation
-  private signStatus() {
+  private signatures() {
+    const res: (InputSignature & { idx: number })[] = [];
+    for (let idx = 0; idx < this.inputs.length; idx++) {
+      const actual = inputSignatures(this.inputs[idx]);
+      for (const signature of actual) res.push({ idx, ...signature });
+      if (actual.length || this.inputStatus(idx) !== 'finalized') continue;
+      let taproot = true;
+      try {
+        taproot = _WitnessOutScript.decode(getPrevOut(this.inputs[idx]).script).type === 'tr';
+      } catch {
+        // Finalization may remove the data needed to classify an imported opaque signature.
+        // Treating it as Taproot conservatively protects the larger all-prevout commitment.
+      }
+      const declared = this.inputs[idx].sighashType;
+      const sighash = declared === undefined ? SignatureHash.DEFAULT : declared;
+      res.push({ idx, sighash, taproot, scriptPath: taproot });
+    }
+    return res;
+  }
+
+  private signedInputKeys(idx: number, signatures = this.signatures()): (keyof PSBTInputs)[] {
+    const res = new Set<keyof PSBTInputs>();
+    const add = (keys: readonly (keyof PSBTInputs)[]) => {
+      for (const key of keys) res.add(key);
+    };
+    for (const signature of signatures) {
+      const { isAny, isNone, isSingle } = unpackSighash(signature.sighash);
+      if (signature.idx === idx) {
+        add(inputSignedKeys.self);
+        if (signature.taproot) {
+          if (signature.scriptPath) add(inputSignedKeys.tapscript);
+        } else add(inputSignedKeys.ecdsa);
+      } else if (!isAny) {
+        add(inputSignedKeys.cross);
+        // Legacy and BIP143 omit other sequences for NONE/SINGLE. BIP341 commits every sequence
+        // whenever ANYONECANPAY is absent, independently of the output sighash mode.
+        if (signature.taproot || (!isNone && !isSingle)) res.add('sequence');
+        if (signature.taproot) add(inputSignedKeys.prevout);
+      }
+    }
+    return [...res];
+  }
+
+  private signStatus(signatures = this.signatures()) {
     // if addInput or addOutput is not possible, then all inputs or outputs are signed
     let addInput = true,
       addOutput = true;
-    let inputs = [],
-      outputs = [];
-    for (let idx = 0; idx < this.inputs.length; idx++) {
-      const status = this.inputStatus(idx);
-      // Unsigned input doesn't affect anything
-      if (status === 'unsigned') continue;
-      const { sigInputs, sigOutputs } = this.inputSighash(idx);
+    let inputs: number[] = [],
+      outputs: number[] = [];
+    for (const { idx, sighash } of signatures) {
+      const { sigInputs, sigOutputs } = sighashScope(sighash);
       // Input type
-      if (sigInputs === SignatureHash.ANYONECANPAY) inputs.push(idx);
-      else addInput = false;
+      if (sigInputs === SignatureHash.ANYONECANPAY) {
+        if (!inputs.includes(idx)) inputs.push(idx);
+      } else addInput = false;
       // Output type
       if (sigOutputs === SignatureHash.ALL) addOutput = false;
-      else if (sigOutputs === SignatureHash.SINGLE) outputs.push(idx);
-      else if (sigOutputs === SignatureHash.NONE) {
+      else if (sigOutputs === SignatureHash.SINGLE) {
+        if (!outputs.includes(idx)) outputs.push(idx);
+      } else if (sigOutputs === SignatureHash.NONE) {
         // Doesn't affect any outputs at all
       } else throw new Error(`Wrong signature hash output type: ${sigOutputs}`);
     }
@@ -1139,18 +1397,30 @@ export class Transaction {
   // Modification
   addInput(input: TArg<psbt.TransactionInputUpdate>, _ignoreSignStatus = false): number {
     validateObject(input as Record<string, any>, {}, {}, 'input');
-    this.requireTxModifiable(PSBT_TX_MODIFIABLE_INPUTS, 'inputs');
-    if (!_ignoreSignStatus && !this.signStatus().addInput)
-      throw new Error('Tx has signed inputs, cannot add new one');
+    cleanExtensions(input as ExtensionMap, this.opts.unknown!, this.opts.proprietary!, true);
+    this.requireTxModifiable(0b001, 'inputs');
+    const signatures = _ignoreSignStatus ? undefined : this.signatures();
+    const status = signatures && this.signStatus(signatures);
+    if (status && !status.addInput) throw new Error('Tx has signed inputs, cannot add new one');
     // normalizeInput preserves nested caller-owned byte arrays, so detach them here before the
     // new input becomes transaction state and later caller mutation can rewrite it by aliasing.
     const normalized = cloneDeep(
-      normalizeInput(input, undefined, undefined, this.opts.disableScriptCheck)
+      normalizeInput(
+        input,
+        undefined,
+        undefined,
+        this.opts.disableScriptCheck,
+        this.opts.unknown!,
+        this.opts.proprietary!
+      )
     ) as PSBTInputs;
-    resolvePSBTLocktime(
+    const nextLockTime = resolvePSBTLocktime(
       [...this.inputs, normalized],
       this.global.fallbackLocktime ?? DEFAULT_LOCKTIME
     );
+    // ANYONECANPAY permits adding an outpoint, but every signature still commits to nLockTime.
+    if (signatures?.length && nextLockTime !== this.lockTime)
+      throw new Error('Tx has signed inputs, cannot change lockTime');
     this.inputs.push(normalized);
     return this.inputs.length - 1;
   }
@@ -1160,16 +1430,22 @@ export class Transaction {
     _ignoreSignStatus = false
   ): void {
     this.checkInputIdx(idx);
-    let allowedFields = undefined;
-    if (!_ignoreSignStatus) {
-      const status = this.signStatus();
-      if (!status.addInput || status.inputs.includes(idx)) {
+    cleanExtensions(input as ExtensionMap, this.opts.unknown!, this.opts.proprietary!, true);
+    let allowedFields: (keyof PSBTInputs)[] | undefined;
+    const signatures = _ignoreSignStatus ? undefined : this.signatures();
+    if (signatures?.length) {
+      if (this.inputStatus(idx) === 'finalized') {
         // Once finalized, only already-present signature/final fields may be repeated or removed.
         // In particular, do not let a native-SegWit final witness gain a stray finalScriptSig.
-        allowedFields =
-          this.inputStatus(idx) === 'finalized'
-            ? psbt.PSBTInputUnsignedKeys.filter((k) => this.inputs[idx][k] !== undefined)
-            : psbt.PSBTInputUnsignedKeys;
+        allowedFields = psbt.PSBTInputSignatureKeys.filter(
+          (key) => this.inputs[idx][key] !== undefined
+        );
+      } else {
+        const signed = new Set(this.signedInputKeys(idx, signatures));
+        if (signed.size)
+          allowedFields = (Object.keys(psbt.PSBTInput) as (keyof PSBTInputs)[]).filter(
+            (key) => !signed.has(key)
+          );
       }
     }
     // normalizeInput preserves nested caller-owned byte arrays, so detach the merged result here
@@ -1180,7 +1456,8 @@ export class Transaction {
         this.inputs[idx],
         allowedFields,
         this.opts.disableScriptCheck,
-        this.opts.allowUnknown
+        this.opts.unknown!,
+        this.opts.proprietary!
       )
     ) as PSBTInputs;
     const inputs = this.inputs.slice();
@@ -1189,6 +1466,8 @@ export class Transaction {
       inputs,
       this.global.fallbackLocktime ?? DEFAULT_LOCKTIME
     );
+    if (signatures?.length && nextLockTime !== this.lockTime)
+      throw new Error('Tx has signed inputs, cannot change lockTime');
     const current = this.inputs[idx];
     const transactionChanged =
       current.index !== normalized.index ||
@@ -1197,7 +1476,7 @@ export class Transaction {
         ? normalized.txid !== undefined
         : normalized.txid === undefined || !equalBytes(current.txid, normalized.txid)) ||
       nextLockTime !== this.lockTime;
-    if (transactionChanged) this.requireTxModifiable(PSBT_TX_MODIFIABLE_INPUTS, 'inputs');
+    if (transactionChanged) this.requireTxModifiable(0b001, 'inputs');
     this.inputs[idx] = normalized;
   }
   // Output stuff
@@ -1213,7 +1492,7 @@ export class Transaction {
     const out = this.getOutput(idx);
     if (!out.script) return;
     return Address(network).encode(
-      OutScript.decode(out.script) as Parameters<ReturnType<typeof Address>['encode']>[0]
+      _WitnessOutScript.decode(out.script) as Parameters<ReturnType<typeof Address>['encode']>[0]
     );
   }
 
@@ -1233,12 +1512,19 @@ export class Transaction {
     if (script === undefined) script = cur?.script;
     let res: PSBTOutputs = { ...cur, ...(o as PSBTOutputs & { script?: string }), amount, script };
     if (res.amount === undefined) delete res.amount;
-    res = psbt.mergeKeyMap(psbt.PSBTOutput, res, cur, allowedFields, this.opts.allowUnknown);
+    res = psbt.mergeKeyMap(
+      psbt.PSBTOutput,
+      res,
+      cur,
+      allowedFields,
+      this.opts.unknown!,
+      this.opts.proprietary!
+    );
     psbt.PSBTOutputCoder.encode(res as Parameters<typeof psbt.PSBTOutputCoder.encode>[0]);
     if (
       res.script &&
       !this.opts.allowUnknownOutputs &&
-      OutScript.decode(res.script).type === 'unknown'
+      _WitnessOutScript.decode(res.script).type === 'unknown'
     ) {
       throw new Error(
         'Transaction/output: unknown output script type, there is a chance that input is unspendable. Pass allowUnknownOutputs=true, if you sure'
@@ -1248,8 +1534,11 @@ export class Transaction {
     return res;
   }
   addOutput(o: TArg<psbt.TransactionOutputUpdate>, _ignoreSignStatus = false): number {
-    this.requireTxModifiable(PSBT_TX_MODIFIABLE_OUTPUTS, 'outputs');
-    if (!_ignoreSignStatus && !this.signStatus().addOutput)
+    cleanExtensions(o as ExtensionMap, this.opts.unknown!, this.opts.proprietary!, true);
+    this.requireTxModifiable(0b010, 'outputs');
+    const status = _ignoreSignStatus ? undefined : this.signStatus();
+    // Appending the previously missing same-index output changes a SIGHASH_SINGLE digest.
+    if (status && (!status.addOutput || status.outputs.includes(this.outputs.length)))
       throw new Error('Tx has signed outputs, cannot add new one');
     // normalizeOutput preserves nested caller-owned script bytes, so detach them here before the
     // new output becomes transaction state and later caller mutation can rewrite it by aliasing.
@@ -1262,6 +1551,7 @@ export class Transaction {
     _ignoreSignStatus = false
   ): void {
     this.checkOutputIdx(idx);
+    cleanExtensions(output as ExtensionMap, this.opts.unknown!, this.opts.proprietary!, true);
     let allowedFields = undefined;
     if (!_ignoreSignStatus) {
       const status = this.signStatus();
@@ -1277,7 +1567,7 @@ export class Transaction {
       (current.script === undefined
         ? normalized.script !== undefined
         : normalized.script === undefined || !equalBytes(current.script, normalized.script));
-    if (transactionChanged) this.requireTxModifiable(PSBT_TX_MODIFIABLE_OUTPUTS, 'outputs');
+    if (transactionChanged) this.requireTxModifiable(0b010, 'outputs');
     this.outputs[idx] = normalized;
   }
   addOutputAddress(address: string, amount: bigint, network: u.BTC_NETWORK = NETWORK): number {
@@ -1601,7 +1891,6 @@ export class Transaction {
             sighash !== SignatureHash.DEFAULT ? new Uint8Array([sighash]) : P.EMPTY
           );
           this.updateInput(idx, { tapKeySig: sig }, true);
-          this.updateTxModifiableAfterSignature(sighash);
           signed = true;
         }
       }
@@ -1634,7 +1923,6 @@ export class Transaction {
             { tapScriptSig: [[{ pubKey: schnorrPub, leafHash: hash }, sig]] },
             true
           );
-          this.updateTxModifiableAfterSignature(sighash);
           signed = true;
         }
       }
@@ -1669,7 +1957,6 @@ export class Transaction {
         },
         true
       );
-      this.updateTxModifiableAfterSignature(sighash);
     }
     return true;
   }
@@ -1698,17 +1985,25 @@ export class Transaction {
     this.checkInputIdx(idx);
     if (this.fee < _0n) throw new Error('Outputs spends more than inputs amount');
     const input = this.inputs[idx];
+    // Validate strict extension policy before constructing satisfaction so a rejection is atomic.
+    cleanExtensions(input, this.opts.unknown!, this.opts.proprietary!);
+    cleanTxModifiable(this.global.txModifiable, this.opts.unknown!);
     const inputType = getInputType(input, this.opts.allowLegacyWitnessUtxo);
     // Taproot finalize
     if (inputType.txType === 'taproot') {
       if (input.tapKeySig) input.finalScriptWitness = [input.tapKeySig];
       else if (input.tapLeafScript && input.tapScriptSig) {
-        // Sort leafs by control block length.
-        const leafs = input.tapLeafScript.sort(
-          (a, b) =>
-            psbt.TaprootControlBlock.encode(a[0]).length -
-            psbt.TaprootControlBlock.encode(b[0]).length
-        );
+        // Preserve the old shallowest-path tie-break without mutating caller-visible leaf order.
+        const leafs = input.tapLeafScript
+          .slice()
+          .sort(
+            (a, b) =>
+              psbt.TaprootControlBlock.encode(a[0]).length -
+              psbt.TaprootControlBlock.encode(b[0]).length
+          );
+        let smallest: Bytes[] | undefined;
+        let smallestSize = Number.POSITIVE_INFINITY;
+        let unsupported = false;
         for (const [cb, _script] of leafs) {
           // Last byte is version
           const script = _script.slice(0, -1);
@@ -1717,6 +2012,7 @@ export class Transaction {
           const hash = tapLeafHash(script, ver);
           const scriptSig = input.tapScriptSig.filter((i) => equalBytes(i[0].leafHash, hash));
           let signatures: Bytes[] = [];
+          let witness: Bytes[] | undefined;
           if (outScript.type === 'tr_ms') {
             const m = outScript.m;
             const pubkeys = outScript.pubkeys;
@@ -1756,33 +2052,43 @@ export class Transaction {
             if (!signatures.length) continue;
           } else {
             const custom = this.opts.customScripts;
+            let recognized = false;
             if (custom) {
               for (const c of custom) {
                 if (!c.finalizeTaproot) continue;
                 const scriptDecoded = Script.decode(script);
                 const csEncoded = c.encode(scriptDecoded);
                 if (csEncoded === undefined) continue;
+                recognized = true;
+                // Do not catch hook errors here. `undefined` means no satisfaction, while a throw
+                // from a matching custom finalizer reports broken leaf/signature data and must
+                // abort even when another leaf has already produced a valid witness candidate.
                 const finalized = c.finalizeTaproot(script, csEncoded, scriptSig);
                 if (!finalized) continue;
-                input.finalScriptWitness = finalized.concat(psbt.TaprootControlBlock.encode(cb));
-                delete input.finalScriptSig;
-                cleanFinalInput(input as TArg<PSBTInputs>);
-                return;
+                witness = finalized.concat(psbt.TaprootControlBlock.encode(cb));
+                break;
               }
             }
-            throw new Error('Finalize: Unknown tapLeafScript');
+            // Minimum search inspects every leaf, so an unsupported path cannot block an already
+            // complete known path merely because it appears later. Retain the old error when no
+            // supported satisfaction exists at all.
+            if (!witness && !recognized && scriptSig.length) unsupported = true;
+            if (!witness) continue;
           }
           // Witness is stack, so last element will be used first
-          input.finalScriptWitness = signatures
-            .reverse()
-            .concat([script, psbt.TaprootControlBlock.encode(cb)]);
-          break;
+          witness ||= signatures.reverse().concat([script, psbt.TaprootControlBlock.encode(cb)]);
+          const size = RawWitness.encode(witness).length;
+          if (size >= smallestSize) continue;
+          smallest = witness;
+          smallestSize = size;
         }
-        if (!input.finalScriptWitness) throw new Error('finalize/taproot: empty witness');
+        if (!smallest && unsupported) throw new Error('Finalize: Unknown tapLeafScript');
+        if (!smallest) throw new Error('finalize/taproot: empty witness');
+        input.finalScriptWitness = smallest;
       } else throw new Error('finalize/taproot: unknown input');
       // BIP174 Input Finalizer: if scriptSig is empty for an input, 0x07 remains unset.
       delete input.finalScriptSig;
-      cleanFinalInput(input as TArg<PSBTInputs>);
+      this.cleanFinalInput(input);
       return;
     }
     if (!input.partialSig || !input.partialSig.length) throw new Error('Not enough partial sign');
@@ -1842,7 +2148,7 @@ export class Transaction {
     if (!finalScriptSig && !finalScriptWitness) throw new Error('Unknown error finalizing input');
     if (finalScriptSig) input.finalScriptSig = finalScriptSig;
     if (finalScriptWitness) input.finalScriptWitness = finalScriptWitness;
-    cleanFinalInput(input as TArg<PSBTInputs>);
+    this.cleanFinalInput(input);
   }
   finalize(): void {
     for (let i = 0; i < this.inputs.length; i++) this.finalizeIdx(i);
@@ -1856,15 +2162,25 @@ export class Transaction {
   combine(other: Transaction): this {
     if (!(other instanceof Transaction))
       throw new TypeError('"other" expected Transaction, got type=' + typeof other);
+    // Match main's accumulator model: operation policy belongs to the receiver that is mutated.
+    const opts = this.opts;
     // BIP174 combiners merge same-transaction PSBTs across versions and emit the highest required
     // version, so PSBTVersion mismatches are normalized below instead of treated as conflicts.
     const PSBTVersion = Math.max(this.opts.PSBTVersion || 0, other.opts.PSBTVersion || 0);
-    for (const k of ['version', 'lockTime'] as const) {
-      if (this.opts[k] !== other.opts[k]) {
+    if (this.opts.version !== other.opts.version)
+      throw new Error(
+        `Transaction/combine: different version this=${this.opts.version} ` +
+          `other=${other.opts.version}`
+      );
+    const thisV2 = this.isPSBTv2();
+    const otherV2 = other.isPSBTv2();
+    if (!thisV2 || !otherV2) {
+      const thisLockTime = this.lockTime;
+      const otherLockTime = other.lockTime;
+      if (thisLockTime !== otherLockTime)
         throw new Error(
-          `Transaction/combine: different ${k} this=${this.opts[k]} other=${other.opts[k]}`
+          `Transaction/combine: different lockTime this=${thisLockTime} other=${otherLockTime}`
         );
-      }
     }
     for (const k of ['inputs', 'outputs'] as const) {
       if (this[k].length !== other[k].length) {
@@ -1875,40 +2191,78 @@ export class Transaction {
     }
     // Same-transaction checks must compare the normalized unsigned tx bytes here: PSBTv0 stores
     // `global.unsignedTx`, while PSBTv2 reconstructs the same transaction from split fields.
-    if (!equalBytes(this.unsignedTx, other.unsignedTx))
+    const unsignedTx = this.unsignedTx;
+    if (!equalBytes(unsignedTx, other.unsignedTx))
       throw new Error(`Transaction/combine: different unsigned tx`);
-    const thisV2 = this.isPSBTv2();
-    const otherV2 = other.isPSBTv2();
     let txModifiable: number | undefined;
     if (thisV2 && otherV2) {
-      const a = this.global.txModifiable ?? 0;
-      const b = other.global.txModifiable ?? 0;
-      // Known mutability permissions become more restrictive as signatures accumulate, while
-      // SIGHASH_SINGLE presence accumulates. Future flag bits must agree because their merge
-      // semantics are unknown to this implementation.
+      // Core combines the stored optional bytes without deriving replacements from signatures.
+      // Only explicit legacy-omission compatibility gives an absent field an effective value.
+      const policy = (tx: Transaction) => {
+        if (tx.global.txModifiable !== undefined)
+          return cleanTxModifiable(tx.global.txModifiable, opts.unknown!)!;
+        return opts.allowMissingTxModifiable ? tx.modifiable(true, opts.unknown!) : 0;
+      };
+      const a = policy(this);
+      const b = policy(other);
+      // Known mutability permissions use intersection and SIGHASH_SINGLE presence uses union.
+      // Future flag bits must agree because this implementation does not know how to merge them.
       if ((a & ~0b111) !== (b & ~0b111))
         throw new Error('Transaction/combine: conflicting unknown txModifiable flags');
-      txModifiable =
-        (a & ~0b111) |
-        (a & b & (PSBT_TX_MODIFIABLE_INPUTS | PSBT_TX_MODIFIABLE_OUTPUTS)) |
-        ((a | b) & PSBT_TX_HAS_SIGHASH_SINGLE);
-      if (this.global.txModifiable === undefined && other.global.txModifiable === undefined)
+      txModifiable = (a & ~0b111) | (a & b & 0b011) | ((a | b) & 0b100);
+      // Preserve Core's optional-field semantics when neither participant supplied policy.
+      if (
+        txModifiable === 0 &&
+        this.global.txModifiable === undefined &&
+        other.global.txModifiable === undefined &&
+        !opts.allowMissingTxModifiable
+      )
         txModifiable = undefined;
-    } else if (thisV2) txModifiable = this.global.txModifiable;
-    else if (otherV2) txModifiable = other.global.txModifiable;
-    const global = psbt.mergeKeyMap(
+    } else if (thisV2) txModifiable = this.modifiable(opts.allowMissingTxModifiable, opts.unknown!);
+    else if (otherV2) txModifiable = other.modifiable(opts.allowMissingTxModifiable, opts.unknown!);
+    const thisGlobal = { ...this.global };
+    const otherGlobal = { ...other.global };
+    // PSBTv0 has no fallback-locktime field: fromPSBT caches unsignedTx.nLockTime there only for
+    // effective-locktime resolution and v2 promotion. Do not merge that cache as a v2 wire value.
+    if (thisV2 !== otherV2) {
+      if (!thisV2) delete thisGlobal.fallbackLocktime;
+      if (!otherV2) delete otherGlobal.fallbackLocktime;
+      // BIP174 permits v0 to encode version zero explicitly or omit it. Remove only that v0
+      // spelling before scalar conflicts; retaining the v2 field anchors repeated promotion when
+      // the accumulator's original options still target v0.
+      if (!thisV2) delete thisGlobal.version;
+      if (!otherV2) delete otherGlobal.version;
+    }
+    // Transaction-modifiable has dedicated bitwise merge rules above. Fallback locktime is only
+    // one input to the effective locktime resolved from the combined input maps, so retain receiver
+    // precedence and validate the resulting unsigned transaction after those maps merge below.
+    const fallbackLocktime =
+      thisGlobal.fallbackLocktime !== undefined
+        ? thisGlobal.fallbackLocktime
+        : otherGlobal.fallbackLocktime;
+    delete thisGlobal.txModifiable;
+    delete otherGlobal.txModifiable;
+    delete thisGlobal.fallbackLocktime;
+    delete otherGlobal.fallbackLocktime;
+    // Every ordinary global scalar must agree when both participants provide it; silently choosing
+    // either value can detach extension metadata such as a BIP322 message from its signatures.
+    const global = psbt.combineKeyMap(
       psbt.PSBTGlobal,
-      this.global,
-      other.global,
-      undefined,
-      this.opts.allowUnknown
+      thisGlobal,
+      otherGlobal,
+      opts.unknown!,
+      opts.proprietary!
     );
+    if (fallbackLocktime !== undefined) global.fallbackLocktime = fallbackLocktime;
     if (PSBTVersion) global.version = PSBTVersion;
     if (txModifiable === undefined) delete global.txModifiable;
     else global.txModifiable = txModifiable;
+    let hasOpaqueFinalizedV0 = false;
     const inputs = this.inputs.map((current, i) => {
       const currentFinal = this.inputStatus(i) === 'finalized';
       const otherFinal = other.inputStatus(i) === 'finalized';
+      // Finalized v0 maps no longer contain the partial signatures needed to derive v2 flags.
+      if ((!thisV2 && currentFinal) || (!otherV2 && otherFinal)) hasOpaqueFinalizedV0 = true;
       if (currentFinal && otherFinal) {
         // Two finalized PSBTs must describe the same complete satisfaction. Requiring matching
         // presence as well as matching values prevents combining witness-only and scriptSig-only
@@ -1924,35 +2278,52 @@ export class Transaction {
         psbt.PSBTInput,
         current,
         other.inputs[i],
-        this.opts.allowUnknown
+        opts.unknown!,
+        opts.proprietary!
       ) as PSBTInputs;
       // A final satisfaction supersedes partial signatures and transient signing metadata. This
       // also avoids manufacturing a contradictory final+partial input from two valid PSBTs.
-      if (currentFinal || otherFinal) cleanFinalInput(combined as TArg<PSBTInputs>);
+      if (currentFinal || otherFinal)
+        cleanFinalInput(combined as TArg<PSBTInputs>, opts.unknown!, opts.proprietary!);
       return cloneDeep(
         normalizeInput(
           combined,
           undefined,
           undefined,
-          this.opts.disableScriptCheck,
-          this.opts.allowUnknown
+          opts.disableScriptCheck,
+          opts.unknown!,
+          opts.proprietary!
         )
       ) as PSBTInputs;
     });
+    // A promoted opaque satisfaction may commit to both transaction halves. Clear only known
+    // permissions; retain a v2 participant's SIGHASH_SINGLE indicator and any future flag bits.
+    if (hasOpaqueFinalizedV0 && global.txModifiable !== undefined) global.txModifiable &= ~0b011;
+    const candidate = new Transaction({ ...opts, PSBTVersion });
     const outputs = this.outputs.map((current, i) => {
       const combined = psbt.combineKeyMap(
         psbt.PSBTOutput,
         current,
         other.outputs[i],
-        this.opts.allowUnknown
+        opts.unknown!,
+        opts.proprietary!
       );
-      return cloneDeep(this.normalizeOutput(combined));
+      return cloneDeep(candidate.normalizeOutput(combined));
     });
-    // Commit only after every map has validated, so a late conflict cannot leave a partially
-    // combined transaction behind.
-    this.global = global;
-    this.inputs = inputs;
-    this.outputs = outputs;
+    // Build and validate a detached candidate before touching the receiver. Combining
+    // complementary v2 locktime fields can otherwise create a different unsigned transaction.
+    candidate.global = global;
+    candidate.inputs = inputs;
+    candidate.outputs = outputs;
+    // A v0 input map can contribute signatures while the combined transaction is promoted to v2.
+    // All-v2 restrictions were already intersected above, preserving mutual field omission.
+    if ((!thisV2 || !otherV2) && candidate.isPSBTv2())
+      candidate.global.txModifiable = candidate.txModifiable;
+    if (!equalBytes(candidate.unsignedTx, unsignedTx))
+      throw new Error('Transaction/combine: combined unsigned tx differs');
+    this.global = candidate.global;
+    this.inputs = candidate.inputs;
+    this.outputs = candidate.outputs;
     return this;
   }
   clone(): Transaction {
@@ -1964,6 +2335,7 @@ export class Transaction {
 /**
  * Merges multiple PSBT blobs into one.
  * @param psbts - PSBT byte arrays to combine
+ * @param opts - Transaction parsing, combination, and serialization options. See {@link TxOpts}.
  * @returns Combined PSBT bytes.
  * @throws If the PSBT list is empty or the partial transactions cannot be combined. {@link Error}
  * @example
@@ -1974,12 +2346,14 @@ export class Transaction {
  * PSBTCombine([psbt, psbt]);
  * ```
  */
-export function PSBTCombine(psbts: TArg<Bytes[]>): TRet<Bytes> {
+export function PSBTCombine(psbts: TArg<Bytes[]>, opts: TArg<TxOpts> = {}): TRet<Bytes> {
   if (!psbts || !Array.isArray(psbts) || !psbts.length)
     throw new Error('PSBTCombine: wrong PSBT list');
-  const tx = Transaction.fromPSBT(psbts[0]);
-  for (let i = 1; i < psbts.length; i++) tx.combine(Transaction.fromPSBT(psbts[i]));
-  return tx.toPSBT() as TRet<Bytes>;
+  // Options affect both map cleanup during combination and the encoding of the returned PSBT.
+  const combineOpts = opts as TxOpts;
+  const tx = Transaction.fromPSBT(psbts[0], combineOpts);
+  for (let i = 1; i < psbts.length; i++) tx.combine(Transaction.fromPSBT(psbts[i], tx.opts));
+  return tx.toPSBT(combineOpts.PSBTVersion) as TRet<Bytes>;
 }
 
 // Copy-pasted from bip32 derive, maybe do something like 'bip32.parsePath'?

@@ -19,7 +19,8 @@ consume it before releasing a partial signature.
 
 Links:
 - https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki#user-content-Test_Vectors_and_Reference_Code
-- https://github.com/bitcoin/bips/blob/master/bip-0373.mediawiki (PSBT MUSIG2): very raw, no vectors, not implemented for now.
+- https://github.com/bitcoin/bips/blob/master/bip-0373.mediawiki (PSBT MuSig2): psbt.ts supports
+  its transport fields and vectors, but this module does not orchestrate the signing protocol.
 - https://github.com/bitcoin/bips/blob/master/bip-0327/reference.py
 */
 // Types
@@ -701,7 +702,8 @@ export class Session {
     // fewer or more scalars would return a signature-shaped value for a different equation.
     if (partialSigs.length !== this.publicKeys.length)
       throw new RangeError(
-        `partialSigs.length=${partialSigs.length} must equal participant count=${this.publicKeys.length}`
+        `partialSigs.length=${partialSigs.length} must equal ` +
+          `participant count=${this.publicKeys.length}`
       );
     const { Q, tweakAcc, R, e } = this;
     let s = _0n;

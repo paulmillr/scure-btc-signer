@@ -1,6 +1,20 @@
 import { secp256k1 as secp } from '@noble/curves/secp256k1.js';
 import { hex } from '@scure/base';
 import * as btc from './index.ts';
+import type { TxOpts, Unknowns } from './index.ts';
+import type { TArg } from './utils.ts';
+
+const unknownPolicy: Unknowns = 'strip';
+const extensionOpts: TxOpts = { unknown: unknownPolicy, proprietary: 'strict' };
+new btc.Transaction(extensionOpts);
+
+declare const combineOpts: TArg<TxOpts>;
+btc.PSBTCombine([], combineOpts);
+declare const first: btc.Transaction;
+declare const second: btc.Transaction;
+// Direct combination retains main's receiver-options API; byte-only PSBTCombine owns policy opts.
+// @ts-expect-error Transaction.combine does not accept operation-specific options.
+first.combine(second, combineOpts);
 
 const privKey1 = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
 const P1 = secp.getPublicKey(privKey1, true);

@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 
 const readJson = (path: string): any =>
   JSON.parse(readFileSync(new URL(`../${path}`, import.meta.url), 'utf8'));
+const readText = (path: string): string =>
+  readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 describe('Package metadata', () => {
   it('pins signing-critical runtime dependencies in npm and JSR manifests', () => {
@@ -20,5 +22,15 @@ describe('Package metadata', () => {
       match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
       deepStrictEqual(jsr.imports[name], `${prefix}${version}`);
     }
+  });
+
+  it('audit utilities do not embed machine-local paths', () => {
+    const paths = ['audit/compare-main.ts', 'audit/compare-core.ts'].flatMap((path) =>
+      [...readText(path).matchAll(/\/(?:home|Users)\/[^'"\s]+/g)].map((match) => ({
+        path,
+        value: match[0],
+      }))
+    );
+    deepStrictEqual(paths, []);
   });
 });
