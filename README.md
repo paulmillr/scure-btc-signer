@@ -523,6 +523,12 @@ If you have use-case where they are needed, create a github issue.
 
 PSBTv2 features tx_modifiable and taproot+bip32 are not supported yet.
 
+When signing an untrusted or multi-party PSBT, pass
+`{ strictPrevoutValidation: true }` to `Transaction.fromPSBT`. This requires every input to include
+a full `nonWitnessUtxo` matching its outpoint before any signature is produced. It prevents forged
+`witnessUtxo` amounts from making the displayed transaction fee appear lower than the fee that the
+valid transaction will actually pay.
+
 ```text
 // Decode
 Transaction.fromRaw(raw: Bytes, opts: TxOpts = {}); // Raw tx

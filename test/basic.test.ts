@@ -217,6 +217,74 @@ it('validateInput rejects mismatched txid even when nonWitnessUtxo parses as non
   throws(() => tx.toPSBT(0), /wrong txid/);
 });
 
+it('strictPrevoutValidation prevents witness-UTXO fee manipulation when signing', () => {
+  const victimKey = new Uint8Array(32).fill(1);
+  const attackerKey = new Uint8Array(32).fill(2);
+  const victimSpend = btc.p2wpkh(pubECDSA(victimKey));
+  const attackerSpend = btc.p2wpkh(pubECDSA(attackerKey));
+  const recipient = btc.p2wpkh(pubECDSA(new Uint8Array(32).fill(3)));
+  const previousTx = (script: Uint8Array, amount: bigint, marker: number) => {
+    const tx = btc.RawTx.decode(
+      btc.RawTx.encode({
+        version: 2,
+        lockTime: 0,
+        segwitFlag: false,
+        inputs: [
+          {
+            txid: new Uint8Array(32).fill(marker),
+            index: 0,
+            finalScriptSig: P.EMPTY,
+            sequence: 0xffffffff,
+          },
+        ],
+        outputs: [{ amount, script }],
+      })
+    );
+    const parsed = btc.Transaction.fromRaw(btc.RawTx.encode(tx));
+    return { tx, txid: hex.decode(parsed.id) };
+  };
+  const victimPrev = previousTx(victimSpend.script, 5_000n, 4);
+  const attackerPrev = previousTx(attackerSpend.script, 100_000n, 5);
+
+  // The attacker's real input is worth 100,000 sats, but the PSBT shown to the victim claims only
+  // 1,000. A SegWit-v0 signature for the victim input does not commit to that other input's amount,
+  // so the attacker can later combine it with a signature made using the real amount. The victim
+  // sees a 500-sat fee while the valid transaction actually pays 99,500 sats.
+  const unsafe = new btc.Transaction({ strictPrevoutValidation: true });
+  unsafe.addInput({ nonWitnessUtxo: victimPrev.tx, txid: victimPrev.txid, index: 0 });
+  unsafe.addInput({
+    txid: attackerPrev.txid,
+    index: 0,
+    witnessUtxo: { amount: 1_000n, script: attackerSpend.script },
+  });
+  unsafe.addOutput({ amount: 5_500n, script: recipient.script });
+  deepStrictEqual(unsafe.fee, 500n);
+  const unprotected = btc.Transaction.fromPSBT(unsafe.toPSBT());
+  deepStrictEqual(unprotected.signIdx(victimKey, 0), true);
+  throws(
+    () => unsafe.signIdx(victimKey, 0),
+    /strictPrevoutValidation requires nonWitnessUtxo for input=1/
+  );
+  throws(
+    () => unsafe.sign(victimKey),
+    /strictPrevoutValidation requires nonWitnessUtxo for input=1/
+  );
+  deepStrictEqual(unsafe.getInput(0).partialSig, undefined);
+
+  // Supplying the matching full previous transaction for every input binds both displayed amounts
+  // to the outpoints, and strict signing succeeds.
+  const safe = new btc.Transaction({ strictPrevoutValidation: true });
+  safe.addInput({ nonWitnessUtxo: victimPrev.tx, txid: victimPrev.txid, index: 0 });
+  safe.addInput({ nonWitnessUtxo: attackerPrev.tx, txid: attackerPrev.txid, index: 0 });
+  safe.addOutput({ amount: 5_500n, script: recipient.script });
+  deepStrictEqual(safe.fee, 99_500n);
+  deepStrictEqual(safe.signIdx(victimKey, 0), true);
+  deepStrictEqual(safe.getInput(0).partialSig?.length, 1);
+  // The victim's SegWit-v0 signature is identical in the low-fee presentation and the real,
+  // high-fee transaction, which is why requiring all prevout commitments must happen before sign.
+  deepStrictEqual(unprotected.getInput(0).partialSig, safe.getInput(0).partialSig);
+});
+
 it('PSBTv2 PREVIOUS_TXID uses standard byte order on the wire and display-order bytes internally', () => {
   const display = '75ddabb27b8845f5247975c8a5ba7c6f336c4570708ebe230caf6db5217ae858';
   const pub = secp256k1.getPublicKey(new Uint8Array(32).fill(1), true);
@@ -2422,6 +2490,7 @@ it('clone transaction with identical opts', () => {
     disableScriptCheck: true,
     bip174jsCompat: true,
     allowLegacyWitnessUtxo: true,
+    strictPrevoutValidation: true,
     lowR: true,
   };
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
@@ -2452,6 +2521,7 @@ it('clone transaction with identical opts', () => {
     disableScriptCheck: false,
     bip174jsCompat: false,
     allowLegacyWitnessUtxo: false,
+    strictPrevoutValidation: false,
     lowR: false,
   };
   const tx2 = new btc.Transaction({ ...opts2 });

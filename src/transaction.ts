@@ -203,6 +203,12 @@ export interface TxOpts {
   // result paying higher mining fee
   /** Permit legacy inputs that only provide witness UTXO data. */
   allowLegacyWitnessUtxo?: boolean;
+  /**
+   * Before signing, require every input to provide a full previous transaction whose txid and
+   * selected output match the input. Use this for untrusted or multi-party PSBTs to prevent forged
+   * witness-UTXO amounts from hiding an excessive transaction fee.
+   */
+  strictPrevoutValidation?: boolean;
   /** Grind ECDSA signatures until they use a low-R encoding. */
   lowR?: boolean;
   /** UNSAFE: additional custom payment-script codecs and finalizers. */
@@ -380,6 +386,7 @@ function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
     'disableScriptCheck',
     'bip174jsCompat',
     'allowLegacyWitnessUtxo',
+    'strictPrevoutValidation',
     'lowR',
   ] as const) {
     const v = _opts[k];
@@ -969,6 +976,26 @@ export class Transaction {
     anumber(idx, 'idx');
     if (idx >= this.inputs.length) throw new Error(`Wrong input index=${idx}`);
   }
+  private validatePrevoutsForSigning(): void {
+    if (!this.opts.strictPrevoutValidation) return;
+    for (let i = 0; i < this.inputs.length; i++) {
+      const input = this.inputs[i];
+      if (!input.nonWitnessUtxo) {
+        throw new Error(
+          `Transaction/sign: strictPrevoutValidation requires nonWitnessUtxo for input=${i}`
+        );
+      }
+      if (input.txid === undefined || input.index === undefined) {
+        throw new Error(
+          `Transaction/sign: strictPrevoutValidation requires an outpoint for input=${i}`
+        );
+      }
+      // A full previous transaction is only a trusted amount/script commitment after its txid and
+      // selected output have been checked against the unsigned transaction. Also cross-check a
+      // redundant witnessUtxo when one is present.
+      validateInput(input as TArg<psbt.TransactionInput>);
+    }
+  }
   getInput(idx: number): psbt.TransactionInput {
     this.checkInputIdx(idx);
     return cloneDeep(this.inputs[idx]) as psbt.TransactionInput;
@@ -1262,6 +1289,7 @@ export class Transaction {
         );
     }
     this.checkInputIdx(idx);
+    this.validatePrevoutsForSigning();
     const input = this.inputs[idx];
     const inputType = getInputType(
       input as TArg<psbt.TransactionInput>,
@@ -1471,6 +1499,9 @@ export class Transaction {
   // Even worse: another user can add bip32 derivation, and spend money from different address.
   // Better api: signIdx
   sign(privateKey: Signer, allowedSighash?: number[], _auxRand?: Bytes): number {
+    // Check transaction-wide strict requirements outside the per-input catch below so callers get
+    // the actionable validation error instead of the generic "No inputs signed" result.
+    this.validatePrevoutsForSigning();
     let num = 0;
     for (let i = 0; i < this.inputs.length; i++) {
       try {
