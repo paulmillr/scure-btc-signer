@@ -332,8 +332,8 @@ export const PSBTInputFinalKeys = /* @__PURE__ */ Object.freeze<(keyof Transacti
  * ```
  */
 export const PSBTInputUnsignedKeys = /* @__PURE__ */ Object.freeze<(keyof TransactionInput)[]>([
-  // This is the replace/remove allowlist for signed inputs; mergeKeyMap() can still append
-  // previously absent metadata or new KV entries for other fields when they don't conflict.
+  // Signature/finalization material can still be aggregated after signing. Every other field is
+  // frozen, including fields and keyed entries that were absent when the first signature arrived.
   'partialSig',
   'finalScriptSig',
   'finalScriptWitness',
@@ -764,20 +764,19 @@ function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>): P.UnwrapCoder<PSBTRaw> {
   for (const o of tx.outputs) validatePSBTFields(version, PSBTOutput, o);
   // BIP174 defines `<psbt> := <magic> <global-map> <input-map>* <output-map>*`, so after decode the
   // number of input/output maps should match the unsigned tx. PSBTv2 makes the same shape explicit
-  // through `inputCount` / `outputCount`. We intentionally violate that strict reading for one case:
-  // keep accepting exactly one trailing empty map because the separate bitcoinjs compatibility PSBT
-  // fixture corpus still contains that encoding. Anything non-empty or more than one extra map is
-  // still rejected here.
+  // through `inputCount` / `outputCount`. Input maps are count-framed and must match exactly.
   const inputCount = !version ? tx.global.unsignedTx!.inputs.length : tx.global.inputCount!;
-  if (tx.inputs.length < inputCount) throw new Error('Not enough inputs');
-  const inputsLeft = tx.inputs.slice(inputCount);
-  if (inputsLeft.length > 1 || (inputsLeft.length && Object.keys(inputsLeft[0]).length))
-    throw new Error(`Unexpected inputs left in tx=${inputsLeft}`);
-  // Same carve-out for outputs.
+  if (tx.inputs.length !== inputCount)
+    throw new Error(`Wrong number of input maps=${tx.inputs.length}, expected=${inputCount}`);
+  // PSBTv0 compatibility mode may append exactly one empty output map when the unsigned
+  // transaction has no outputs. PSBTv2 map counts remain strict.
   const outputCount = !version ? tx.global.unsignedTx!.outputs.length : tx.global.outputCount!;
   if (tx.outputs.length < outputCount) throw new Error('Not outputs inputs');
   const outputsLeft = tx.outputs.slice(outputCount);
-  if (outputsLeft.length > 1 || (outputsLeft.length && Object.keys(outputsLeft[0]).length))
+  if (
+    outputsLeft.length > 1 ||
+    (outputsLeft.length && (version !== 0 || Object.keys(outputsLeft[0]).length))
+  )
     throw new Error(`Unexpected outputs left in tx=${outputsLeft}`);
   return tx;
 }
@@ -866,15 +865,23 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
           if (v === undefined) {
             if (cannotChange) throw new Error(`Cannot remove signed field=${key as string}/${k}`);
             delete map[kStr];
-          } else add(kStr, k, v);
+          } else {
+            if (cannotChange && map[kStr] === undefined)
+              throw new Error(`Cannot add signed field=${key as string}/${kStr}`);
+            add(kStr, k, v);
+          }
         }
         (res as any)[key] = Object.values(map) as _KV[];
       }
-    } else if (typeof res[k] === 'string') {
-      res[k] = vC.decode(hex.decode(res[k] as string));
-    } else if (cannotChange && k in _val && _cur && _cur[k] !== undefined) {
-      if (!equalBytes(vC.encode(_val[k]), vC.encode(_cur[k])))
-        throw new Error(`Cannot change signed field=${k}`);
+    } else {
+      if (typeof res[k] === 'string') res[k] = vC.decode(hex.decode(res[k] as string));
+      if (cannotChange && k in _val) {
+        if (!_cur || _cur[k] === undefined) throw new Error(`Cannot add signed field=${k}`);
+        let current = _cur[k];
+        if (typeof current === 'string') current = vC.decode(hex.decode(current));
+        if (!equalBytes(vC.encode(res[k]), vC.encode(current)))
+          throw new Error(`Cannot change signed field=${k}`);
+      }
     }
   }
   if (allowUnknown && _val.unknown) {
@@ -903,6 +910,41 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
     }
   }
   return res as TRet<PSBTKeyMapKeys<T>>;
+}
+
+/**
+ * Combines two independently produced PSBT maps without choosing between conflicting scalar
+ * values. Keyed fields retain {@link mergeKeyMap}'s union semantics.
+ * @param psbtEnum - PSBT field definition table
+ * @param current - first map
+ * @param other - second map
+ * @param allowUnknown - whether to preserve unknown PSBT fields
+ * @returns The symmetric map union.
+ * @throws If both maps provide different values for the same scalar field. {@link Error}
+ */
+export function combineKeyMap<T extends PSBTKeyMap>(
+  psbtEnum: T,
+  current: TArg<PSBTKeyMapKeys<T>>,
+  other: TArg<PSBTKeyMapKeys<T>>,
+  allowUnknown?: boolean
+): TRet<PSBTKeyMapKeys<T>> {
+  validateObject(psbtEnum as Record<string, any>, {}, {}, 'psbtEnum');
+  validateObject(current as Record<string, any>, {}, {}, 'current');
+  validateObject(other as Record<string, any>, {}, {}, 'other');
+  const _current = current as PSBTKeyMapKeys<T>;
+  const _other = other as PSBTKeyMapKeys<T>;
+  for (const k in psbtEnum) {
+    const key = k as keyof typeof psbtEnum;
+    const [_, keyCoder, valueCoder] = psbtEnum[key];
+    if (keyCoder || _current[key] === undefined || _other[key] === undefined) continue;
+    let a = _current[key];
+    let b = _other[key];
+    if (typeof a === 'string') a = valueCoder.decode(hex.decode(a));
+    if (typeof b === 'string') b = valueCoder.decode(hex.decode(b));
+    if (!equalBytes(valueCoder.encode(a), valueCoder.encode(b)))
+      throw new Error(`Cannot combine conflicting field=${k}`);
+  }
+  return mergeKeyMap(psbtEnum, _other, _current, undefined, allowUnknown);
 }
 
 /** Validated PSBTv0 coder. */

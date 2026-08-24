@@ -60,7 +60,18 @@ describe('bip174-psbt-extended', () => {
       wif: 0xef,
     };
     it(`rpcPSBT(${i}): signer`, () => {
-      const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt), { lowR: true });
+      // Bitcoin Core's final signer vectors deliberately carry substituted redeem/witness
+      // scripts. Keep testing their raw round trips through the explicit unsafe opt-out.
+      const hasSubstitutedScript = i >= 3;
+      if (hasSubstitutedScript)
+        throws(
+          () => btc.Transaction.fromPSBT(base64.decode(t.psbt), { lowR: true }),
+          /wrong (redeem|witness)Script hash/
+        );
+      const tx = btc.Transaction.fromPSBT(base64.decode(t.psbt), {
+        lowR: true,
+        disableScriptCheck: hasSubstitutedScript,
+      });
       // Some inputs should be unsigned, we throw error when signer didn't sign anything
       try {
         for (const p of t.privkeys) tx.sign(btc.WIF(regtest).decode(p));

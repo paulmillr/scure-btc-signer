@@ -1,6 +1,7 @@
 import { should } from '@paulmillr/jsbt/test.js';
 
 import './basic.test.ts';
+import './metadata.test.ts';
 import './utils.test.ts';
 // Deterministic Pay-to-script-hash multi-signature addresses through public key sorting
 import './bip67-multisig.test.ts';

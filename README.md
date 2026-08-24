@@ -1154,13 +1154,19 @@ const fetcher = ftch(fetch, {
   timeout: 10_000,
   concurrencyLimit: 4,
 });
-const net = new EsploraProvider(fetcher, 'http://127.0.0.1:3000')
+const net = new EsploraProvider(fetcher, 'http://127.0.0.1:3000');
 ```
 
 ## MuSig2
 
 MuSig2 implementation conforming to [BIP-327](https://github.com/bitcoin/bips/blob/master/bip-0327.mediawiki)
 is available in `@scure/btc-signer/musig2.js`. Check out [bip327-musig2.test.ts](./test/bip327-musig2.test.ts) as well:
+
+**Security warning:** every MuSig2 secret nonce must be used for exactly one partial signature.
+`Session.sign()` zeroes only the exact `Uint8Array` passed to it; clones, serialized values,
+database records, and process snapshots remain live. Reusing the same nonce in distinct sessions
+can reveal the signer's secret key. Stateful signers must keep one authoritative nonce record and
+atomically consume it before releasing a partial signature.
 
 > `npm install @noble/curves`
 

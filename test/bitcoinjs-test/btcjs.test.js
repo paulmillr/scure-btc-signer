@@ -81,7 +81,11 @@ for (let i = 0; i < f_transaction.hashForSignature.length; i++) {
     const tx = btc.Transaction.fromRaw(hex.decode(v.txHex), opts);
     const script = btc.Script.encode(utils.fromASM(v.script));
     const preimage = hex.encode(tx.preimageLegacy(v.inIndex, script, v.type));
-    deepStrictEqual(preimage, v.hash);
+    // BitcoinJS encodes the legacy hash-of-one sentinel as a big-endian integer. Bitcoin Core
+    // passes uint256::ONE's internal little-endian bytes to ECDSA, so intentionally diverge for
+    // the two imported fixture cases that return this consensus sentinel.
+    const expected = i < 2 ? `01${'00'.repeat(31)}` : v.hash;
+    deepStrictEqual(preimage, expected);
   });
 }
 

@@ -264,11 +264,15 @@ it('combinations', () => {
     // [40, 3838380], // too slow
   ];
   for (const [length, combLen] of cases) {
+    const list = Array.from({ length }, (_, i) => i);
+    if (combLen > btc.MAX_COMBINATIONS)
+      throws(
+        () => btc.combinations(6, list),
+        new RegExp(`materialization limit=${btc.MAX_COMBINATIONS}`)
+      );
     deepStrictEqual(
-      btc.combinations(
-        6,
-        Array.from({ length }, (_, i) => i)
-      ).length,
+      // Large generic materializations remain available only through an explicit caller limit.
+      btc.combinations(6, list, combLen).length,
       combLen
     );
   }

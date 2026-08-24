@@ -228,7 +228,7 @@ const OutTRNS: Coder<OptScript, OutTRNSType | undefined> = {
     // BIP342 "Using a k-of-k script for every combination" documents the shape
     // `<pubkey_1> CHECKSIGVERIFY ... <pubkey_n> CHECKSIG`; this matcher only
     // classifies that embedded-pubkey form, so bare CHECKSIG stays unknown.
-    if (!pubkeys.length) return;
+    if (!pubkeys.length || pubkeys.length > 999) return;
     return { type: 'tr_ns', pubkeys } as TRet<OutTRNSType | undefined>;
   },
   decode: (to: TArg<OutTRNSType>): TRet<OptScript> => {
@@ -393,16 +393,18 @@ export const OutScript: TRet<
         if (i.m <= 0 || n > 16 || i.m > n) throw new Error('OutScript/multisig: invalid params');
       }
       if (i.type === 'tr_ns' || i.type === 'tr_ms') {
+        const n = i.pubkeys.length;
+        // BIP342 keeps the 1,000-element stack limit. Both supported tapscript multisig forms
+        // start with n signatures and then push a pubkey, so n must stay at or below 999.
+        if (n > 999) throw new Error(`OutScript/${i.type}: invalid params`);
         for (const p of i.pubkeys)
           if (!isValidPubkey(p, u.PubT.schnorr))
             throw new Error(`OutScript/${i.type}: wrong pubkey`);
       }
       if (i.type === 'tr_ms') {
         const n = i.pubkeys.length;
-        // BIP 342 keeps the 1000-element stack limit. This CHECKSIG/CHECKSIGADD form
-        // momentarily has n witness items plus one pushed pubkey on the stack, so n must stay <= 999.
         anumber(i.m, 'm');
-        if (i.m <= 0 || n > 999 || i.m > n) throw new Error('OutScript/tr_ms: invalid params');
+        if (i.m <= 0 || i.m > n) throw new Error('OutScript/tr_ms: invalid params');
       }
       return i;
     })
@@ -502,12 +504,21 @@ export function checkScript(
   if (witnessScript && !hasWsh) throw new Error('checkScript: witnessScript without P2WSH');
 }
 
-function uniqPubkey(pubkeys: TArg<Bytes[]>) {
+function uniqPubkey(pubkeys: TArg<Bytes[]>, type: u.PubT) {
   const map: Record<string, boolean> = {};
   for (const pub of pubkeys) {
-    // Exact-byte duplicate filter only: BIP383 valid vectors still permit the
-    // same point to appear in compressed and uncompressed SEC1 form in multi().
-    const key = hex.encode(pub);
+    u.validatePubkey(pub, type);
+    let normalized = pub;
+    if (type === u.PubT.ecdsa && pub.length === 65) {
+      // Compressed and uncompressed SEC1 encodings can represent the same curve point. Normalize
+      // valid uncompressed keys before comparing so one signer cannot occupy multiple threshold
+      // slots merely by changing the serialization. `allowSamePubkeys` remains the explicit
+      // compatibility escape hatch for callers that intentionally construct duplicate-key scripts.
+      normalized = new Uint8Array(33);
+      normalized[0] = 2 | (pub[64] & 1);
+      normalized.set(pub.subarray(1, 33), 1);
+    }
+    const key = hex.encode(normalized);
     if (map[key]) throw new Error(`Multisig: non-uniq pubkey: ${pubkeys.map(hex.encode)}`);
     map[key] = true;
   }
@@ -782,7 +793,7 @@ export const p2ms = (
 ): TRet<Extends<P2MS, P2Ret>> => {
   // BIP 11 only standardized bare multisig up to 3 keys; this helper still permits up to 16
   // because the same script shape is commonly wrapped by p2sh()/p2wsh() instead of used bare.
-  if (!allowSamePubkeys) uniqPubkey(pubkeys);
+  if (!allowSamePubkeys) uniqPubkey(pubkeys, u.PubT.ecdsa);
   return {
     type: 'ms',
     script: OutScript.encode({ type: 'ms', pubkeys, m }),
@@ -978,12 +989,19 @@ function taprootWalkTree(tree: TArg<HashedTreeWithPath>): TRet<TaprootLeaf[]> {
   return [...taprootWalkTree(tree.left), ...taprootWalkTree(tree.right)] as TRet<TaprootLeaf[]>;
 }
 
+// BIP 341 control blocks can encode at most 128 sibling hashes.
+const TAPROOT_MAX_DEPTH = 128;
 function taprootHashTree(
   tree: TArg<TaprootScriptTree>,
   internalPubKey: TArg<Bytes>,
   allowUnknownOutputs = false,
-  customScripts?: TArg<CustomScript[]>
+  customScripts?: TArg<CustomScript[]>,
+  depth = 0
 ): TRet<HashedTree> {
+  // Reject before inspecting or descending into the next node, which also bounds the
+  // recursion used by the path annotation and tree-flattening passes below.
+  if (depth > TAPROOT_MAX_DEPTH)
+    throw new RangeError(`P2TR: tree depth exceeds ${TAPROOT_MAX_DEPTH}`);
   if (tree === undefined) throw new Error('taprootHashTree: empty tree');
   if (!Array.isArray(tree) && !P.utils.isPlainObject(tree))
     throw new TypeError('"tree" expected object or array, got type=' + typeof tree);
@@ -1013,8 +1031,20 @@ function taprootHashTree(
   if (tree.length !== 2) throw new Error('hashTree: non binary tree!');
   // branch
   // Both nodes should exist
-  const left = taprootHashTree(tree[0], internalPubKey, allowUnknownOutputs, customScripts);
-  const right = taprootHashTree(tree[1], internalPubKey, allowUnknownOutputs, customScripts);
+  const left = taprootHashTree(
+    tree[0],
+    internalPubKey,
+    allowUnknownOutputs,
+    customScripts,
+    depth + 1
+  );
+  const right = taprootHashTree(
+    tree[1],
+    internalPubKey,
+    allowUnknownOutputs,
+    customScripts,
+    depth + 1
+  );
   // BIP 341 sorts TapBranch child hashes lexicographically for hashing, but the original
   // left/right structure still determines the control-block sibling paths for each leaf.
   let [lH, rH] = [left.hash, right.hash];
@@ -1156,11 +1186,25 @@ export function p2tr(
   }
 }
 
+/** Maximum number of combinations materialized by one default helper call. */
+export const MAX_COMBINATIONS = 4096;
+
+const combinationCount = (n: number, m: number): number => {
+  const k = Math.min(m, n - m);
+  let count = 1;
+  for (let i = 1; i <= k; i++) {
+    count = (count * (n - k + i)) / i;
+    if (!Number.isSafeInteger(count)) return Number.POSITIVE_INFINITY;
+  }
+  return count;
+};
+
 // Returns all combinations of size M from lst
 /**
  * Returns all size-`m` combinations from a list.
  * @param m - size of each combination
  * @param list - input items to combine
+ * @param maxCombinations - maximum result rows to materialize
  * @returns Array of combinations.
  * @throws If the combination size or input list is invalid. {@link Error}
  * @example
@@ -1169,12 +1213,19 @@ export function p2tr(
  * combinations(2, [1, 2, 3]);
  * ```
  */
-export function combinations<T>(m: number, list: T[]): T[][] {
+export function combinations<T>(m: number, list: T[], maxCombinations = MAX_COMBINATIONS): T[][] {
   const res: T[][] = [];
   if (!Array.isArray(list)) throw new Error('combinations: lst arg should be array');
   const n = list.length;
   anumber(m, 'm');
+  anumber(maxCombinations, 'maxCombinations');
   if (m < 1 || m > n) throw new Error('combinations: m must satisfy 1 <= m <= lst.length');
+  if (maxCombinations < 1) throw new Error('combinations: maxCombinations must be >= 1');
+  const count = combinationCount(n, m);
+  if (count > maxCombinations)
+    throw new RangeError(
+      `combinations: C(${n}, ${m}) exceeds materialization limit=${maxCombinations}`
+    );
   /*
   Basically works as M nested loops like:
   for (;idx[0]<lst.length;idx[0]++) for (idx[1]=idx[0]+1;idx[1]<lst.length;idx[1]++)
@@ -1204,8 +1255,8 @@ export function combinations<T>(m: number, list: T[]): T[][] {
 
 /**
  * M-of-N multi-leaf wallet via p2tr_ns. If m == n, single script is emitted.
- * Takes O(n^2) if m != n. 99-of-100 is ok, 5-of-100 is not.
- * It materializes C(n, m) leaves, so middle-of-the-range thresholds blow up combinatorially.
+ * It materializes C(n, m) leaves up to {@link MAX_COMBINATIONS}; middle-of-the-range thresholds
+ * above that bound are rejected before allocation.
  * `2-of-[A,B,C] => [A,B] | [A,C] | [B,C]`
  */
 export type P2TR_NS = {
@@ -1234,14 +1285,24 @@ export const p2tr_ns = (
   pubkeys: TArg<Bytes[]>,
   allowSamePubkeys = false
 ): TRet<Extends<P2TR_NS, P2Ret>[]> => {
-  if (!allowSamePubkeys) uniqPubkey(pubkeys);
-  return combinations(m, pubkeys).map(
-    (i) =>
-      ({
-        type: 'tr_ns',
-        script: OutScript.encode({ type: 'tr_ns', pubkeys: i }),
-      }) as const as TRet<Extends<P2TR_NS, P2Ret>>
-  ) as TRet<Extends<P2TR_NS, P2Ret>[]>;
+  anumber(m, 'm');
+  if (m > 999) throw new Error('OutScript/tr_ns: invalid params');
+  // Enforce the allocation bound before doing curve work on an attacker-controlled key list.
+  const keySets = combinations(m, pubkeys);
+  if (allowSamePubkeys) {
+    for (const pubkey of pubkeys) u.validatePubkey(pubkey, u.PubT.schnorr);
+  } else uniqPubkey(pubkeys, u.PubT.schnorr);
+  return keySets.map((keys) => {
+    // Keys were validated once above. Encoding through OutScript here would repeat lift_x for
+    // every key in every combination, turning a bounded leaf set into avoidable curve-level work.
+    const ops: ScriptType = [];
+    for (let i = 0; i < keys.length - 1; i++) ops.push(keys[i], 'CHECKSIGVERIFY');
+    ops.push(keys[keys.length - 1], 'CHECKSIG');
+    return {
+      type: 'tr_ns',
+      script: Script.encode(ops),
+    } as const as TRet<Extends<P2TR_NS, P2Ret>>;
+  }) as TRet<Extends<P2TR_NS, P2Ret>[]>;
 };
 // Taproot public key (case of p2tr_ns)
 /** Single-key taproot leaf descriptor. */
@@ -1291,7 +1352,7 @@ export function p2tr_ms(
   pubkeys: TArg<Bytes[]>,
   allowSamePubkeys = false
 ): TRet<Extends<P2TR_MS, P2Ret>> {
-  if (!allowSamePubkeys) uniqPubkey(pubkeys);
+  if (!allowSamePubkeys) uniqPubkey(pubkeys, u.PubT.schnorr);
   return {
     type: 'tr_ms',
     script: OutScript.encode({ type: 'tr_ms', pubkeys, m }),
