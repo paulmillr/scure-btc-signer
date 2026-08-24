@@ -15,10 +15,10 @@
     "micro-packed": "0.11.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.7.0",
+    "@paulmillr/jsbt": "0.7.1",
     "bismar": "0.1.8",
-    "@scure/bip32": "2.2.0",
-    "micro-ftch": "^1.1.0",
+    "@scure/bip32": "2.3.0",
+    "micro-ftch": "1.2.0",
     "prettier": "3.9.6",
     "typescript": "6.0.3"
   },
