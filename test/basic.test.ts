@@ -182,19 +182,21 @@ it('validateInput keeps the historical display-order txid convention for nonWitn
     allowUnknownOutputs: true,
   });
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
-  tx.addInput(
-    {
-      nonWitnessUtxo,
-      txid: hex.decode(prevTx.hash),
-      index: 0,
-    },
-    true
+  throws(
+    () =>
+      tx.addInput(
+        {
+          nonWitnessUtxo,
+          txid: hex.decode(prevTx.hash),
+          index: 0,
+        },
+        true
+      ),
+    /wrong txid/
   );
-  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n }, true);
-  throws(() => tx.toPSBT(0), /wrong txid/);
 });
 
-it('validateInput rejects mismatched txid even when nonWitnessUtxo parses as non-final', () => {
+it('normalizeInput rejects mismatched txid even when nonWitnessUtxo parses as non-final', () => {
   const nonWitnessUtxo = btc.RawTx.decode(
     btc.RawTx.encode({
       version: 2,
@@ -212,9 +214,11 @@ it('validateInput rejects mismatched txid even when nonWitnessUtxo parses as non
     })
   );
   const tx = new btc.Transaction({ allowUnknownOutputs: true });
-  tx.addInput({ nonWitnessUtxo, txid: new Uint8Array(32).fill(1), index: 0 }, true);
-  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n }, true);
-  throws(() => tx.toPSBT(0), /wrong txid/);
+  throws(
+    () => tx.addInput({ nonWitnessUtxo, txid: new Uint8Array(32).fill(1), index: 0 }, true),
+    /wrong txid/
+  );
+  deepStrictEqual(tx.inputsLength, 0);
 });
 
 it('strictPrevoutValidation prevents witness-UTXO fee manipulation when signing', () => {

@@ -1695,6 +1695,49 @@ describe('UTXO Select', () => {
 const TXID_01 = '00'.repeat(31) + '01';
 const privA = hex.decode('02'.repeat(32));
 
+it('rejects a nonWitnessUtxo that does not match its outpoint', () => {
+  const spend = btc.p2pkh(pubECDSA(privA));
+  const previousTx = (amount: bigint, marker: number) =>
+    btc.RawTx.decode(
+      btc.RawTx.encode({
+        version: 2,
+        lockTime: 0,
+        segwitFlag: false,
+        inputs: [
+          {
+            txid: new Uint8Array(32).fill(marker),
+            index: 0,
+            finalScriptSig: P.EMPTY,
+            sequence: 0xffffffff,
+          },
+        ],
+        outputs: [{ amount, script: spend.script }],
+      })
+    );
+  const realPrev = previousTx(1_000_000_000n, 0x11);
+  const fakePrev = previousTx(100_000_000n, 0x22);
+  const realTxid = hex.decode(btc.Transaction.fromRaw(btc.RawTx.encode(realPrev)).id);
+  const mismatched = { txid: realTxid, index: 0, nonWitnessUtxo: fakePrev };
+
+  const direct = new btc.Transaction();
+  throws(() => direct.addInput(mismatched), /nonWitnessUtxo: wrong txid/);
+  deepStrictEqual(direct.inputsLength, 0);
+
+  const updated = new btc.Transaction();
+  updated.addInput({ txid: realTxid, index: 0 });
+  throws(() => updated.updateInput(0, { nonWitnessUtxo: fakePrev }), /wrong txid/);
+  deepStrictEqual(updated.getInput(0).nonWitnessUtxo, undefined);
+
+  throws(
+    () =>
+      btc.selectUTXO([mismatched], [{ address: spend.address!, amount: 50_000_000n }], 'default', {
+        feePerByte: 1n,
+        changeAddress: spend.address!,
+      }),
+    /nonWitnessUtxo: wrong txid/
+  );
+});
+
 it('selectUTXO "all" fails on insufficient funds instead of negative fee', () => {
   // Fixed issue: 'all' used to return the selection unconditionally, so result()
   // reported fee = total - amount (negative) or threw the internal

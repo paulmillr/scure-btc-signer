@@ -573,7 +573,10 @@ export function normalizeInput(
   else if (res.witnessUtxo) prevOut = res.witnessUtxo;
   if (prevOut && !disableScriptCheck)
     checkScript(prevOut && prevOut.script, res.redeemScript, res.witnessScript);
-  return res as TRet<PSBTInputs>;
+  // Direct construction and UTXO selection consume nonWitnessUtxo amounts without crossing a
+  // PSBT serialization boundary. Enforce the same outpoint binding here so a mismatched previous
+  // transaction cannot understate a legacy input amount and turn the difference into mining fees.
+  return validateInput(res as TArg<psbt.TransactionInput>);
 }
 
 /**
