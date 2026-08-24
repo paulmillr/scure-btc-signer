@@ -3065,22 +3065,23 @@ it('PSBTv2 keeps stored transaction policy while signatures govern mutations', (
   const omittedRaw = RawPSBTV2.decode(newV2().toPSBT(2));
   delete omittedRaw.global.txModifiable;
   const omittedBytes = RawPSBTV2.encode(omittedRaw);
-  const omitted = btc.Transaction.fromPSBT(omittedBytes);
+  const omitted = btc.Transaction.fromPSBT(omittedBytes, { allowMissingTxModifiable: false });
   deepStrictEqual(flags(omitted), undefined);
   throws(() => omitted.addInput({ txid: new Uint8Array(32).fill(1), index: 0 }));
   throws(() => omitted.addOutput({ script: spend.script, amount: 1n }));
   // Combining the same strict field-less participant repeatedly is idempotent. Absence and zero
   // have the same policy meaning, but Core and BIP174 preserve absence when neither source has it.
   deepStrictEqual(
-    [btc.PSBTCombine([omittedBytes]), btc.PSBTCombine([omittedBytes, omittedBytes])],
+    [
+      btc.PSBTCombine([omittedBytes], { allowMissingTxModifiable: false }),
+      btc.PSBTCombine([omittedBytes, omittedBytes], { allowMissingTxModifiable: false }),
+    ],
     [omittedBytes, omittedBytes]
   );
 
-  // Released versions of scure emitted PSBTv2 without this field. The compatibility option treats
+  // Released versions of scure emitted PSBTv2 without this field. The compatibility default treats
   // that legacy absence as an open construction policy, while explicit zero remains immutable.
-  const compat = btc.Transaction.fromPSBT(omittedBytes, {
-    allowMissingTxModifiable: true,
-  });
+  const compat = btc.Transaction.fromPSBT(omittedBytes);
   compat.addInput({ txid: new Uint8Array(32).fill(3), index: 0 });
   compat.addOutput({ script: spend.script, amount: 1n });
   deepStrictEqual(flags(compat), 3);
@@ -3146,7 +3147,12 @@ it('PSBTv2 no-op serialization preserves transaction-modifiable presence and val
   // remains present. A no-op serializer must not derive a replacement value from signatures.
   // BIP370: https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki
   deepStrictEqual(
-    encoded.map((psbt) => btc.Transaction.fromPSBT(psbt, { unknown: 'ignore' }).toPSBT(2)),
+    encoded.map((psbt) =>
+      btc.Transaction.fromPSBT(psbt, {
+        unknown: 'ignore',
+        allowMissingTxModifiable: false,
+      }).toPSBT(2)
+    ),
     encoded
   );
 });
@@ -3178,7 +3184,8 @@ it('PSBTv2 signing and finalization preserve stored transaction-modifiable polic
     tx.finalizeIdx(0);
     const finalized = RawPSBTV2.decode(tx.toPSBT(2)).global.txModifiable;
     // BIP174 cleanup makes the satisfaction opaque, so scure conservatively locks both halves
-    // until the caller explicitly reopens it. The stored producer policy need not be rewritten.
+    // until the caller explicitly reopens it. Stored policy is preserved; compatible omission has
+    // no stored byte, so serialization materializes the effective ALL-signature restriction.
     // https://github.com/bitcoin/bips/blob/master/bip-0174.mediawiki#input-finalizer
     // https://github.com/bitcoin/bips/blob/master/bip-0370.mediawiki#signer
     throws(() => tx.addInput({ txid: new Uint8Array(32).fill(1), index: 0 }));
@@ -3187,7 +3194,7 @@ it('PSBTv2 signing and finalization preserve stored transaction-modifiable polic
   }
   deepStrictEqual(
     observed,
-    policies.map((policy) => [policy, policy])
+    policies.map((policy) => (policy === undefined ? [0, 0] : [policy, policy]))
   );
 });
 
@@ -3856,6 +3863,7 @@ it('clone transaction with identical opts', () => {
     strictPrevoutValidation: true,
     lowR: true,
     proprietary: 'ignore' as const,
+    allowMissingTxModifiable: true,
   };
   const privKey = hex.decode('0101010101010101010101010101010101010101010101010101010101010101');
   // setup taproot tx
@@ -3888,6 +3896,7 @@ it('clone transaction with identical opts', () => {
     strictPrevoutValidation: false,
     lowR: false,
     proprietary: 'strip' as const,
+    allowMissingTxModifiable: false,
   };
   const tx2 = new btc.Transaction({ ...opts2 });
   for (const inp of TX_TEST_INPUTS) {

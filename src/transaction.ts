@@ -465,6 +465,7 @@ function validateOpts(opts: TArg<TxOpts>): TRet<Readonly<TxOpts>> {
     _opts.allowUnknownInputs = _opts.allowUnknowInput;
   if (typeof _opts.allowUnknowOutput !== 'undefined')
     _opts.allowUnknownOutputs = _opts.allowUnknowOutput;
+  if (_opts.allowMissingTxModifiable === undefined) _opts.allowMissingTxModifiable = true;
   if (typeof _opts.lockTime !== 'number') throw new Error('Transaction lock time should be number');
   P.U32LE.encode(_opts.lockTime); // Additional range checks that lockTime
   // There is no PSBT v1, and any new version will probably have fields which we don't know how to parse, which

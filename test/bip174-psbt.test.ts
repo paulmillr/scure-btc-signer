@@ -26,7 +26,10 @@ describe('bip174-psbt', () => {
       } else {
         // This suite checks byte-for-byte compatibility with imported vectors, including opaque
         // extension rows. Preservation is opt-in; default stripping is tested separately below.
-        const parsed = btc.Transaction.fromPSBT(tx, { allowUnknown: true });
+        const parsed = btc.Transaction.fromPSBT(tx, {
+          allowUnknown: true,
+          allowMissingTxModifiable: false,
+        });
         const encoded = parsed.toPSBT();
         deepStrictEqual(btc._DebugPSBT.decode(encoded), btc._DebugPSBT.decode(tx));
         deepStrictEqual(hex.encode(encoded), v.hex);
