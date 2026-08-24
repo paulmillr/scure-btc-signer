@@ -4,7 +4,8 @@ import { hex } from '@scure/base';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
-import { pubECDSA } from '../src/utils.ts';
+import { tapLeafHash } from '../src/payment.ts';
+import { pubECDSA, taprootTweakPrivKey } from '../src/utils.ts';
 import type { EstimatorOpts } from '../src/utxo.ts';
 
 describe('UTXO Select', () => {
@@ -386,10 +387,9 @@ describe('UTXO Select', () => {
     const t = (inputs, outputs, diff = 0, trLeafSize) => {
       const name = `${names[inputs[0].name]}/${names[outputs[0].name]}`;
       const FEE = 3n;
-      // Taproot estimation is precise when only the selected path is advertised. With multiple
-      // possible paths it conservatively estimates the largest one, because signer availability is
-      // not known during selection. Pass sighash when using a non-default value because it changes
-      // signature size.
+      // Taproot estimation assumes every advertised path is available. Filter paths to the wallet's
+      // public keys when that is not true. Pass a non-default sighash because it changes signature
+      // size.
       const _inputs = inputs.map((i) => {
         const res = { ...i };
         if (trLeafSize) {
@@ -471,34 +471,34 @@ describe('UTXO Select', () => {
     // TR
     t([INPUTS[34]], [OUTPUTS[0]]); // p2tr keysig
     t([INPUTS[35]], [OUTPUTS[0]]); // tr(undefined, tr)
-    t([INPUTS[36]], [OUTPUTS[0]], 69); // tr(keysig, tr): script path is larger
-    t([INPUTS[37]], [OUTPUTS[0]], 32); // p2tr-p2tr_ns(2)
+    t([INPUTS[36]], [OUTPUTS[0]]); // tr(keysig, tr): available key path is cheaper
+    t([INPUTS[37]], [OUTPUTS[0]]); // p2tr-p2tr_ns(2)
     t([INPUTS[38]], [OUTPUTS[0]]); // p2tr-p2tr_ms(2)
     t([INPUTS[39]], [OUTPUTS[0]]); // p2tr-p2tr_ns(3)
     t([INPUTS[40]], [OUTPUTS[0]]); // p2tr-p2tr_ms(3)
     // TR NS
-    t([INPUTS[41]], [OUTPUTS[0]], 32); // tr-ns(1-3)
-    t([INPUTS[42]], [OUTPUTS[0]], 32); // tr-ns(1-3)
-    t([INPUTS[43]], [OUTPUTS[0]], 32); // tr-ns(1-3)
+    t([INPUTS[41]], [OUTPUTS[0]]); // tr-ns(1-3)
+    t([INPUTS[42]], [OUTPUTS[0]]); // tr-ns(1-3)
+    t([INPUTS[43]], [OUTPUTS[0]]); // tr-ns(1-3)
     t([INPUTS[44]], [OUTPUTS[0]], 0, 97); // tr-ns(1-3)
-    t([INPUTS[45]], [OUTPUTS[0]], 32); // tr-ns(1-3)
+    t([INPUTS[45]], [OUTPUTS[0]]); // tr-ns(1-3)
     t([INPUTS[46]], [OUTPUTS[0]], 0, 97); // tr-ns(1-3)
     t([INPUTS[47]], [OUTPUTS[0]], 0, 97); // tr-ns(1-3)
-    t([INPUTS[48]], [OUTPUTS[0]], 32); // tr-ns(2-3)
-    t([INPUTS[49]], [OUTPUTS[0]], 32); // tr-ns(2-3)
+    t([INPUTS[48]], [OUTPUTS[0]]); // tr-ns(2-3)
+    t([INPUTS[49]], [OUTPUTS[0]]); // tr-ns(2-3)
     t([INPUTS[50]], [OUTPUTS[0]], 0, 97); // tr-ns(2-3)
     t([INPUTS[51]], [OUTPUTS[0]], 0, 97); // tr-ns(2-3)
-    t([INPUTS[52]], [OUTPUTS[0]], 32); // tr-ns(2-4)
+    t([INPUTS[52]], [OUTPUTS[0]]); // tr-ns(2-4)
     t([INPUTS[53]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
-    t([INPUTS[54]], [OUTPUTS[0]], 32); // tr-ns(2-4)
-    t([INPUTS[55]], [OUTPUTS[0]], 32); // tr-ns(2-4)
-    t([INPUTS[56]], [OUTPUTS[0]], 32); // tr-ns(2-4)
+    t([INPUTS[54]], [OUTPUTS[0]]); // tr-ns(2-4)
+    t([INPUTS[55]], [OUTPUTS[0]]); // tr-ns(2-4)
+    t([INPUTS[56]], [OUTPUTS[0]]); // tr-ns(2-4)
     t([INPUTS[57]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
     t([INPUTS[58]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
     t([INPUTS[59]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
     t([INPUTS[60]], [OUTPUTS[0]], 0, 129); // tr-ns(2-4)
-    t([INPUTS[61]], [OUTPUTS[0]], 32); // tr-ns(2-4)
-    t([INPUTS[62]], [OUTPUTS[0]], 32); // tr-ns(2-4)
+    t([INPUTS[61]], [OUTPUTS[0]], 0); // tr-ns(2-4)
+    t([INPUTS[62]], [OUTPUTS[0]], 0); // tr-ns(2-4)
     // TR MS
     t([INPUTS[63]], [OUTPUTS[0]]); // tr-ms(1-3)
     t([INPUTS[64]], [OUTPUTS[0]]); // tr-ms(1-3)
@@ -539,20 +539,217 @@ describe('UTXO Select', () => {
     t([INPUTS[6]], [OUTPUTS[13]]);
   });
 
-  it('Taproot estimates cover every advertised path without reordering leaves', () => {
+  it('filters Taproot paths to the supplied public keys', () => {
+    const input = INPUTS[36];
+    const before = structuredClone(input);
+    const scriptOnly = { ...input };
+    delete scriptOnly.tapInternalKey;
+    deepStrictEqual(btc.filterTaproot([input], [P8S]), [scriptOnly]);
+    const keyOnly = { ...input };
+    delete keyOnly.tapLeafScript;
+    deepStrictEqual(btc.filterTaproot([input], [P7S]), [keyOnly]);
+    deepStrictEqual(btc.filterTaproot([input], [P9S]), []);
+    deepStrictEqual(btc.filterTaproot([INPUTS[0]], [P9S]), [INPUTS[0]]);
+    deepStrictEqual(input, before);
+
+    const nsLeaves = btc.p2tr_ns(2, [P7S, P8S, P9S]);
+    const ns = {
+      ...input,
+      ...btc.p2tr(undefined, nsLeaves, regtest),
+    };
+    ns.witnessUtxo = { ...ns.witnessUtxo, script: ns.script };
+    const nsLeaf = ns.tapLeafScript.find(([, scriptWithVersion]) =>
+      P.utils.equalBytes(scriptWithVersion.slice(0, -1), nsLeaves[0].script)
+    );
+    if (!nsLeaf) throw new Error('missing P7/P8 leaf');
+    const filteredNs = { ...ns, tapLeafScript: [nsLeaf] };
+    delete filteredNs.tapInternalKey;
+    deepStrictEqual(btc.filterTaproot([ns], [P7S, P8S]), [filteredNs]);
+
+    const ms = {
+      ...input,
+      ...btc.p2tr(undefined, btc.p2tr_ms(2, [P7S, P8S, P9S]), regtest),
+    };
+    ms.witnessUtxo = { ...ms.witnessUtxo, script: ms.script };
+    const filteredMs = { ...ms };
+    delete filteredMs.tapInternalKey;
+    deepStrictEqual(btc.filterTaproot([ms], [P7S, P8S]), [filteredMs]);
+    deepStrictEqual(btc.filterTaproot([ms], [P7S]), []);
+  });
+
+  it('filterTaproot drops P2TR candidates with no advertised spend path', () => {
+    const availablePayment = btc.p2tr(P7S, undefined, regtest);
+    const unavailablePayment = btc.p2tr(P8S, undefined, regtest);
+    const available = {
+      ...availablePayment,
+      txid: hex.decode('01'.padEnd(64, '0')),
+      index: 0,
+      witnessUtxo: { script: availablePayment.script, amount: 10_000n },
+    };
+    // BIP371 defines tapInternalKey and tapLeafScript as path metadata, not as the prevout type:
+    // https://github.com/bitcoin/bips/blob/master/bip-0371.mediawiki#specification
+    // A valid P2TR prevout with neither field advertises no path that the selector can estimate or
+    // sign. With filtering enabled it must not poison other candidates.
+    const unavailable = {
+      txid: hex.decode('02'.padEnd(64, '0')),
+      index: 0,
+      witnessUtxo: { script: unavailablePayment.script, amount: 10_000n },
+    };
+    const outputs = [{ address: availablePayment.address, amount: 1_000n }];
+    const opts = {
+      changeAddress: availablePayment.address,
+      createTx: false,
+      feePerByte: 1n,
+      filterTaproot: [P7S],
+      network: regtest,
+    };
+    const expected = btc.selectUTXO([available], outputs, 'default', opts);
+    deepStrictEqual(btc.selectUTXO([unavailable, available], outputs, 'default', opts), expected);
+  });
+
+  it('filterTaproot retains key paths controlled through a tweaked private key', () => {
+    const tweakedPrivateKey = taprootTweakPrivKey(privKey9);
+    const tweakedPublicKey = btc.utils.pubSchnorr(tweakedPrivateKey);
+    const payment = btc.p2tr(P9S, undefined, regtest);
+    const input = {
+      ...payment,
+      txid: hex.decode('03'.padEnd(64, '0')),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 10_000n },
+    };
+    // BIP341 "Constructing and spending Taproot outputs" defines the tweaked secret as the key-path
+    // spending key: https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki
+    // Transaction.sign accepts either the internal secret or its already-tweaked secret. Filtering
+    // by the corresponding owned public key must preserve the same usable path.
+    const tx = new btc.Transaction();
+    tx.addInput(input);
+    tx.addOutputAddress(payment.address, 9_000n, regtest);
+    deepStrictEqual(tx.sign(tweakedPrivateKey, undefined, new Uint8Array(32)), 1);
+    tx.finalize();
+    deepStrictEqual(btc.filterTaproot([input], [tweakedPublicKey]), [input]);
+  });
+
+  it('filterTaproot does not advertise a tree key path without an explicit Merkle root', () => {
+    const payment = btc.p2tr(P7S, btc.p2tr_pk(P8S), regtest);
+    const input = {
+      txid: hex.decode('05'.padEnd(64, '0')),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 10_000n },
+      tapInternalKey: payment.tapInternalKey,
+      tapLeafScript: payment.tapLeafScript,
+    };
+    // BIP371 permits the aggregate root and unrelated leaves to be omitted. A provided control
+    // block could reconstruct the root, but omission may instead be broken data or a deliberate
+    // attempt by an earlier filter to disable the key path. Do not infer signer capability from it.
+    // https://github.com/bitcoin/bips/blob/master/bip-0371.mediawiki#specification
+    deepStrictEqual(btc.filterTaproot([input], [P7S]), []);
+  });
+
+  it('filterTaproot treats empty Taproot keyed fields as absent on non-P2TR inputs', () => {
+    const payment = btc.p2wpkh(P7, regtest);
+    const input = {
+      ...payment,
+      txid: hex.decode('04'.padEnd(64, '0')),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 10_000n },
+      tapLeafScript: [],
+    };
+    // PSBT_IN_TAP_LEAF_SCRIPT is a keyed field, so zero records serialize exactly like absence:
+    // https://github.com/bitcoin/bips/blob/master/bip-0371.mediawiki#specification
+    // Empty metadata must not turn an otherwise selectable P2WPKH input into a Taproot candidate.
+    deepStrictEqual(btc.filterTaproot([input], []), [input]);
+  });
+
+  it('filters Taproot paths only when public keys are provided to selectUTXO', () => {
     const opts = {
       changeAddress: OUTPUTS[0].address,
       feePerByte: 3n,
       network: regtest,
     };
-    // The internal key is present, but this signer only owns the larger script-path key.
-    const keyAndLeaf = btc.selectUTXO([INPUTS[36]], [], 'all', opts);
-    keyAndLeaf.tx.sign(privKey8, undefined, new Uint8Array(32));
-    keyAndLeaf.tx.finalize();
-    deepStrictEqual(keyAndLeaf.weight, keyAndLeaf.tx.weight);
+    const input = INPUTS[36];
+    const keyOnly = { ...input };
+    delete keyOnly.tapLeafScript;
+    const defaultSelection = btc.selectUTXO([input], [], 'all', opts);
+    const keySelection = btc.selectUTXO([keyOnly], [], 'all', opts);
+    deepStrictEqual(defaultSelection.weight, keySelection.weight);
+    const scriptSelection = btc.selectUTXO([input], [], 'all', {
+      ...opts,
+      filterTaproot: [P8S],
+    });
+    scriptSelection.tx.sign(privKey8, undefined, new Uint8Array(32));
+    scriptSelection.tx.finalize();
+    deepStrictEqual(scriptSelection.weight, scriptSelection.tx.weight);
+    deepStrictEqual(btc.selectUTXO([input], [], 'all', { ...opts, filterTaproot: [] }), undefined);
+    throws(
+      () =>
+        btc.selectUTXO([INPUTS[0]], [], 'all', {
+          ...opts,
+          filterTaproot: [P9S],
+          requiredInputs: [input],
+        }),
+      /filterTaproot: required input has no available Taproot path/
+    );
+  });
 
-    // The only signable leaf is not the shallowest one. Estimation must cover it without requiring
-    // callers to pre-filter the other advertised leaves.
+  it('applies selectUTXO filtering through every built-in Taproot path', () => {
+    const opts = {
+      changeAddress: OUTPUTS[0].address,
+      feePerByte: 3n,
+      network: regtest,
+    };
+    const run = (input, pubkeys, privateKeys) => {
+      const before = structuredClone(input);
+      const expected = btc.filterTaproot([input], pubkeys)[0];
+      const selected = btc.selectUTXO([input], [], 'all', {
+        ...opts,
+        filterTaproot: pubkeys,
+      });
+      if (!selected || !expected) throw new Error('expected filtered selection');
+      deepStrictEqual(
+        {
+          tapInternalKey: selected.inputs[0].tapInternalKey,
+          tapLeafScript: selected.inputs[0].tapLeafScript,
+        },
+        {
+          tapInternalKey: expected.tapInternalKey,
+          tapLeafScript: expected.tapLeafScript,
+        }
+      );
+      for (const privateKey of privateKeys)
+        selected.tx.sign(privateKey, undefined, new Uint8Array(32));
+      selected.tx.finalize();
+      deepStrictEqual(selected.weight, selected.tx.weight);
+      deepStrictEqual(input, before);
+    };
+
+    // A real owned internal key wins and the unavailable fallback leaf is removed.
+    run(INPUTS[36], [P7S], [privKey7]);
+
+    // tr_ns requires every key in one selected subset leaf.
+    const nsPayment = btc.p2tr(undefined, btc.p2tr_ns(2, [P7S, P8S, P9S]), regtest);
+    const nsInput = {
+      ...INPUTS[36],
+      ...nsPayment,
+      witnessUtxo: { ...INPUTS[36].witnessUtxo, script: nsPayment.script },
+    };
+    run(nsInput, [P7S, P8S], [privKey7, privKey8]);
+
+    // tr_ms keeps its single leaf when any threshold-sized signer subset is available.
+    const msPayment = btc.p2tr(undefined, btc.p2tr_ms(2, [P7S, P8S, P9S]), regtest);
+    const msInput = {
+      ...INPUTS[36],
+      ...msPayment,
+      witnessUtxo: { ...INPUTS[36].witnessUtxo, script: msPayment.script },
+    };
+    run(msInput, [P7S, P8S], [privKey7, privKey8]);
+  });
+
+  it('selects the shortest available Taproot path without reordering leaves', () => {
+    const opts = {
+      changeAddress: OUTPUTS[0].address,
+      feePerByte: 3n,
+      network: regtest,
+    };
     const tapLeafScript = INPUTS[46].tapLeafScript
       .slice()
       .sort(
@@ -560,19 +757,121 @@ describe('UTXO Select', () => {
           btc.TaprootControlBlock.encode(b[0]).length - btc.TaprootControlBlock.encode(a[0]).length
       );
     const input = { ...INPUTS[46], tapLeafScript };
-    const before = tapLeafScript.map(([cb]) => btc.TaprootControlBlock.encode(cb).length);
+    const before = structuredClone(input);
+    const shortest = tapLeafScript
+      .slice()
+      .sort(
+        (a, b) =>
+          btc.TaprootControlBlock.encode(a[0]).length - btc.TaprootControlBlock.encode(b[0]).length
+      )[0];
     const scriptPath = btc.selectUTXO([input], [], 'all', opts);
-    deepStrictEqual(
-      scriptPath.inputs[0].tapLeafScript.map(([cb]) => btc.TaprootControlBlock.encode(cb).length),
-      before
+    const shortestPath = btc.selectUTXO([{ ...input, tapLeafScript: [shortest] }], [], 'all', opts);
+    deepStrictEqual(scriptPath.weight, shortestPath.weight);
+    deepStrictEqual(input, before);
+  });
+
+  it('selects the smallest complete witness when it differs from the shallowest leaf', () => {
+    const large = btc.p2tr_ns(2, [P7S, P8S])[0];
+    const small = btc.p2tr_pk(P7S);
+    const unavailable = btc.p2tr_pk(P9S);
+    const payment = btc.p2tr(undefined, [large, [small, unavailable]], regtest);
+    const rows = payment.tapLeafScript.map(([cb, scriptWithVersion]) => {
+      const script = scriptWithVersion.slice(0, -1);
+      const out = btc.OutScript.decode(script);
+      if (out.type !== 'tr_ns') throw new Error(`expected tr_ns, got ${out.type}`);
+      const witness = out.pubkeys
+        .map(() => new Uint8Array(64))
+        .reverse()
+        .concat([script, btc.TaprootControlBlock.encode(cb)]);
+      return {
+        controlBlock: btc.TaprootControlBlock.encode(cb).length,
+        witness: btc.RawWitness.encode(witness).length,
+      };
+    });
+    // A shallow leaf can have a larger complete witness than a deeper leaf.
+    deepStrictEqual(rows, [
+      { controlBlock: 65, witness: 266 },
+      { controlBlock: 97, witness: 199 },
+      { controlBlock: 97, witness: 199 },
+    ]);
+    const input = {
+      txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 1000n },
+      ...payment,
+    };
+    const selected = btc.selectUTXO([input], [], 'all', {
+      changeAddress: OUTPUTS[0].address,
+      feePerByte: 1n,
+      filterTaproot: [P7S, P8S],
+      network: regtest,
+    });
+    selected.tx.sign(privKey7, undefined, new Uint8Array(32));
+    selected.tx.sign(privKey8, undefined, new Uint8Array(32));
+    const selectedSmall = selected.tx.inputs[0].tapLeafScript.find(([, scriptWithVersion]) =>
+      P.utils.equalBytes(scriptWithVersion.slice(0, -1), small.script)
     );
-    deepStrictEqual(
-      input.tapLeafScript.map(([cb]) => btc.TaprootControlBlock.encode(cb).length),
-      before
+    if (!selectedSmall) throw new Error('missing selected small leaf');
+    const [controlBlock, scriptWithVersion] = selectedSmall;
+    const leafHash = tapLeafHash(scriptWithVersion.slice(0, -1));
+    const signature = selected.tx.inputs[0].tapScriptSig.find(
+      ([key]) => P.utils.equalBytes(key.pubKey, P7S) && P.utils.equalBytes(key.leafHash, leafHash)
     );
-    scriptPath.tx.sign(privKey8, undefined, new Uint8Array(32));
-    scriptPath.tx.finalize();
-    deepStrictEqual(scriptPath.weight, scriptPath.tx.weight);
+    if (!signature) throw new Error('missing selected small-leaf signature');
+    const expectedWitness = [
+      signature[1],
+      small.script,
+      btc.TaprootControlBlock.encode(controlBlock),
+    ];
+    selected.tx.finalize();
+    deepStrictEqual(selected.tx.inputs[0].finalScriptWitness, expectedWitness);
+    deepStrictEqual(selected.weight, selected.tx.weight);
+  });
+
+  it('ignores unsupported leaves when finalizing a known complete witness', () => {
+    const known = btc.p2tr_pk(P7S);
+    // This leaf receives a signature because it embeds P7S, but without allowUnknownInputs or a
+    // custom finalizer it is not a candidate satisfaction and must not block the known path.
+    const unknown = { script: btc.Script.encode([P7S, 'CHECKSIG', 1, 'BOOLAND']) };
+    const payment = btc.p2tr(undefined, [known, unknown], regtest, true);
+    const tx = new btc.Transaction();
+    tx.addInput({
+      txid: hex.decode('0af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 1000n },
+      ...payment,
+    });
+    tx.addOutputAddress(OUTPUTS[0].address, 900n, regtest);
+    tx.sign(privKey7, undefined, new Uint8Array(32));
+    const knownLeaf = tx.inputs[0].tapLeafScript.find(([, scriptWithVersion]) =>
+      P.utils.equalBytes(scriptWithVersion.slice(0, -1), known.script)
+    );
+    if (!knownLeaf) throw new Error('missing known leaf');
+    const [controlBlock, scriptWithVersion] = knownLeaf;
+    const leafHash = tapLeafHash(scriptWithVersion.slice(0, -1));
+    const signature = tx.inputs[0].tapScriptSig.find(
+      ([key]) => P.utils.equalBytes(key.pubKey, P7S) && P.utils.equalBytes(key.leafHash, leafHash)
+    );
+    if (!signature) throw new Error('missing known-leaf signature');
+    const expectedWitness = [
+      signature[1],
+      known.script,
+      btc.TaprootControlBlock.encode(controlBlock),
+    ];
+    tx.finalize();
+    deepStrictEqual(tx.inputs[0].finalScriptWitness, expectedWitness);
+
+    const unsupported = btc.p2tr(undefined, unknown, regtest, true);
+    const unsupportedTx = new btc.Transaction();
+    unsupportedTx.addInput({
+      txid: hex.decode('1af50a00a22f74ece24c12cd667c290d3a35d48124a69f4082700589172a3aa2'),
+      index: 0,
+      witnessUtxo: { script: unsupported.script, amount: 1000n },
+      ...unsupported,
+    });
+    unsupportedTx.addOutputAddress(OUTPUTS[0].address, 900n, regtest);
+    unsupportedTx.sign(privKey7, undefined, new Uint8Array(32));
+    throws(() => unsupportedTx.finalize(), /Finalize: Unknown tapLeafScript/);
   });
 
   it('estimating size of custom scripts', () => {
@@ -644,6 +943,10 @@ describe('UTXO Select', () => {
       witnessUtxo: { script: payment.script, amount: 1000n },
       ...payment,
     };
+    // Generic filtering deliberately knows only built-in Taproot script forms. Callers must remove
+    // custom leaves using their own semantics before invoking it.
+    throws(() => btc.filterTaproot([input], [pubKey]), /unknown .*Taproot leaf/);
+    throws(() => btc.filterTaproot([input], [P7S]), /unknown .*Taproot leaf/);
     const selectOpts = {
       changeAddress: 'bcrt1qg975h6gdx5mryeac72h6lj2nzygugxhy5n57q2',
       feePerByte: 1n,
@@ -654,15 +957,51 @@ describe('UTXO Select', () => {
       () => btc.selectUTXO([input], [], 'all', { ...selectOpts, customScripts: [] }),
       /Finalize: Unknown tapLeafScript/
     );
-    // Actual utxo
-    const s = btc.selectUTXO([input], [], 'all', {
-      ...selectOpts,
-      customScripts,
-    });
+    throws(
+      () =>
+        btc.selectUTXO([input], [], 'all', {
+          ...selectOpts,
+          customScripts,
+          filterTaproot: [pubKey],
+        }),
+      /unknown .*Taproot leaf/
+    );
+    // The caller already knows this custom input is available and passes its own filtered set.
+    const s = btc.selectUTXO([input], [], 'all', { ...selectOpts, customScripts });
     s.tx.sign(privKey, undefined, new Uint8Array(32));
     s.tx.finalize();
     deepStrictEqual(s.tx.weight, s.weight);
     deepStrictEqual(tx.weight, s.weight);
+  });
+
+  it('filterTaproot rejects custom scripts for the caller to filter first', () => {
+    const data = hex.decode('79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798');
+    const customScripts = [
+      {
+        encode(from) {
+          if (from.length !== 3 || !(from[0] instanceof Uint8Array)) return;
+          if (from[1] !== 'DROP' || from[2] !== 1) return;
+          return { type: 'tr_data_drop' };
+        },
+        decode(to) {
+          if (to.type !== 'tr_data_drop') return;
+          return [data, 'DROP', 1];
+        },
+        finalizeTaproot: (script) => [script],
+      },
+    ];
+    const script = btc.Script.encode([data, 'DROP', 1]);
+    const payment = btc.p2tr(undefined, { script }, undefined, true, customScripts);
+    const input = {
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { script: payment.script, amount: 1000n },
+      ...payment,
+    };
+    // BIP342 gives pushed vectors their script-defined meaning; a generic filter must not infer
+    // that every 32-byte push is a required key. Custom-path filtering belongs to the caller.
+    // https://github.com/bitcoin/bips/blob/master/bip-0342.mediawiki
+    throws(() => btc.filterTaproot([input], []), /unknown .*Taproot leaf/);
   });
 
   it('estimator', () => {
@@ -1795,6 +2134,39 @@ it('selectUTXO "all" fails on insufficient funds instead of negative fee', () =>
   const ok = btc.selectUTXO(inputs, [{ address: spend.address!, amount: 500n }], 'all', opts);
   deepStrictEqual(ok!.change, false);
   deepStrictEqual(ok!.fee, 500n); // total(1000) - amount(500), change below dust threshold
+});
+
+it('selectUTXO normalizes and forwards PSBT extension policies', () => {
+  const spend = btc.p2wpkh(pubECDSA(new Uint8Array(32).fill(2)));
+  const unknown = [[{ type: 0x70, key: Uint8Array.of(1) }, Uint8Array.of(2)]];
+  const proprietary = [[Uint8Array.of(1, 0x61, 0), Uint8Array.of(3)]];
+  const input = {
+    txid: '00'.repeat(31) + '01',
+    index: 0,
+    witnessUtxo: { amount: 1000n, script: spend.script },
+    unknown,
+    proprietary,
+  };
+  const select = (opts: btc.TxOpts) =>
+    btc.selectUTXO([input], [{ address: spend.address!, amount: 500n }], 'all', {
+      feePerByte: 0n,
+      changeAddress: spend.address!,
+      ...opts,
+    })!;
+  const expected = {
+    ...input,
+    txid: hex.decode(input.txid),
+    sequence: 0xffffffff,
+  };
+  const inherited = select({ unknown: 'ignore' });
+  const explicit = select({ unknown: 'strip', proprietary: 'ignore' });
+  const { unknown: _, ...proprietaryOnly } = expected;
+  deepStrictEqual(
+    [inherited.inputs, inherited.tx!.getInput(0), explicit.inputs, explicit.tx!.getInput(0)],
+    [[expected], expected, [proprietaryOnly], proprietaryOnly]
+  );
+  throws(() => select({ unknown: 'strict', proprietary: 'ignore' }), /unknown PSBT field/);
+  throws(() => select({ unknown: 'ignore', proprietary: 'strict' }), /proprietary PSBT field/);
 });
 
 it.runWhen(import.meta.url);

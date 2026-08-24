@@ -515,13 +515,22 @@ deepStrictEqual(hex.encode(btc.OutScript.encode(decoded)), '51024e73');
 
 ### Encode/decode
 
-We support both PSBTv0 and draft PSBTv2 (there is no PSBTv1). If PSBTv2 transaction is encoded into PSBTv1, all PSBTv2 fields will be stripped.
+We support both PSBTv0 and PSBTv2 (there is no PSBTv1). Explicit PSBTv0 conversion removes
+PSBTv2-only fields after translating the unsigned transaction representation.
 
-We strip 'unknown' keys inside PSBT, they needed for new version/features support,
-however any unsupported feature/new version can significantly break assumptions about code.
-If you have use-case where they are needed, create a github issue.
+Assigned fields from BIPs 322, 353, 372, 373, 375, and 376 are decoded explicitly and survive the
+default path. `TxOpts.unknown` and `TxOpts.proprietary` govern only genuinely unknown and
+proprietary records:
 
-PSBTv2 features tx_modifiable and taproot+bip32 are not supported yet.
+- `ignore` preserves them, but the library may operate without understanding future constraints.
+- `strip` accepts and removes them; this is the default and can break interoperability with future
+  extensions.
+- `strict` rejects them.
+
+Undefined bits in PSBTv2 `txModifiable` follow the `unknown` policy. `strip` and `strict` can also
+fingerprint this library or version, while `ignore` offers better forwarding compatibility at the
+cost of interpreting less protocol state. The deprecated `allowUnknown` boolean maps `true` to
+`ignore` and `false` to `strip`.
 
 When signing an untrusted or multi-party PSBT, pass
 `{ strictPrevoutValidation: true }` to `Transaction.fromPSBT`. This requires every input to include
@@ -943,10 +952,28 @@ when making an on-chain bitcoin payment. The library:
 - calculates weight with good precision
 - implements multiple strategies
 
-Taproot estimation is precise, but you have to pass sighash if you want to use non-default one,
-because it changes signature size. For complex taproot trees you need to filter tapLeafScript
-to include only leafs which you can sign we estimate size with smallest leaf (same as finalization),
-but in specific case keys for this leaf can be unavailable (complex multisig)
+Taproot estimation is precise, but you have to pass `sighashType` when using a non-default
+sighash because it changes signature size. A Taproot input can advertise paths that the current
+wallet cannot spend. Pass the wallet's x-only public keys as `filterTaproot` to remove unavailable
+internal-key and script paths before selection:
+
+```js
+import * as btc from '@scure/btc-signer';
+
+const select = (utxos, outputs, changeAddress, feePerByte, myPublicKey) =>
+  btc.selectUTXO(utxos, outputs, 'default', {
+    changeAddress,
+    feePerByte,
+    filterTaproot: [myPublicKey],
+  });
+```
+
+Filtering is opt-in: when `filterTaproot` is omitted, no paths are removed. The standalone
+`btc.filterTaproot(utxos, [myPublicKey])` utility returns the same filtered candidate records.
+Built-in `tr_ns` and `tr_ms` paths are checked directly. Custom or unknown leaves are rejected;
+callers must filter those paths using their own semantics before invoking this helper. Estimation
+and finalization choose the available path with the smallest complete witness, retaining the old
+shallowest-path order for equal weights.
 
 `Oldest` / `Newest` expects UTXO provided in historical order (oldest first),
 otherwise we have no way to detect age of tx.

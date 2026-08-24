@@ -1,6 +1,6 @@
-import { utf8ToBytes } from '@noble/hashes/utils.js';
+import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
-import { hex } from '@scure/base';
+import { base64, hex } from '@scure/base';
 import * as bip32 from '@scure/bip32';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
@@ -10,6 +10,7 @@ import {
   PSBTInput,
   PSBTInputCoder,
   PSBTOutputCoder,
+  RawPSBTV2,
 } from '../src/psbt.ts';
 import { pubECDSA } from '../src/utils.ts';
 import { default as psbtV } from './vectors/psbt_vectors.js';
@@ -285,12 +286,18 @@ it('bip174-psbt: PSBT unknown keys', () => {
   ];
 
   // input unknown key
-  psbtWithoutAllowUnknown.updateInput(0, { unknown });
+  throws(
+    () => psbtWithoutAllowUnknown.updateInput(0, { unknown }),
+    /unknown PSBT field cannot be supplied when policy is strip/
+  );
   psbtWithAllowUnknown.updateInput(0, { unknown });
   psbtWithAllowUnknown.updateInput(0, { unknown: unknownNext });
 
   // output unknown key
-  psbtWithoutAllowUnknown.updateOutput(0, { unknown });
+  throws(
+    () => psbtWithoutAllowUnknown.updateOutput(0, { unknown }),
+    /unknown PSBT field cannot be supplied when policy is strip/
+  );
   psbtWithAllowUnknown.updateOutput(0, { unknown });
   psbtWithAllowUnknown.updateOutput(0, { unknown: unknownNext });
   // verify the unknown key is preserved only if the flag is set
@@ -306,7 +313,7 @@ it('bip174-psbt: PSBT unknown keys', () => {
 
   const encodedWithUnknown = _RawPSBTV0.decode(psbtWithAllowUnknown.toPSBT());
   encodedWithUnknown.global.unknown = unknownNext;
-  const proprietary = [[Uint8Array.of(1), Uint8Array.of(2)]];
+  const proprietary = [[Uint8Array.of(1, 0x61, 0), Uint8Array.of(2)]];
   encodedWithUnknown.global.proprietary = proprietary;
   encodedWithUnknown.inputs[0].proprietary = proprietary;
   encodedWithUnknown.outputs[0].proprietary = proprietary;
@@ -316,16 +323,22 @@ it('bip174-psbt: PSBT unknown keys', () => {
   deepStrictEqual(stripped.global.unknown, undefined);
   deepStrictEqual(stripped.inputs[0].unknown, undefined);
   deepStrictEqual(stripped.outputs[0].unknown, undefined);
-  deepStrictEqual(stripped.global.proprietary, proprietary);
-  deepStrictEqual(stripped.inputs[0].proprietary, proprietary);
-  deepStrictEqual(stripped.outputs[0].proprietary, proprietary);
+  deepStrictEqual(stripped.global.proprietary, undefined);
+  deepStrictEqual(stripped.inputs[0].proprietary, undefined);
+  deepStrictEqual(stripped.outputs[0].proprietary, undefined);
 
   const preserved = _RawPSBTV0.decode(
-    btc.Transaction.fromPSBT(injected, { allowUnknown: true }).toPSBT()
+    btc.Transaction.fromPSBT(injected, {
+      allowUnknown: true,
+      proprietary: 'ignore',
+    }).toPSBT()
   );
   deepStrictEqual(preserved.global.unknown, unknownNext);
   deepStrictEqual(preserved.inputs[0].unknown, unknown.concat(unknownNext));
   deepStrictEqual(preserved.outputs[0].unknown, unknown.concat(unknownNext));
+  deepStrictEqual(preserved.global.proprietary, proprietary);
+  deepStrictEqual(preserved.inputs[0].proprietary, proprietary);
+  deepStrictEqual(preserved.outputs[0].proprietary, proprietary);
 });
 
 // Regression / documentation tests. Tests marked KNOWN ISSUE assert current
@@ -420,6 +433,225 @@ it('tapTree DFS/completeness validation and leniencies', () => {
   // KNOWN ISSUE (leniency): leaf version with the parity bit set is accepted here,
   // while the tapLeafScript validator rejects it.
   PSBTOutputCoder.encode({ tapTree: [leaf(0, 0xc1)] } as any);
+});
+
+const psbtRow = (type: number, key: Uint8Array, value: Uint8Array) =>
+  Uint8Array.of(key.length + 1, type, ...key, value.length, ...value);
+const psbtMap = (...rows: Uint8Array[]) => concatBytes(...rows, Uint8Array.of(0));
+
+it('decodes every assigned PSBT extension field as known data', () => {
+  // Field layouts and version columns:
+  // BIP322: https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki#psbt-based-signing
+  // BIP353: https://github.com/bitcoin/bips/blob/master/bip-0353.mediawiki#psbt
+  // BIP372: https://github.com/bitcoin/bips/blob/master/bip-0372.mediawiki#specification
+  // BIP373: https://github.com/bitcoin/bips/blob/master/bip-0373.mediawiki#specification
+  // BIP375: https://github.com/bitcoin/bips/blob/master/bip-0375.mediawiki#specification
+  // BIP376: https://github.com/bitcoin/bips/blob/master/bip-0376.mediawiki#fields
+  const aggregate = hex.decode(
+    '030b58e337aa4d3852a8c29387c42408d8cfbe3a613a5e397e0a9f01a5fb7107d4'
+  );
+  const participant = hex.decode(
+    '02346b99593357107c9d3459e9deba8d3eaf44e6636c85c7f853eb90ba52e8cd00'
+  );
+  const scanKey = hex.decode('024fafd65f8169186fc2bfdb2233c77e630d10be280a24c7165c09a27611775c2c');
+  const spendKey = hex.decode('02f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9');
+  const leafHash = new Uint8Array(32).fill(1);
+  const pubNonce = new Uint8Array(66).fill(2);
+  const partialSig = new Uint8Array(32).fill(3);
+  const dleq = new Uint8Array(64).fill(4);
+  const tweak = new Uint8Array(32).fill(5);
+  const message = utf8ToBytes('registered fields are not unknown');
+  const dnssec = { name: utf8ToBytes('alice'), proof: Uint8Array.of(6, 7, 8) };
+  const musigKey = { participantPubkey: participant, aggregatePubkey: aggregate };
+  const musigLeafKey = { ...musigKey, leafHash };
+
+  const global = RawPSBTV2.decode(
+    concatBytes(
+      hex.decode('70736274ff'),
+      psbtMap(
+        psbtRow(0xfb, new Uint8Array(), hex.decode('02000000')),
+        psbtRow(0x02, new Uint8Array(), hex.decode('02000000')),
+        psbtRow(0x04, new Uint8Array(), Uint8Array.of(0)),
+        psbtRow(0x05, new Uint8Array(), Uint8Array.of(0)),
+        psbtRow(0x07, scanKey, spendKey),
+        psbtRow(0x08, scanKey, dleq),
+        psbtRow(0x09, new Uint8Array(), message)
+      )
+    )
+  ).global;
+  deepStrictEqual(global, {
+    version: 2,
+    txVersion: 2,
+    inputCount: 0,
+    outputCount: 0,
+    spEcdhShare: [[scanKey, spendKey]],
+    spDleq: [[scanKey, dleq]],
+    genericSignedMessage: message,
+  });
+
+  const input = PSBTInputCoder.decode(
+    psbtMap(
+      psbtRow(0x19, participant, tweak),
+      psbtRow(0x1a, aggregate, concatBytes(participant, scanKey, spendKey)),
+      psbtRow(0x1b, concatBytes(participant, aggregate), pubNonce),
+      psbtRow(0x1c, concatBytes(participant, aggregate, leafHash), partialSig),
+      psbtRow(0x1d, scanKey, spendKey),
+      psbtRow(0x1e, scanKey, dleq),
+      psbtRow(0x1f, spendKey, hex.decode('1122334401000000')),
+      psbtRow(0x20, new Uint8Array(), tweak)
+    )
+  );
+  deepStrictEqual(input, {
+    p2cKeyTweak: [[participant, tweak]],
+    musig2ParticipantPubkeys: [[aggregate, [participant, scanKey, spendKey]]],
+    musig2PubNonce: [[musigKey, pubNonce]],
+    musig2PartialSig: [[musigLeafKey, partialSig]],
+    spEcdhShare: [[scanKey, spendKey]],
+    spDleq: [[scanKey, dleq]],
+    spSpendBip32Derivation: [[spendKey, { fingerprint: 0x11223344, path: [1] }]],
+    spTweak: tweak,
+  });
+
+  const output = PSBTOutputCoder.decode(
+    psbtMap(
+      psbtRow(0x08, aggregate, concatBytes(participant, scanKey, spendKey)),
+      psbtRow(0x09, new Uint8Array(), concatBytes(scanKey, spendKey)),
+      psbtRow(0x0a, new Uint8Array(), hex.decode('78563412')),
+      psbtRow(
+        0x35,
+        new Uint8Array(),
+        concatBytes(Uint8Array.of(dnssec.name.length), dnssec.name, dnssec.proof)
+      )
+    )
+  );
+  deepStrictEqual(output, {
+    musig2ParticipantPubkeys: [[aggregate, [participant, scanKey, spendKey]]],
+    spV0Info: { scanKey, spendKey },
+    spV0Label: 0x12345678,
+    dnssecProof: dnssec,
+  });
+
+  // Default stripping is compatible with main's known/unknown boundary after updating the table:
+  // every currently assigned field survives, while only genuinely unassigned rows are unknown.
+  const tx = new btc.Transaction({ PSBTVersion: 2, allowUnknownOutputs: true });
+  tx.addInput({ txid: new Uint8Array(32), index: 0 });
+  tx.addOutput({ amount: 1n, script: Uint8Array.of(0x51) });
+  const assigned = RawPSBTV2.decode(tx.toPSBT(2));
+  Object.assign(assigned.global, {
+    spEcdhShare: global.spEcdhShare,
+    spDleq: global.spDleq,
+    genericSignedMessage: global.genericSignedMessage,
+  });
+  Object.assign(assigned.inputs[0], input);
+  Object.assign(assigned.outputs[0], output);
+  const relayed = btc.Transaction.fromPSBT(RawPSBTV2.encode(assigned)).toPSBT(2);
+  deepStrictEqual(RawPSBTV2.decode(relayed), assigned);
+});
+
+it('validates assigned extension field shapes and version exclusions', () => {
+  const pubkey = pubECDSA(privA);
+  const short = (length: number) => new Uint8Array(length);
+  const inputInvalid = [
+    psbtRow(0x19, pubkey, short(31)),
+    psbtRow(0x1a, pubkey, short(32)),
+    psbtRow(0x1b, concatBytes(pubkey, pubkey), short(65)),
+    psbtRow(0x1c, concatBytes(pubkey, pubkey), short(31)),
+    psbtRow(0x1d, pubkey, short(32)),
+    psbtRow(0x1e, pubkey, short(63)),
+    psbtRow(0x1f, short(32), hex.decode('11223344')),
+    psbtRow(0x20, new Uint8Array(), short(31)),
+  ];
+  for (const row of inputInvalid) throws(() => PSBTInputCoder.decode(psbtMap(row)));
+
+  const outputInvalid = [
+    psbtRow(0x08, pubkey, short(32)),
+    psbtRow(0x09, new Uint8Array(), short(65)),
+    psbtRow(0x0a, new Uint8Array(), short(3)),
+    psbtRow(0x35, new Uint8Array(), Uint8Array.of(3, 1)),
+  ];
+  for (const row of outputInvalid) throws(() => PSBTOutputCoder.decode(psbtMap(row)));
+  // Register the assigned field without adopting BIP375's draft cross-field semantics: this
+  // generic PSBT coder transports metadata but does not implement Silent Payment roles.
+  const labelOnly = { spV0Label: 1 };
+  deepStrictEqual(PSBTOutputCoder.decode(PSBTOutputCoder.encode(labelOnly)), labelOnly);
+
+  const tx = new btc.Transaction({ allowUnknownOutputs: true });
+  tx.addInput({ txid: TXID_01, index: 0 });
+  tx.addOutput({ script: Uint8Array.of(0x51), amount: 1n });
+  const v0 = _RawPSBTV0.decode(tx.toPSBT(0));
+  const invalidV0 = [
+    { global: [[{ type: 0x07, key: pubkey }, pubkey]] },
+    { inputs: [[[{ type: 0x1d, key: pubkey }, pubkey]]] },
+    {
+      outputs: [[[{ type: 0x09, key: new Uint8Array() }, concatBytes(pubkey, pubkey)]]],
+    },
+  ];
+  for (const fields of invalidV0) {
+    const raw = structuredClone(v0);
+    if (fields.global) raw.global.unknown = fields.global as any;
+    if (fields.inputs) raw.inputs[0].unknown = fields.inputs[0] as any;
+    if (fields.outputs) raw.outputs[0].unknown = fields.outputs[0] as any;
+    throws(() => btc.Transaction.fromPSBT(_RawPSBTV0.encode(raw)));
+  }
+
+  const scriptless = new btc.Transaction({ PSBTVersion: 2 });
+  scriptless.addInput({ txid: new Uint8Array(32), index: 0 });
+  // BIP375 remains draft and Core requires PSBT_OUT_SCRIPT. Supporting its assigned metadata does
+  // not make the high-level transaction API responsible for its provisional output state.
+  scriptless.addOutput({
+    amount: 1n,
+    spV0Info: { scanKey: pubkey, spendKey: pubkey },
+  });
+  // Match main's staged builder: incomplete state may exist in memory but cannot become a PSBT.
+  throws(() => scriptless.toPSBT(), /required field script/i);
+});
+
+it('relays supported BIP373/BIP375 vectors and rejects a scriptless draft vector', () => {
+  // BIP373: https://github.com/bitcoin/bips/blob/master/bip-0373.mediawiki#test-vectors
+  const bip373 = base64.decode(
+    'cHNidP8BAFICAAAAAVaG3/QAFl9OBApYVfZYCTRyybz4EIsnKl0x8YH3tP+xAQAAAAD9////' +
+      'ARjd9QUAAAAAFgAUyRI+BujX8JZsXRzQ+TMALU63V80AAAAAAAEBKwDh9QUAAAAAIlEgC1jjN6pN' +
+      'OFKowpOHxCQI2M++OmE6Xjl+Cp8BpftxB9QhFgtY4zeqTThSqMKTh8QkCNjPvjphOl45fgqfAaX7' +
+      'cQfUBQAmgN1uIRY0a5lZM1cQfJ00Weneuo0+r0TmY2yFx/hT65C6UujNAAUAWAsIhyEWT6/WX4Fp' +
+      'GG/Cv9siM8d+Yw0QvigKJMcWXAmidhF3XCwFAMMkmoIhFvkwigGSWMMQSTRPhfidUim1MchFg2+Zs' +
+      'IYB8RO84Db5BQB91lWSIhoDC1jjN6pNOFKowpOHxCQI2M++OmE6Xjl+Cp8BpftxB9RjAjRrmVkzV' +
+      'xB8nTRZ6d66jT6vROZjbIXH+FPrkLpS6M0AAk+v1l+BaRhvwr/bIjPHfmMNEL4oCiTHFlwJonYRd' +
+      '1wsAvkwigGSWMMQSTRPhfidUim1MchFg2+ZsIYB8RO84Db5AAA='
+  );
+  // BIP375: https://github.com/bitcoin/bips/blob/master/bip-0375.mediawiki#test-vectors
+  const bip375 = base64.decode(
+    'cHNidP8B+wQCAAAAAQIEAgAAAAEEAQEBBQEBAQYBACIHAzNh0/9y805rTnp775bluBUeZql5rc51P' +
+      'DnFg8vldm0oIQMKGLm7QZm4kzDrF/juWseG4IU9zS88zfF0S5fOTt4FPiIIAzNh0/9y805rTnp7' +
+      '75bluBUeZql5rc51PDnFg8vldm0oQCf7kMXWHHjjEVIA/9GD0o0KtIOAYslUGTTGQW1CZ84xvUK' +
+      'H6TWUUsCBevDvTVDP9XhDaw0o+e2PIbeaRHZAgI4AAQ4gGKcXZjsLqxSxKhp3EyP/HkB53VMuXd' +
+      'E+KOoQgccAmEoBDwQAAAAAAQEfQA0DAAAAAAAWABQimnLTSmRb00lru/ULu4HJBj9PlCICAsgXu' +
+      '3Uhr8NeqW87+ycObrUN3/pVYGJ7lh/sAPKZZQi/RzBEAiA3eo+fWjPY+iVcM7OSJtO88CKd+tlg' +
+      'Rw74AWpxQvIzWAIgCBvWlIh63us2Ia9aLeTw05yxNpLQQb99vM00oysFQekBAQMEAQAAACIGAsgX' +
+      'u3Uhr8NeqW87+ycObrUN3/pVYGJ7lh/sAPKZZQi/CAAAAIAAAAAAARAE/v///yIdAzNh0/9y805r' +
+      'Tnp775bluBUeZql5rc51PDnFg8vldm0oIQMKGLm7QZm4kzDrF/juWseG4IU9zS88zfF0S5fOTt4F' +
+      'PiIeAzNh0/9y805rTnp775bluBUeZql5rc51PDnFg8vldm0oQAATg9RmG+hyXvKQSPSMkR+J9fND' +
+      'F9fAwKzGDvZfG1K//3qW2DObYl34Orq1eqJz7c2aNceU2suxyGEXG7JnB18AAQMIkF8BAAAAAAAB' +
+      'BCJRINxNRNnjYeXnQ2V5x44lklVB4in9wVOtWYmtiuawYkx4AQlCAzNh0/9y805rTnp775bluBUe' +
+      'Zql5rc51PDnFg8vldm0oAxJmWB4+hBy7lN5i6nNVg6IyxMiI+m7e8uwvhweJ/B3UAA=='
+  );
+  // This official draft vector carries PSBT_OUT_SP_V0_INFO but omits PSBT_OUT_SCRIPT.
+  const bip375WithoutScript = base64.decode(
+    'cHNidP8B+wQCAAAAAQIEAgAAAAEEAQEBBQEBAQYBAAABDiAT8Qa2S1e1sTdvn2xHGQ9AzAazvty4' +
+      'qrqXhQqz1/Z9AgEPBAAAAAABASughgEAAAAAACJRIMgXu3Uhr8NeqW87+ycObrUN3/pVYGJ7lh/s' +
+      'APKZZQi/ARAE/v///wEXIMgXu3Uhr8NeqW87+ycObrUN3/pVYGJ7lh/sAPKZZQi/AAEDCBhzAQAA' +
+      'AAAAAQlCAnpIf8Gft2mHe4dC1uoYEY88TnKx6oxt5gKnrUpB2+BoA2HhseneXkLLIAf3ylS54NV' +
+      '+0Tk4+tVtPxnldROo/OA5AA=='
+  );
+  for (const vector of [bip373, bip375]) {
+    const parsed = btc.Transaction.fromPSBT(vector);
+    // BIP174 makes map order insignificant, and BIP375's official vector uses a different order
+    // from this library's table order. Compare the complete keyed maps, including every value.
+    deepStrictEqual(btc._DebugPSBT.decode(parsed.toPSBT()), btc._DebugPSBT.decode(vector));
+  }
+  // Keep BIP370/Core's required output script: registering BIP375 metadata does not implement its
+  // draft constructor role. Callers may put `0x00 || scanKey || spendKey` in the script field.
+  // The table validator names missing required fields before printing the field name.
+  throws(() => RawPSBTV2.decode(bip375WithoutScript), /required field script/i);
 });
 
 it.runWhen(import.meta.url);

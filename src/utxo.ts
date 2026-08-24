@@ -1,8 +1,15 @@
 import { hex } from '@scure/base';
 import * as P from 'micro-packed';
-import { Address, type CustomScript, OutScript, checkScript, tapLeafHash } from './payment.ts';
+import {
+  Address,
+  type CustomScript,
+  OutScript,
+  _WitnessOutScript,
+  checkScript,
+  tapLeafHash,
+} from './payment.ts';
 import * as psbt from './psbt.ts';
-import { CompactSizeLen, Script } from './script.ts';
+import { CompactSizeLen, RawWitness, Script } from './script.ts';
 import {
   SignatureHash,
   Transaction,
@@ -22,10 +29,12 @@ import {
   PubT,
   TAPROOT_UNSPENDABLE_KEY,
   type TArg,
+  type TRet,
   compareBytes,
   equalBytes,
   isBytes,
   sha256,
+  taprootTweakPubkey,
   validatePubkey,
   validateObject,
 } from './utils.ts';
@@ -43,6 +52,7 @@ export type Accumulated =
     }
   | undefined;
 type TapLeafScript = psbt.TransactionInput['tapLeafScript'];
+type TapLeaf = NonNullable<TapLeafScript>[number];
 type TB = Parameters<typeof psbt.TaprootControlBlock.encode>[0];
 const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
 // Be friendly to bad ECMAScript parsers by not using bigint literals.
@@ -50,76 +60,166 @@ const encodeTapBlock = (item: TB) => psbt.TaprootControlBlock.encode(item);
 const _0n = /* @__PURE__ */ BigInt(0), _3n = /* @__PURE__ */ BigInt(3);
 // Serialized length of VarBytes(data) without allocating the encoded copy
 const varLen = (dataLen: number) => CompactSizeLen.encode(dataLen).length + dataLen;
-const witnessWeight = (witness: Bytes[]): number => {
-  let weight = CompactSizeLen.encode(witness.length).length;
-  for (const item of witness) weight += varLen(item.length);
-  return weight;
+
+const tapLeafWitness = (
+  leaf: TArg<TapLeaf>,
+  sigSize: number,
+  customScripts?: TArg<CustomScript[]>,
+  pubkeys?: Set<string>,
+  unknownError = 'Finalize: Unknown tapLeafScript'
+): TRet<Bytes[] | undefined> => {
+  const [cb, _script] = leaf as TapLeaf;
+  const _customScripts = customScripts as CustomScript[] | undefined;
+  // Last byte is version
+  const script = _script.slice(0, -1);
+  const ver = _script[_script.length - 1];
+  const outs = OutScript.decode(script);
+  const available = (pubkey: TArg<Bytes>) => !pubkeys || pubkeys.has(hex.encode(pubkey as Bytes));
+  const empty = () => new Uint8Array(sigSize);
+  let signatures: Bytes[] = [];
+  if (outs.type === 'tr_ms') {
+    let added = 0;
+    for (const pubkey of outs.pubkeys) {
+      if (added === outs.m || !available(pubkey)) signatures.push(P.EMPTY);
+      else {
+        signatures.push(empty());
+        added++;
+      }
+    }
+    if (added !== outs.m) return;
+  } else if (outs.type === 'tr_ns') {
+    for (const pubkey of outs.pubkeys) {
+      if (!available(pubkey)) return;
+      signatures.push(empty());
+    }
+  } else {
+    if (!_customScripts) throw new Error(unknownError);
+    const leafHash = tapLeafHash(script, ver);
+    const scriptDecoded = Script.decode(script);
+    const scriptPubkeys = scriptDecoded.filter((i) => {
+      if (!isBytes(i)) return false;
+      try {
+        validatePubkey(i, PubT.schnorr);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }) as Bytes[];
+    const availablePubkeys = scriptPubkeys.filter(available);
+    // A custom finalizer may treat an unexpected empty signature list as malformed input. If the
+    // script embeds keys but none are owned, the path is unavailable without consulting the hook.
+    if (pubkeys && scriptPubkeys.length && !availablePubkeys.length) return;
+    let recognized = false;
+    for (const c of _customScripts) {
+      if (!c.finalizeTaproot) continue;
+      const csEncoded = c.encode(scriptDecoded);
+      if (csEncoded === undefined) continue;
+      recognized = true;
+      const finalized = c.finalizeTaproot(
+        script,
+        csEncoded,
+        availablePubkeys.map((pubKey) => [{ pubKey, leafHash }, empty()])
+      );
+      if (finalized) return finalized.concat(encodeTapBlock(cb)) as TRet<Bytes[]>;
+    }
+    if (recognized && pubkeys) return;
+    throw new Error(unknownError);
+  }
+  // Witness is stack, so last element will be used first
+  return signatures.reverse().concat([script, encodeTapBlock(cb)]) as TRet<Bytes[]>;
 };
-const largerWitness = (current: Bytes[] | undefined, candidate: Bytes[]): Bytes[] =>
-  !current || witnessWeight(candidate) > witnessWeight(current) ? candidate : current;
 
 function iterLeafs(
   tapLeafScript: TArg<TapLeafScript>,
   sigSize: number,
   customScripts?: TArg<CustomScript[]>
-): Bytes[] {
+): TRet<Bytes[]> {
   const _tapLeafScript = tapLeafScript as TapLeafScript;
   const _customScripts = customScripts as CustomScript[] | undefined;
   if (!_tapLeafScript || !_tapLeafScript.length) throw new Error('no leafs');
-  // Dummy non-empty Schnorr signature bytes for weight estimation.
-  // Unsigned tr_ms slots use P.EMPTY below.
-  const empty = () => new Uint8Array(sigSize);
-  let largest: Bytes[] | undefined;
-  for (const [cb, _script] of _tapLeafScript) {
-    // Last byte is version
-    const script = _script.slice(0, -1);
-    const ver = _script[_script.length - 1];
-    const outs = OutScript.decode(script);
+  // Start with the old shallowest-path order for stable equal-weight ties. Full witness size can
+  // reverse that order when a shallow leaf needs a larger script or more signatures.
+  const leafs = _tapLeafScript
+    .slice()
+    .sort((a, b) => encodeTapBlock(a[0]).length - encodeTapBlock(b[0]).length);
+  let smallest: Bytes[] | undefined;
+  let smallestSize = Number.POSITIVE_INFINITY;
+  for (const leaf of leafs) {
+    const witness = tapLeafWitness(leaf, sigSize, _customScripts);
+    if (!witness) continue;
+    const size = RawWitness.encode(witness).length;
+    if (size >= smallestSize) continue;
+    smallest = witness;
+    smallestSize = size;
+  }
+  if (!smallest) throw new Error('there was no witness');
+  return smallest as TRet<Bytes[]>;
+}
 
-    let signatures: Bytes[] = [];
-    if (outs.type === 'tr_ms') {
-      const m = outs.m;
-      const n = outs.pubkeys.length - m;
-      for (let i = 0; i < m; i++) signatures.push(empty());
-      for (let i = 0; i < n; i++) signatures.push(P.EMPTY);
-    } else if (outs.type === 'tr_ns') {
-      for (const _pub of outs.pubkeys) signatures.push(empty());
-    } else {
-      if (!_customScripts) throw new Error('Finalize: Unknown tapLeafScript');
-      const leafHash = tapLeafHash(script, ver);
-      let customWitness: Bytes[] | undefined;
-      for (const c of _customScripts) {
-        if (!c.finalizeTaproot) continue;
-        const scriptDecoded = Script.decode(script);
-        const csEncoded = c.encode(scriptDecoded);
-        if (csEncoded === undefined) continue;
-        const pubKeys = scriptDecoded.filter((i) => {
-          if (!isBytes(i)) return false;
-          try {
-            validatePubkey(i, PubT.schnorr);
-            return true;
-          } catch (e) {
-            return false;
-          }
-        }) as Bytes[];
-        const finalized = c.finalizeTaproot(
-          script,
-          csEncoded,
-          pubKeys.map((pubKey) => [{ pubKey, leafHash }, empty()])
-        );
-        if (!finalized) continue;
-        customWitness = finalized.concat(encodeTapBlock(cb));
-        break;
-      }
-      if (!customWitness) throw new Error('Finalize: Unknown tapLeafScript');
-      largest = largerWitness(largest, customWitness);
+/**
+ * Removes Taproot spend paths that cannot be satisfied by the supplied Schnorr public keys.
+ * Non-Taproot inputs are retained, and caller-owned input metadata is never mutated.
+ * @param inputs - candidate PSBT input records to filter
+ * @param pubkeys - available x-only Schnorr public keys
+ * @returns Copies of inputs that retain at least one available path
+ * @example
+ * Filter wallet UTXOs before selecting coins.
+ * ```ts
+ * import { filterTaproot } from '@scure/btc-signer/utxo.js';
+ * import { pubSchnorr, randomPrivateKeyBytes } from '@scure/btc-signer/utils.js';
+ * const spendable = filterTaproot([], [pubSchnorr(randomPrivateKeyBytes())]);
+ * ```
+ */
+export function filterTaproot(
+  inputs: TArg<psbt.TransactionInputUpdate[]>,
+  pubkeys: TArg<Bytes[]>
+): TRet<psbt.TransactionInputUpdate[]> {
+  aarray(inputs, 'inputs');
+  aarray(pubkeys, 'pubkeys');
+  const _inputs = inputs as psbt.TransactionInputUpdate[];
+  const _pubkeys = pubkeys as Bytes[];
+  const keys = new Set<string>();
+  for (const pubkey of _pubkeys) keys.add(hex.encode(validatePubkey(pubkey, PubT.schnorr)));
+  const res: psbt.TransactionInputUpdate[] = [];
+  for (const input of _inputs) {
+    const filtered = { ...input };
+    // BIP371 path fields are optional and empty keyed lists encode as absence, so the committed
+    // previous-output script is the authoritative input type.
+    const prevScript = _WitnessOutScript.decode(
+      getPrevOut(filtered as TArg<psbt.TransactionInput>).script
+    );
+    if (prevScript.type !== 'tr') {
+      res.push(filtered);
       continue;
     }
-    // Witness is stack, so last element will be used first
-    largest = largerWitness(largest, signatures.reverse().concat([script, encodeTapBlock(cb)]));
+    if (filtered.tapInternalKey) {
+      // A control block can reconstruct the root, but BIP371 does not require that inference.
+      // Omission may be broken data or an earlier filter deliberately disabling the key path.
+      // Recognize root omission only when the prevout proves this is an empty-tree commitment.
+      const hasRoot =
+        filtered.tapMerkleRoot !== undefined ||
+        equalBytes(taprootTweakPubkey(filtered.tapInternalKey, P.EMPTY)[0], prevScript.pubkey);
+      if (
+        !hasRoot ||
+        equalBytes(filtered.tapInternalKey, TAPROOT_UNSPENDABLE_KEY) ||
+        (!keys.has(hex.encode(filtered.tapInternalKey)) && !keys.has(hex.encode(prevScript.pubkey)))
+      )
+        delete filtered.tapInternalKey;
+    }
+    if (filtered.tapLeafScript) {
+      const sigSize =
+        filtered.sighashType !== undefined && filtered.sighashType !== SignatureHash.DEFAULT
+          ? 65
+          : 64;
+      const leafs = filtered.tapLeafScript.filter((leaf) =>
+        tapLeafWitness(leaf, sigSize, undefined, keys, 'filterTaproot: unknown Taproot leaf')
+      );
+      if (leafs.length) filtered.tapLeafScript = leafs;
+      else delete filtered.tapLeafScript;
+    }
+    if (filtered.tapInternalKey || filtered.tapLeafScript) res.push(filtered);
   }
-  if (!largest) throw new Error('there was no witness');
-  return largest;
+  return res as TRet<psbt.TransactionInputUpdate[]>;
 }
 
 function estimateInput(
@@ -135,19 +235,13 @@ function estimateInput(
   // schnorr sig is always 64 bytes. except for cases when sighash is not default!
   if (inputType.txType === 'taproot') {
     const SCHNORR_SIG_SIZE = inputType.sighash !== SignatureHash.DEFAULT ? 65 : 64;
-    let largest: Bytes[] | undefined;
-    // UTXO selection does not know which keys the eventual signer owns. Consider every advertised
-    // path and use the largest known satisfaction so the requested feerate remains a lower bound.
+    // A real internal key and every retained leaf declare paths available to this caller. Use
+    // filterTaproot before estimation when the supplied input contains unavailable paths.
     if (_input.tapInternalKey && !equalBytes(_input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
-      largest = [new Uint8Array(SCHNORR_SIG_SIZE)];
-    }
-    if (_input.tapLeafScript)
-      largest = largerWitness(
-        largest,
-        iterLeafs(_input.tapLeafScript, SCHNORR_SIG_SIZE, _opts.customScripts)
-      );
-    if (!largest) throw new Error('estimateInput/taproot: unknown input');
-    witness = largest;
+      witness = [new Uint8Array(SCHNORR_SIG_SIZE)];
+    } else if (_input.tapLeafScript) {
+      witness = iterLeafs(_input.tapLeafScript, SCHNORR_SIG_SIZE, _opts.customScripts);
+    } else throw new Error('estimateInput/taproot: unknown input');
   } else {
     // It is possible to grind signatures until they have minimal size, but
     // that changes the fee by +N satoshi. It would make estimation exact, but
@@ -226,6 +320,8 @@ export type EstimatorOpts = TxOpts & {
   createTx?: boolean; // Create tx inside selection
   requiredInputs?: psbt.TransactionInputUpdate[]; // these inputs always will be used
   allowSameUtxo?: boolean; // allow using UTXO multiple times (for test purposes)
+  /** Filter Taproot candidate paths to those satisfiable by these Schnorr public keys. */
+  filterTaproot?: Bytes[];
 };
 
 function getScript(o: TArg<Output>, opts: TArg<TxOpts> = {}, network = NETWORK) {
@@ -248,7 +344,7 @@ function getScript(o: TArg<Output>, opts: TArg<TxOpts> = {}, network = NETWORK) 
   // Keep selector-only `createTx: false` flows aligned with the transaction/PSBT output boundary:
   // satoshi-denominated outputs are not allowed to go negative.
   abigint(_o.amount, 'output.amount');
-  if (script && !_opts.allowUnknownOutputs && OutScript.decode(script).type === 'unknown') {
+  if (script && !_opts.allowUnknownOutputs && _WitnessOutScript.decode(script).type === 'unknown') {
     throw new Error(
       'Estimator: unknown output script type, there is a chance that input is unspendable. Pass allowUnknownOutputs=true, if you sure'
     );
@@ -291,6 +387,9 @@ export class _Estimator {
   private outputs: Output[];
   private opts: EstimatorOpts;
   constructor(inputs: psbt.TransactionInputUpdate[], outputs: Output[], opts: EstimatorOpts) {
+    // EstimatorOpts extends TxOpts, so resolve the complete transaction policy once even when
+    // createTx=false. This keeps selection normalization and a returned Transaction identical.
+    opts = new Transaction(opts).opts as EstimatorOpts;
     this.outputs = outputs;
     this.opts = opts;
     // Zero-fee estimation is useful on regtest/in tests, but negative fee rates would make
@@ -357,7 +456,8 @@ export class _Estimator {
         undefined,
         undefined,
         opts.disableScriptCheck,
-        opts.allowUnknown
+        opts.unknown!,
+        opts.proprietary!
       );
       inputBeforeSign(normalized as TArg<psbt.TransactionInput>); // check fields
       const key = `${hex.encode(normalized.txid!)}:${normalized.index}`;
@@ -639,6 +739,16 @@ export function selectUTXO(
   astring(strategy, 'strategy');
   // Public wrapper defaults to BIP69 ordering and tx construction unless callers override them.
   const _opts = { createTx: true, bip69: true, ...(opts as EstimatorOpts) };
-  const est = new _Estimator(inputs as psbt.TransactionInputUpdate[], outputs as Output[], _opts);
+  let candidates = inputs as psbt.TransactionInputUpdate[];
+  if (_opts.filterTaproot !== undefined) {
+    candidates = filterTaproot(candidates, _opts.filterTaproot);
+    if (_opts.requiredInputs) {
+      const requiredInputs = filterTaproot(_opts.requiredInputs, _opts.filterTaproot);
+      if (requiredInputs.length !== _opts.requiredInputs.length)
+        throw new Error('filterTaproot: required input has no available Taproot path');
+      _opts.requiredInputs = requiredInputs;
+    }
+  }
+  const est = new _Estimator(candidates, outputs as Output[], _opts);
   return est.result(strategy);
 }

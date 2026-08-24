@@ -1,5 +1,5 @@
 import { hex } from '@scure/base';
-import { anumber } from '@noble/hashes/utils.js';
+import { anumber, concatBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import {
   CompactSize,
@@ -23,6 +23,25 @@ import {
 } from './utils.ts';
 
 // PSBT BIP174, BIP370, BIP371
+
+/**
+ * Policy for PSBT fields this version does not understand.
+ *
+ * `ignore` preserves data for forward interoperability, but the library may operate without
+ * understanding future constraints. `strip` accepts then removes it, which can itself break
+ * interoperability with newer participants; `strict` rejects it. Non-`ignore` behavior also
+ * fingerprints noble/scure and potentially its version. When the original boolean handling was
+ * added, the PSBT registry had no assigned fields unknown to this library; assigned extensions are
+ * now explicit table entries and do not use this policy.
+ */
+export type Unknowns = 'ignore' | 'strip' | 'strict';
+type UnknownsArg = Unknowns | boolean;
+const unknowns = (mode: UnknownsArg, name: string): Unknowns => {
+  if (mode === true) return 'ignore';
+  if (mode === false) return 'strip';
+  if (mode === 'ignore' || mode === 'strip' || mode === 'strict') return mode;
+  throw new Error(`PSBT: invalid ${name} policy=${mode}`);
+};
 
 // Be friendly to bad ECMAScript parsers by not using bigint literals.
 // prettier-ignore
@@ -176,11 +195,67 @@ const tapTree = /* @__PURE__ */ (() =>
 // field-specific structure and length checks still live at the individual field definitions.
 // Keep a distinct name here so the byte coder does not collide with the Bytes type alias.
 const BytesInf: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(null);
+// PSBTKeyMap emits the 0xfc type byte itself, so the public value remains only the bytes after it.
+// Validate that raw suffix here: otherwise a caller-supplied leading 0xfc becomes a 252-byte
+// identifier declaration which scure can relay but Bitcoin Core cannot parse.
+const ProprietaryKey = /* @__PURE__ */ (() => {
+  const suffix = P.struct({
+    identifier: P.bytes(CompactSizeLen),
+    subtype: CompactSizeLen,
+    data: BytesInf,
+  });
+  return P.validate(BytesInf, (key) => {
+    try {
+      suffix.decode(key);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Proprietary key: expected BIP174 identifier and subtype, got ${message}`);
+    }
+    return key;
+  });
+})();
 // Shared 20-byte key-data helper for the BIP174 RIPEMD160 and HASH160 preimage maps.
 const Bytes20: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(20);
 // Shared 32-byte helper for fixed-size hash / txid / merkle-root byte fields; any stronger
 // semantics such as x-only pubkey validity still need to be enforced by the field that uses it.
 const Bytes32: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(32);
+const Bytes64: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(64);
+const Bytes66: P.CoderType<Bytes> = /* @__PURE__ */ P.bytes(66);
+// BIP373 uses the same aggregate-key participant list in input and output maps.
+const MuSig2Participants = /* @__PURE__ */ (() => P.array(null, PubKeyECDSACompressed))();
+type MuSig2Key = {
+  participantPubkey: Bytes;
+  aggregatePubkey: Bytes;
+  leafHash?: Bytes;
+};
+// BIP373 keys append an optional tapleaf hash to participant || aggregate. A structured key keeps
+// the optional hash distinct while preserving the exact 66/98-byte wire encoding.
+const MuSig2Key = /* @__PURE__ */ (() =>
+  P.apply(BytesInf, {
+    decode: (key: TArg<MuSig2Key>) => {
+      const _key = key as MuSig2Key;
+      return concatBytes(
+        PubKeyECDSACompressed.encode(_key.participantPubkey),
+        PubKeyECDSACompressed.encode(_key.aggregatePubkey),
+        _key.leafHash === undefined ? P.EMPTY : Bytes32.encode(_key.leafHash)
+      );
+    },
+    encode: (raw: TArg<Bytes>): TRet<MuSig2Key> => {
+      const _raw = raw as Bytes;
+      if (_raw.length !== 66 && _raw.length !== 98)
+        throw new Error(`MuSig2 key: expected 66 or 98 bytes, got ${_raw.length}`);
+      const key: MuSig2Key = {
+        participantPubkey: PubKeyECDSACompressed.decode(_raw.subarray(0, 33)),
+        aggregatePubkey: PubKeyECDSACompressed.decode(_raw.subarray(33, 66)),
+      };
+      if (_raw.length === 98) key.leafHash = Bytes32.decode(_raw.subarray(66));
+      return key as TRet<MuSig2Key>;
+    },
+  }))();
+const SilentPaymentInfo = /* @__PURE__ */ (() =>
+  P.struct({ scanKey: PubKeyECDSACompressed, spendKey: PubKeyECDSACompressed }))();
+// BIP353 prefixes the human-readable name with one byte; the RFC9102 proof is opaque here.
+const DNSSECProof = /* @__PURE__ */ (() => P.struct({ name: P.bytes(P.U8), proof: BytesInf }))();
 type PSBTKeyCoder = P.CoderType<any> | false;
 type PSBTKeyMapInfo = Readonly<
   [
@@ -244,8 +319,12 @@ export const PSBTGlobal = /* @__PURE__ */ (() => Object.freeze({
   outputCount:      PSBTInfo(0x05, false,      CompactSizeLen, [2], [2],    false),
   // TODO: bitfield
   txModifiable:     PSBTInfo(0x06, false,      P.U8,           [],  [2],    false),
+  // These assigned extension fields must not fall through the unknown-field policy.
+  spEcdhShare:      PSBTInfo(0x07, PubKeyECDSACompressed, PubKeyECDSACompressed, [], [2], false),
+  spDleq:           PSBTInfo(0x08, PubKeyECDSACompressed, Bytes64, [], [2], false),
+  genericSignedMessage: PSBTInfo(0x09, false, BytesInf, [], [0, 2], false),
   version:          PSBTInfo(0xfb, false,      P.U32LE,        [],  [0, 2], false),
-  proprietary:      PSBTInfo(0xfc, BytesInf,   BytesInf,       [],  [0, 2], false),
+  proprietary:      PSBTInfo(0xfc, ProprietaryKey, BytesInf,   [],  [0, 2], false),
 } as const))();
 // prettier-ignore
 /**
@@ -293,7 +372,15 @@ export const PSBTInput = /* @__PURE__ */ (() => Object.freeze({
   tapBip32Derivation:     PSBTInfo(0x16, PubKeySchnorr,       TaprootBIP32Der,   [],  [0, 2], false),
   tapInternalKey:         PSBTInfo(0x17, false,               PubKeySchnorr,     [],  [0, 2], false),
   tapMerkleRoot:          PSBTInfo(0x18, false,               Bytes32,           [],  [0, 2], false),
-  proprietary:            PSBTInfo(0xfc, BytesInf,            BytesInf,          [],  [0, 2], false),
+  p2cKeyTweak:            PSBTInfo(0x19, PubKeyECDSACompressed, Bytes32,          [],  [0, 2], false),
+  musig2ParticipantPubkeys: PSBTInfo(0x1a, PubKeyECDSACompressed, MuSig2Participants, [], [0, 2], false),
+  musig2PubNonce:         PSBTInfo(0x1b, MuSig2Key,            Bytes66,           [],  [0, 2], false),
+  musig2PartialSig:       PSBTInfo(0x1c, MuSig2Key,            Bytes32,           [],  [0, 2], false),
+  spEcdhShare:            PSBTInfo(0x1d, PubKeyECDSACompressed, PubKeyECDSACompressed, [], [2], false),
+  spDleq:                 PSBTInfo(0x1e, PubKeyECDSACompressed, Bytes64,           [],  [2], false),
+  spSpendBip32Derivation: PSBTInfo(0x1f, PubKeyECDSACompressed, BIP32Der,          [],  [2], false),
+  spTweak:                PSBTInfo(0x20, false,                 Bytes32,           [],  [2], false),
+  proprietary:            PSBTInfo(0xfc, ProprietaryKey,      BytesInf,          [],  [0, 2], false),
 } as const))();
 // All other keys removed when finalizing
 /**
@@ -308,38 +395,45 @@ export const PSBTInput = /* @__PURE__ */ (() => Object.freeze({
  */
 export const PSBTInputFinalKeys = /* @__PURE__ */ Object.freeze<(keyof TransactionInput)[]>([
   // PSBTv2 extractors rebuild the final transaction from per-input fields, so
-  // finalized inputs still need txid/index (and any non-default sequence)
+  // finalized inputs still need txid/index, any non-default sequence, and locktime requirements
   // even though BIP174's generic cleanup is stricter.
   'txid',
   'sequence',
   'index',
   'witnessUtxo',
   'nonWitnessUtxo',
+  'requiredTimeLocktime',
+  'requiredHeightLocktime',
   'finalScriptSig',
   'finalScriptWitness',
   'unknown',
 ]);
 
-// Can be modified even on signed input
 /**
- * Input fields that may still change after signing starts.
+ * Signature and final-satisfaction fields used while reopening a finalized input.
  * @example
- * Signed inputs may still update these fields while new signatures are being added.
+ * Finalized inputs may remove their existing satisfaction before further mutation.
  * ```ts
- * import { PSBTInputUnsignedKeys } from '@scure/btc-signer/psbt.js';
- * const mutableKeys = new Set(PSBTInputUnsignedKeys);
+ * import { PSBTInputSignatureKeys } from '@scure/btc-signer/psbt.js';
+ * const mutableKeys = new Set(PSBTInputSignatureKeys);
  * mutableKeys.has('tapScriptSig');
  * ```
  */
-export const PSBTInputUnsignedKeys = /* @__PURE__ */ Object.freeze<(keyof TransactionInput)[]>([
-  // Signature/finalization material can still be aggregated after signing. Every other field is
-  // frozen, including fields and keyed entries that were absent when the first signature arrived.
+export const PSBTInputSignatureKeys = /* @__PURE__ */ Object.freeze<(keyof TransactionInput)[]>([
   'partialSig',
   'finalScriptSig',
   'finalScriptWitness',
   'tapKeySig',
   'tapScriptSig',
 ]);
+
+/**
+ * A static list cannot describe mutable input fields because that depends on each signature's
+ * algorithm, sighash, and target index.
+ * @deprecated Use {@link PSBTInputSignatureKeys} only for signature/final-satisfaction records;
+ * transaction mutation is enforced by {@link Transaction.updateInput}.
+ */
+export const PSBTInputUnsignedKeys = PSBTInputSignatureKeys;
 
 // prettier-ignore
 /**
@@ -364,7 +458,11 @@ export const PSBTOutput = /* @__PURE__ */ (() => Object.freeze({
   // reconstruct the same Taproot tree, not just an arbitrary list of serialized leaves.
   tapTree:            PSBTInfo(0x06, false,         tapTree,         [],  [0, 2], false),
   tapBip32Derivation: PSBTInfo(0x07, PubKeySchnorr, TaprootBIP32Der, [],  [0, 2], false),
-  proprietary:        PSBTInfo(0xfc, BytesInf,      BytesInf,        [],  [0, 2], false),
+  musig2ParticipantPubkeys: PSBTInfo(0x08, PubKeyECDSACompressed, MuSig2Participants, [], [0, 2], false),
+  spV0Info:            PSBTInfo(0x09, false,         SilentPaymentInfo, [],  [2],    false),
+  spV0Label:           PSBTInfo(0x0a, false,         P.U32LE,           [],  [2],    false),
+  dnssecProof:         PSBTInfo(0x35, false,         DNSSECProof,       [],  [0, 2], false),
+  proprietary:        PSBTInfo(0xfc, ProprietaryKey, BytesInf,        [],  [0, 2], false),
 } as const))();
 
 // Can be modified even on signed input
@@ -769,9 +867,18 @@ function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>): P.UnwrapCoder<PSBTRaw> {
   if (tx.inputs.length !== inputCount)
     throw new Error(`Wrong number of input maps=${tx.inputs.length}, expected=${inputCount}`);
   // PSBTv0 compatibility mode may append exactly one empty output map when the unsigned
-  // transaction has no outputs. PSBTv2 map counts remain strict.
+  // transaction has no outputs. bip174js additionally inserts an empty input map when there are
+  // no inputs; count-framing makes that map appear before the real output maps in this array.
+  // PSBTv2 map counts remain strict.
   const outputCount = !version ? tx.global.unsignedTx!.outputs.length : tx.global.outputCount!;
   if (tx.outputs.length < outputCount) throw new Error('Not outputs inputs');
+  const hasBip174InputMap =
+    version === 0 &&
+    inputCount === 0 &&
+    Object.keys(tx.outputs[0] || {}).length === 0 &&
+    ((outputCount > 0 && tx.outputs.length === outputCount + 1) ||
+      (outputCount === 0 && tx.outputs.length === 2 && Object.keys(tx.outputs[1]).length === 0));
+  if (hasBip174InputMap) return tx;
   const outputsLeft = tx.outputs.slice(outputCount);
   if (
     outputsLeft.length > 1 ||
@@ -787,7 +894,8 @@ function validatePSBT(tx: P.UnwrapCoder<PSBTRaw>): P.UnwrapCoder<PSBTRaw> {
  * @param val - new values to merge in
  * @param cur - existing decoded PSBT key map
  * @param allowedFields - fields still allowed to change
- * @param allowUnknown - whether to preserve unknown PSBT fields
+ * @param unknown - handling policy for unknown PSBT fields
+ * @param proprietary - handling policy for proprietary PSBT fields
  * @returns Merged PSBT key map.
  * @throws If keyed PSBT fields conflict or signed fields would be removed. {@link Error}
  * @example
@@ -810,7 +918,8 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
   val: TArg<PSBTKeyMapKeys<T>>,
   cur?: TArg<PSBTKeyMapKeys<T>>,
   allowedFields?: TArg<readonly (keyof PSBTKeyMapKeys<T>)[]>,
-  allowUnknown?: boolean
+  unknown: UnknownsArg = 'strip',
+  proprietary: UnknownsArg = 'strip'
 ): TRet<PSBTKeyMapKeys<T>> {
   validateObject(psbtEnum as Record<string, any>, {}, {}, 'psbtEnum');
   validateObject(val as Record<string, any>, {}, {}, 'val');
@@ -819,10 +928,24 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
   const _val = val as PSBTKeyMapKeys<T>;
   const _cur = cur as PSBTKeyMapKeys<T> | undefined;
   const _allowedFields = allowedFields as readonly (keyof PSBTKeyMapKeys<T>)[] | undefined;
+  const unknownMode = unknowns(unknown, 'unknown');
+  const proprietaryMode = unknowns(proprietary, 'proprietary');
+  for (const [name, mode] of [
+    ['unknown', unknownMode],
+    ['proprietary', proprietaryMode],
+  ] as const) {
+    if (mode !== 'strict') continue;
+    if (
+      (_val[name] as unknown[] | undefined)?.length ||
+      (_cur?.[name] as unknown[] | undefined)?.length
+    )
+      throw new Error(`PSBT: ${name} PSBT field is not allowed in strict mode`);
+  }
   const res: PSBTKeyMapKeys<T> = { ..._cur, ..._val };
   // All arguments can be provided as hex
   for (const k in psbtEnum) {
     const key = k as keyof typeof psbtEnum;
+    if (k === 'proprietary' && proprietaryMode !== 'ignore') continue;
     const [_, kC, vC] = psbtEnum[key];
     type _KV = [P.UnwrapCoder<typeof kC>, P.UnwrapCoder<typeof vC>];
     const cannotChange = _allowedFields && !_allowedFields.includes(k);
@@ -884,8 +1007,8 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
       }
     }
   }
-  if (allowUnknown && _val.unknown) {
-    // Unknown PSBT rows are stripped by default here, but explicit allowUnknown mode is pass-through.
+  if (unknownMode === 'ignore' && _val.unknown) {
+    // Unknown PSBT rows are stripped by default here, but explicit ignore mode is pass-through.
     // Merge them by full serialized unknown key so repeated updates do not clobber earlier opaque rows.
     const map: Record<string, [P.UnwrapCoder<typeof PSBTUnknownKey>, Bytes]> = {};
     for (const [k, v] of _cur?.unknown || []) map[hex.encode(PSBTUnknownKey.encode(k))] = [k, v];
@@ -902,13 +1025,15 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
     }
     res.unknown = Object.values(map);
   }
-  // Remove unknown keys except the "unknown" array if allowUnknown is true
+  // Remove properties outside the table, except opaque rows in explicit ignore mode.
   for (const k in res) {
     if (!psbtEnum[k]) {
-      if (allowUnknown && k === 'unknown') continue;
+      if (unknownMode === 'ignore' && k === 'unknown') continue;
       delete res[k];
     }
   }
+  if (unknownMode !== 'ignore') delete res.unknown;
+  if (proprietaryMode !== 'ignore') delete res.proprietary;
   return res as TRet<PSBTKeyMapKeys<T>>;
 }
 
@@ -918,15 +1043,23 @@ export function mergeKeyMap<T extends PSBTKeyMap>(
  * @param psbtEnum - PSBT field definition table
  * @param current - first map
  * @param other - second map
- * @param allowUnknown - whether to preserve unknown PSBT fields
+ * @param unknown - handling policy for unknown PSBT fields
+ * @param proprietary - handling policy for proprietary PSBT fields
  * @returns The symmetric map union.
  * @throws If both maps provide different values for the same scalar field. {@link Error}
+ * @example
+ * Combine disjoint global metadata without choosing an operand as authoritative.
+ * ```ts
+ * import { combineKeyMap, PSBTGlobal } from '@scure/btc-signer/psbt.js';
+ * combineKeyMap(PSBTGlobal, { txVersion: 2 }, { fallbackLocktime: 0 });
+ * ```
  */
 export function combineKeyMap<T extends PSBTKeyMap>(
   psbtEnum: T,
   current: TArg<PSBTKeyMapKeys<T>>,
   other: TArg<PSBTKeyMapKeys<T>>,
-  allowUnknown?: boolean
+  unknown: UnknownsArg = 'strip',
+  proprietary: UnknownsArg = 'strip'
 ): TRet<PSBTKeyMapKeys<T>> {
   validateObject(psbtEnum as Record<string, any>, {}, {}, 'psbtEnum');
   validateObject(current as Record<string, any>, {}, {}, 'current');
@@ -944,7 +1077,7 @@ export function combineKeyMap<T extends PSBTKeyMap>(
     if (!equalBytes(valueCoder.encode(a), valueCoder.encode(b)))
       throw new Error(`Cannot combine conflicting field=${k}`);
   }
-  return mergeKeyMap(psbtEnum, _other, _current, undefined, allowUnknown);
+  return mergeKeyMap(psbtEnum, _other, _current, undefined, unknown, proprietary);
 }
 
 /** Validated PSBTv0 coder. */
