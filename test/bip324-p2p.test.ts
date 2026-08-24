@@ -9,7 +9,7 @@ import {
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as fs from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { elligatorSwift } from '../src/p2p.ts';
 import { pubSchnorr } from '../src/utils.ts';
@@ -17,8 +17,19 @@ import { pubSchnorr } from '../src/utils.ts';
 // https://eprint.iacr.org/2022/759
 export const __dirname = dirname(fileURLToPath(import.meta.url));
 
+const vectorPath = (path) => {
+  let dir = __dirname;
+  while (true) {
+    const candidate = join(dir, 'vectors', path);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error(`Cannot find test vector: ${path}`);
+    dir = parent;
+  }
+};
+
 const parseCSV = (path) => {
-  const data = fs.readFileSync(`${__dirname}/vectors/${path}`, 'utf8');
+  const data = fs.readFileSync(vectorPath(path), 'utf8');
   const lines = data.split('\n').filter((i) => !!i);
   const rows = lines.map((i) => i.trim().split(','));
   const lengths = new Set(rows.map((i) => i.length));

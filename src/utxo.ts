@@ -361,10 +361,7 @@ type AccumStrategy = `accum${SortStrategy}`;
 
 /** Supported UTXO selection strategies. */
 export type SelectionStrategy =
-  | 'all'
-  | 'default'
-  | AccumStrategy
-  | `${ExactStrategy}/${AccumStrategy}`;
+  'all' | 'default' | AccumStrategy | `${ExactStrategy}/${AccumStrategy}`;
 
 // class, because we need to re-use normalized inputs, instead of parsing each time
 // internal stuff, exported for tests only

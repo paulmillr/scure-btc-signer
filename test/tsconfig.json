@@ -1,14 +1,11 @@
 {
   "extends": "@paulmillr/jsbt/tsconfig.test.json",
   "compilerOptions": {
+    "allowJs": true,
     "rootDir": "..",
     "outDir": "compiled",
+    "resolveJsonModule": true
   },
-  "include": [
-    "../src",
-    "./*.ts"
-, "benchmark/network.ts", "misc/proxy.ts"  ],
-  "exclude": [
-    "node_modules"
-  ]
+  "include": ["../src", "./*.ts", "benchmark/network.ts", "misc/proxy.ts"],
+  "exclude": ["node_modules"]
 }

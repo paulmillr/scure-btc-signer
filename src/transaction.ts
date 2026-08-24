@@ -62,7 +62,7 @@ const stripCodeSeparator = (script: TArg<Bytes>): TRet<Bytes> => {
   // byte, because semantic decode/re-encode would change the signed digest.
   let start = 0;
   const out: Uint8Array[] = [];
-  for (let i = 0; i < script.length; ) {
+  for (let i = 0; i < script.length;) {
     const pos = i;
     const op = script[i++];
     if (op === OP.CODESEPARATOR) {
