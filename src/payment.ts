@@ -884,7 +884,7 @@ function checkTaprootScript(
   const outms = out as OutTRNSType | OutTRMSType;
   if (!allowUnknownOutputs && outms.pubkeys) {
     for (const p of outms.pubkeys) {
-      if (u.equalBytes(p, u.TAPROOT_UNSPENDABLE_KEY))
+      if (u.equalBytes(p, u.taprootNumsKey()))
         throw new Error('Unspendable taproot key in leaf script');
       // It's likely a mistake at this point:
       // 1. p2tr(A, p2tr_ns(2, [A, B])) == p2tr(A, p2tr_pk(B)) (A or B key)
@@ -1133,7 +1133,7 @@ export const tapLeafHash = (script: TArg<Bytes>, version: number = TAP_LEAF_VERS
 
 // Works as key OR tree.
 // If we only have tree, need to add unspendable key, otherwise
-// complex multisig wallet can be spent by owner of key only. See TAPROOT_UNSPENDABLE_KEY
+// complex multisig wallet can be spent by owner of key only. See taprootNumsKey
 /** Conditional taproot return type for key-only or tree-backed outputs. */
 export type P2TRRet<T> = T extends TaprootScriptTree ? P2TR_TREE : P2TR;
 /**
@@ -1183,7 +1183,7 @@ export function p2tr(
   const pubKey =
     typeof internalPubKey === 'string'
       ? hex.decode(internalPubKey)
-      : internalPubKey || u.TAPROOT_UNSPENDABLE_KEY;
+      : (internalPubKey ?? u.taprootNumsKey());
   if (!isValidPubkey(pubKey, u.PubT.schnorr)) throw new Error('p2tr: non-schnorr pubkey');
   if (tree) {
     let hashedTree = taprootAddPath(

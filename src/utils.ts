@@ -411,9 +411,31 @@ export function taprootTweakPubkey(pubKey: TArg<Bytes>, h: TArg<Bytes>): TRet<[B
 // This is the fixed BIP 341 H example, not the privacy-preserving H + rG variant.
 // Downstream helpers use exact-byte equality with it to recognize
 // library-generated script-only outputs.
-/** Standard unspendable internal key used for script-only Taproot outputs. */
-export const TAPROOT_UNSPENDABLE_KEY: TRet<Bytes> = /* @__PURE__ */ (() =>
+// Keep the value used by library internals private: exported Uint8Arrays are mutable, so the
+// public compatibility export below cannot safely be a source of cryptographic key material.
+const INTERNAL_TAPROOT_NUMS: TRet<Bytes> = /* @__PURE__ */ (() =>
   sha256(Point.BASE.toBytes(false)) as TRet<Bytes>)();
+
+/**
+ * Standard unspendable internal key used for script-only Taproot outputs.
+ * @deprecated Use {@link taprootNumsKey} to receive an owned copy.
+ */
+export const TAPROOT_UNSPENDABLE_KEY: TRet<Bytes> = /* @__PURE__ */ (() =>
+  Uint8Array.from(INTERNAL_TAPROOT_NUMS) as TRet<Bytes>)();
+
+/**
+ * Returns an owned copy of the library's stable Taproot NUMS key.
+ * @returns A new 32-byte NUMS key copy.
+ * @example
+ * Obtain an internal key without sharing mutable exported storage.
+ * ```ts
+ * import { taprootNumsKey } from '@scure/btc-signer/utils.js';
+ * const internalKey = taprootNumsKey();
+ * ```
+ */
+export function taprootNumsKey(): TRet<Bytes> {
+  return Uint8Array.from(INTERNAL_TAPROOT_NUMS) as TRet<Bytes>;
+}
 
 /** Bitcoin network parameters. */
 export type BTC_NETWORK = {

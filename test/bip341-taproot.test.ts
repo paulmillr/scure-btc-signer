@@ -1,7 +1,7 @@
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { it } from '@paulmillr/jsbt/test.js';
 import { hex } from '@scure/base';
-import { deepStrictEqual, throws } from 'node:assert';
+import { deepStrictEqual, notStrictEqual, throws } from 'node:assert';
 import * as btc from '../src/index.ts';
 import { default as v341 } from './vectors/bip341.json' with { type: 'json' };
 
@@ -236,15 +236,54 @@ it('BIP341: TaprootListToTree', () => {
 });
 
 it('verify unspendable key', () => {
+  const numsKey = btc.taprootNumsKey();
   deepStrictEqual(
-    hex.encode(btc.TAPROOT_UNSPENDABLE_KEY),
+    hex.encode(numsKey),
     '50929b74c1a04954b78b4b6035e97a5e078a5a0f28ec96d547bfee9ace803ac0'
   );
+  notStrictEqual(numsKey, btc.taprootNumsKey());
+  deepStrictEqual(numsKey, btc.TAPROOT_UNSPENDABLE_KEY);
 });
 
 // Regression tests.
 const TXID_01 = '00'.repeat(31) + '01';
 const privC = hex.decode('04'.repeat(32));
+
+it('script-only Taproot does not trust mutable NUMS aliases', () => {
+  const originalNums = btc.taprootNumsKey();
+  const leaf = btc.p2tr_pk(btc.utils.pubSchnorr(privC));
+  const expected = btc.p2tr(undefined, leaf);
+  const attackerPriv = new Uint8Array(32);
+  attackerPriv[31] = 7;
+  try {
+    btc.TAPROOT_UNSPENDABLE_KEY.set(btc.utils.pubSchnorr(attackerPriv));
+    deepStrictEqual(btc.taprootNumsKey(), originalNums);
+    const afterExportMutation = btc.p2tr(undefined, leaf);
+    deepStrictEqual(afterExportMutation.script, expected.script);
+    deepStrictEqual(afterExportMutation.tapInternalKey, originalNums);
+    notStrictEqual(afterExportMutation.tapInternalKey, btc.TAPROOT_UNSPENDABLE_KEY);
+    throws(
+      () => btc.p2tr(btc.utils.pubSchnorr(attackerPriv), btc.p2tr_pk(originalNums)),
+      /Unspendable taproot key/
+    );
+
+    const candidate = {
+      ...expected,
+      txid: new Uint8Array(32),
+      index: 0,
+      witnessUtxo: { amount: 10_000n, script: expected.script },
+    };
+    deepStrictEqual(btc.filterTaproot([candidate], [expected.tweakedPubkey]), []);
+
+    afterExportMutation.tapInternalKey.fill(0);
+    const afterDescriptorMutation = btc.p2tr(undefined, leaf);
+    deepStrictEqual(afterDescriptorMutation.script, expected.script);
+    deepStrictEqual(afterDescriptorMutation.tapInternalKey, originalNums);
+    notStrictEqual(afterDescriptorMutation.tapInternalKey, afterExportMutation.tapInternalKey);
+  } finally {
+    btc.TAPROOT_UNSPENDABLE_KEY.set(originalNums);
+  }
+});
 
 it('taproot SIGHASH_SINGLE without matching output', () => {
   const pub = btc.utils.pubSchnorr(privC);

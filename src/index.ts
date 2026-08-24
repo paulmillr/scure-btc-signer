@@ -26,7 +26,7 @@ export {
 export type { ScriptType } from './script.ts';
 export { getInputType, Transaction } from './transaction.ts';
 export type { TxOpts, Unknowns } from './transaction.ts';
-export { NETWORK, TAPROOT_UNSPENDABLE_KEY, TEST_NETWORK } from './utils.ts';
+export { NETWORK, TAPROOT_UNSPENDABLE_KEY, TEST_NETWORK, taprootNumsKey } from './utils.ts';
 export type { TArg, TRet } from './utils.ts';
 export { filterTaproot, selectUTXO } from './utxo.ts';
 

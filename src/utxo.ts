@@ -27,13 +27,13 @@ import {
   type Bytes,
   NETWORK,
   PubT,
-  TAPROOT_UNSPENDABLE_KEY,
   type TArg,
   type TRet,
   compareBytes,
   equalBytes,
   isBytes,
   sha256,
+  taprootNumsKey,
   taprootTweakPubkey,
   validatePubkey,
   validateObject,
@@ -201,7 +201,7 @@ export function filterTaproot(
         equalBytes(taprootTweakPubkey(filtered.tapInternalKey, P.EMPTY)[0], prevScript.pubkey);
       if (
         !hasRoot ||
-        equalBytes(filtered.tapInternalKey, TAPROOT_UNSPENDABLE_KEY) ||
+        equalBytes(filtered.tapInternalKey, taprootNumsKey()) ||
         (!keys.has(hex.encode(filtered.tapInternalKey)) && !keys.has(hex.encode(prevScript.pubkey)))
       )
         delete filtered.tapInternalKey;
@@ -237,7 +237,7 @@ function estimateInput(
     const SCHNORR_SIG_SIZE = inputType.sighash !== SignatureHash.DEFAULT ? 65 : 64;
     // A real internal key and every retained leaf declare paths available to this caller. Use
     // filterTaproot before estimation when the supplied input contains unavailable paths.
-    if (_input.tapInternalKey && !equalBytes(_input.tapInternalKey, TAPROOT_UNSPENDABLE_KEY)) {
+    if (_input.tapInternalKey && !equalBytes(_input.tapInternalKey, taprootNumsKey())) {
       witness = [new Uint8Array(SCHNORR_SIG_SIZE)];
     } else if (_input.tapLeafScript) {
       witness = iterLeafs(_input.tapLeafScript, SCHNORR_SIG_SIZE, _opts.customScripts);
