@@ -1,4 +1,4 @@
-name: Run scheduled tests
+name: Large tests
 on:
   schedule:
     - cron: '0 20 * * 1,4' # 14:00 bi-weekly (mon, thu)
