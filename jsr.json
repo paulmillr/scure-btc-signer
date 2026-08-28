@@ -1,6 +1,6 @@
 {
   "name": "@scure/btc-signer",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "exports": {
     ".": "./src/index.ts",
     "./musig2.js": "./src/musig2.ts",
