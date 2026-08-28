@@ -950,8 +950,13 @@ export class EsploraProvider {
       const remaining =
         options.timeoutMs === undefined ? pollIntervalMs : options.timeoutMs - (Date.now() - start);
       if (remaining <= 0) throw new EsploraError('waitForTx: timeout');
-      // Cap the sleep so the next loop checks the deadline before another poll.
-      await sleep(Math.min(pollIntervalMs, remaining), options.signal);
+      if (options.timeoutMs !== undefined && remaining <= pollIntervalMs) {
+        // Sleeping the rest of the window reaches the deadline; the timer may
+        // wake before Date.now() agrees, so don't re-poll on a clock check.
+        await sleep(remaining, options.signal);
+        throw new EsploraError('waitForTx: timeout');
+      }
+      await sleep(pollIntervalMs, options.signal);
     }
   }
   async txInfo(txid: string): Promise<TxInfo> {
