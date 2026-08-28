@@ -6,6 +6,6 @@ on:
 jobs:
   slow:
     name: Large multisig tests
-    uses: paulmillr/jsbt/.github/workflows/test-custom.yml@78e04b481416536e0d4369a3c9f718be306491f8
+    uses: paulmillr/jsbt/.github/workflows/test-custom.yml@c138efca67d90dce86a7cc22c01d6b66d193ea7a
     with:
       npm-task: test:slow
