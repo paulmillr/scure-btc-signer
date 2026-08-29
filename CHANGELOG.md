@@ -1,6 +1,6 @@
 # Changelog for scure-btc-signer
 
-## 2.4.1 (2026-08-28)
+## 2.4.1 (2026-08-29)
 
 - Upgrade micro-packed to 0.11.1
 
