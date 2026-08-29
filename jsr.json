@@ -17,7 +17,7 @@
     "@noble/curves": "jsr:@noble/curves@2.4.0",
     "@noble/hashes": "jsr:@noble/hashes@2.4.0",
     "@scure/base": "jsr:@scure/base@2.4.0",
-    "micro-packed": "jsr:@paulmillr/micro-packed@0.11.0"
+    "micro-packed": "jsr:@paulmillr/micro-packed@0.11.1"
   },
   "publish": {
     "include": [
