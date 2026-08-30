@@ -15,12 +15,12 @@
     "micro-packed": "0.11.1"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.7.1",
-    "bismar": "0.1.8",
+    "@paulmillr/jsbt": "0.7.2",
+    "bismar": "0.1.9",
     "@scure/bip32": "2.4.0",
     "micro-ftch": "1.2.0",
     "prettier": "3.9.6",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   },
   "scripts": {
     "benchmark:size": "bismar -bsm",

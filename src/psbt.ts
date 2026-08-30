@@ -850,7 +850,8 @@ export function cleanPSBTFields<T extends PSBTKeyMap>(
         );
       }
     }
-    out[k] = _lst[k];
+    // TS7 cannot relate the intersection property type when writing through the generic key.
+    (out as Record<string, unknown>)[k] = _lst[k];
   }
   return out as TRet<PSBTKeyMapKeys<T>>;
 }
