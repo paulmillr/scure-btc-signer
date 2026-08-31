@@ -374,7 +374,7 @@ it('legacy sighash preserves non-minimal push bytes when removing CODESEPARATOR'
     P.I32LE.encode(btc.SigHash.ALL)
   );
   deepStrictEqual(
-    hex.encode((tx as any).preimageLegacy(0, original, btc.SigHash.ALL)),
+    hex.encode(tx.preimageLegacy(0, original, btc.SigHash.ALL)),
     hex.encode(expected)
   );
 });
