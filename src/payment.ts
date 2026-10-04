@@ -1605,30 +1605,36 @@ export function Address(network: BTC_NETWORK = NETWORK): TRet<P.Coder<AddressVal
       if (address.length < 14 || address.length > 74) throw new Error('Invalid address length');
       // Bech32
       if (network.bech32 && address.toLowerCase().startsWith(`${network.bech32}1`)) {
-        let res;
         try {
-          res = bech32.decode(address as `${string}1${string}`);
-          if (res.words[0] !== 0) throw new Error(`bech32: wrong version=${res.words[0]}`);
+          let res;
+          try {
+            res = bech32.decode(address as `${string}1${string}`);
+            if (res.words[0] !== 0) throw new Error(`bech32: wrong version=${res.words[0]}`);
+          } catch (_) {
+            // Starting from version 1 it is decoded as bech32m
+            res = bech32m.decode(address as `${string}1${string}`);
+            if (res.words[0] === 0) throw new Error(`bech32m: wrong version=${res.words[0]}`);
+          }
+          if (res.prefix !== network.bech32) throw new Error(`wrong bech32 prefix=${res.prefix}`);
+          const [version, ...program] = res.words;
+          const data = bech32.fromWords(program);
+          validateWitness(version, data);
+          if (version === 0 && data.length === 32)
+            return { type: 'wsh', hash: data } as TRet<AddressValue>;
+          else if (version === 0 && data.length === 20)
+            return { type: 'wpkh', hash: data } as TRet<AddressValue>;
+          else if (version === 1 && data.length === 32)
+            return { type: 'tr', pubkey: data } as TRet<AddressValue>;
+          else if (version === 1 && u.equalBytes(data, P2A_PROGRAM))
+            return { type: 'p2a', script: Script.encode([1, data]) } as TRet<AddressValue>;
+          // Future witness versions can still be valid addresses, but this helper
+          // only returns typed descriptors for recognized v0, taproot and P2A templates.
+          else throw new Error('Unknown witness program');
         } catch (_) {
-          // Starting from version 1 it is decoded as bech32m
-          res = bech32m.decode(address as `${string}1${string}`);
-          if (res.words[0] === 0) throw new Error(`bech32m: wrong version=${res.words[0]}`);
+          // Not a valid segwit address. A base58check address can still start with
+          // the bech32 prefix (e.g. Litecoin P2PKH starting with 'LTC1' / 'LTc1'),
+          // so fall through to the base58check decode below instead of throwing.
         }
-        if (res.prefix !== network.bech32) throw new Error(`wrong bech32 prefix=${res.prefix}`);
-        const [version, ...program] = res.words;
-        const data = bech32.fromWords(program);
-        validateWitness(version, data);
-        if (version === 0 && data.length === 32)
-          return { type: 'wsh', hash: data } as TRet<AddressValue>;
-        else if (version === 0 && data.length === 20)
-          return { type: 'wpkh', hash: data } as TRet<AddressValue>;
-        else if (version === 1 && data.length === 32)
-          return { type: 'tr', pubkey: data } as TRet<AddressValue>;
-        else if (version === 1 && u.equalBytes(data, P2A_PROGRAM))
-          return { type: 'p2a', script: Script.encode([1, data]) } as TRet<AddressValue>;
-        // Future witness versions can still be valid addresses, but this helper
-        // only returns typed descriptors for recognized v0, taproot and P2A templates.
-        else throw new Error('Unknown witness program');
       }
       const data = base58check.decode(address);
       if (data.length !== 21) throw new Error('Invalid base58 address');

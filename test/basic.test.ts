@@ -784,6 +784,35 @@ it('LTC address parsing (GH-112)', () => {
   });
 });
 
+it('LTC address parsing (GH-133)', () => {
+  const ltc = {
+    bech32: 'ltc',
+    pubKeyHash: 0x30,
+    scriptHash: 0x32,
+    wif: 0xb0,
+  };
+  // Base58 P2PKH addresses whose payload starts with the bech32 prefix 'ltc1':
+  // decode must fall back to base58check instead of failing as bech32.
+  deepStrictEqual(btc.Address(ltc).decode('LTC1zjVGsmn3xcSkog7Bo1uGyDxahZVQUb'), {
+    hash: hex.decode('57634a6411ff14524f03110ca4d544de93ec5eb1'),
+    type: 'pkh',
+  });
+  for (const addr of [
+    'LTc1ryp642TP8mPRfPch3ZM9wGo9zRF2oJ',
+    'LTC18PhC7QM3s39HUBevPHqtrMf2mNkzSj',
+    'LTc1589Ti1BerhYUzVW4dAs8AawDtnJmTD',
+  ]) {
+    deepStrictEqual(btc.Address(ltc).decode(addr).type, 'pkh');
+    deepStrictEqual(btc.Address(ltc).encode(btc.Address(ltc).decode(addr)), addr);
+  }
+  // Genuine bech32 addresses keep working, in both lower and upper case.
+  const wpkh = 'ltc1qkftftwm5xymenrtlhesv8rv6yelur3gl5g9pxm';
+  deepStrictEqual(btc.Address(ltc).decode(wpkh).type, 'wpkh');
+  deepStrictEqual(btc.Address(ltc).decode(wpkh.toUpperCase()).type, 'wpkh');
+  // A string that is neither valid bech32 nor valid base58check still throws.
+  throws(() => btc.Address(ltc).decode('LTC1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'));
+});
+
 // Same as above
 const TX_TEST_OUTPUTS = [
   ['1cMh228HTCiwS8ZsaakH8A8wze1JR5ZsP', 10n],
